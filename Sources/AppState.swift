@@ -2641,6 +2641,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
         startRealtimeStreamingIfEnabled()
 
+        // Open the TCP+TLS connections to the configured hosts while the user speaks, so the
+        // upload and cleanup requests after release skip DNS and the handshake. Credential-free
+        // and carries no user data.
+        if !apiKey.isEmpty || !resolvedTranscriptionAPIKey.isEmpty {
+            LLMAPITransport.prewarm(baseURLs: [resolvedTranscriptionBaseURL, apiBaseURL])
+        }
+
         // Start engine on background thread so UI isn't blocked
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
