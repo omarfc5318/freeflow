@@ -24,6 +24,7 @@ struct FreeFlowTests {
         TeddyBearTests.run()
         TeddyMomentTests.run()
         TeddyDougieTests.run()
+        TeddySongSyncTests.run()
         AppTextInsertionCoreTests.run()
         AppTextInsertionDispatchTests.run()
         await TranscriptionServiceTests.run()
