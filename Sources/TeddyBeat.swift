@@ -197,7 +197,7 @@ final class TeddyBeat {
     private func startSong() -> Bool {
         guard let url = TeddyDougieSong.fileURL(),
               let song = try? AVAudioPlayer(contentsOf: url) else { return false }
-        song.currentTime = TeddyDougieSong.startTime(clampedTo: song.duration)
+        song.currentTime = TeddyDougieSong.playbackStart(clampedTo: song.duration)
         song.volume = TeddyDougieSong.volume
         guard song.play() else { return false }
         songPlayer = song
@@ -250,5 +250,79 @@ enum TeddyDougieSong {
         let start = startSeconds(defaults: defaults)
         guard duration > 0 else { return 0 }
         return start < duration - 1 ? start : 0
+    }
+
+    // MARK: - Beat sync
+
+    static let bpmKey = "dougie_song_bpm"
+    static let syncedStartSecondsKey = "dougie_song_synced_start_seconds"
+    static let defaultBPM = 85.0
+    /// How much of the song is analysed around the requested start.
+    static let analysisLeadSeconds: TimeInterval = 5
+    static let analysisSpanSeconds: TimeInterval = 30
+
+    /// The song's detected tempo, or the dance's default 85 BPM when none has been detected.
+    static func bpm(defaults: UserDefaults = .standard) -> Double {
+        let value = defaults.double(forKey: bpmKey)
+        return value > 0 ? value : defaultBPM
+    }
+
+    /// The beat-aligned start, or the raw chosen start when no sync result is stored.
+    static func syncedStartSeconds(defaults: UserDefaults = .standard) -> TimeInterval {
+        guard defaults.object(forKey: syncedStartSecondsKey) != nil else { return startSeconds(defaults: defaults) }
+        return max(0, defaults.double(forKey: syncedStartSecondsKey))
+    }
+
+    static func hasSync(defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: syncedStartSecondsKey) != nil && defaults.double(forKey: bpmKey) > 0
+    }
+
+    /// Where playback begins: the beat-aligned start when present, else the chosen start.
+    static func playbackStart(clampedTo duration: TimeInterval, defaults: UserDefaults = .standard) -> TimeInterval {
+        let start = syncedStartSeconds(defaults: defaults)
+        guard duration > 0 else { return 0 }
+        return start < duration - 1 ? start : startTime(clampedTo: duration, defaults: defaults)
+    }
+
+    static func storeSync(bpm: Double, syncedStart: TimeInterval, defaults: UserDefaults = .standard) {
+        defaults.set(bpm, forKey: bpmKey)
+        defaults.set(syncedStart, forKey: syncedStartSecondsKey)
+    }
+
+    static func clearSync(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: bpmKey)
+        defaults.removeObject(forKey: syncedStartSecondsKey)
+    }
+
+    /// Reads a window of the file around `requestedStart`, downmixed to mono, and finds the beat.
+    /// Blocking: call off the main thread. Nil when the file can't be read or has no clear beat.
+    static func analyzeBeat(at url: URL, requestedStart: TimeInterval) -> (bpm: Double, syncedStart: TimeInterval)? {
+        guard let file = try? AVAudioFile(forReading: url) else { return nil }
+        let rate = file.processingFormat.sampleRate
+        let total = file.length
+        guard rate > 0, total > 0 else { return nil }
+        let origin = max(0, requestedStart - analysisLeadSeconds)
+        let first = AVAudioFramePosition(origin * rate)
+        guard first < total else { return nil }
+        let wanted = AVAudioFrameCount(min(AVAudioFramePosition(analysisSpanSeconds * rate), total - first))
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: wanted) else { return nil }
+        file.framePosition = first
+        do { try file.read(into: buffer, frameCount: wanted) } catch { return nil }
+        guard let channels = buffer.floatChannelData else { return nil }
+        let count = Int(buffer.frameLength)
+        let channelCount = Int(buffer.format.channelCount)
+        guard count > 0, channelCount > 0 else { return nil }
+        var mono = [Float](repeating: 0, count: count)
+        for channel in 0..<channelCount {
+            let data = channels[channel]
+            for i in 0..<count { mono[i] += data[i] }
+        }
+        if channelCount > 1 {
+            let scale = 1 / Float(channelCount)
+            for i in 0..<count { mono[i] *= scale }
+        }
+        guard let analysis = TeddySongSync.analyze(samples: mono, sampleRate: rate) else { return nil }
+        let start = analysis.alignedStart(near: requestedStart, windowOrigin: origin)
+        return (analysis.bpm, start)
     }
 }
