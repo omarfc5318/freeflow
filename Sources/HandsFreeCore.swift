@@ -46,11 +46,17 @@ struct SilenceAutoStop {
 
     var isEnabled: Bool { delay > 0 }
 
+    /// Seconds of the recording that sounded like speech so far.
+    var heardSpeechSeconds: TimeInterval { speechSeconds }
+    /// Loudest buffer so far, in dBFS.
+    private(set) var peakDB: Float = -120
+
     /// Feeds one buffer's RMS level (0...1) and length; returns true once the recording
-    /// should stop.
+    /// should stop. Speech and peak level are tracked even when auto-stop is off.
     mutating func shouldStop(afterBufferWithRMS rms: Float, duration: TimeInterval) -> Bool {
-        guard isEnabled, duration > 0 else { return false }
+        guard duration > 0 else { return false }
         let levelDB = 20 * log10f(max(rms, 1e-6))
+        peakDB = max(peakDB, levelDB)
         if levelDB > Self.digitalSilenceDB {
             audibleSeconds += duration
             if audibleSeconds > Self.warmUpSeconds { updateNoiseFloor(levelDB, duration: duration) }
@@ -66,7 +72,7 @@ struct SilenceAutoStop {
         } else {
             silentSeconds += duration
         }
-        return speechSeconds >= Self.minimumSpeechSeconds && silentSeconds >= delay
+        return isEnabled && speechSeconds >= Self.minimumSpeechSeconds && silentSeconds >= delay
     }
 
     private mutating func updateNoiseFloor(_ levelDB: Float, duration: TimeInterval) {
@@ -80,5 +86,20 @@ struct SilenceAutoStop {
         } else if levelDB <= floor + Self.floorRiseWindowDB {
             noiseFloorDB = min(levelDB, floor + Self.floorRiseDBPerSecond * seconds)
         }
+    }
+}
+
+/// Whether a finished recording is worth sending for transcription. A tap of the shortcut
+/// or a recording with nothing said is skipped, so the provider never rejects it and the
+/// bear shrugs instead. Anything that sounded like speech, or got loud at all, is sent.
+enum SpeechPresence {
+    /// Shorter recordings are rejected by providers and hold no words.
+    static let minimumRecordingSeconds: TimeInterval = 0.3
+    /// Below this the microphone heard nothing louder than a quiet room.
+    static let quietPeakDB: Float = -50
+
+    static func isWorthTranscribing(recordedSeconds: TimeInterval, heardSpeechSeconds: TimeInterval, peakDB: Float) -> Bool {
+        guard recordedSeconds >= minimumRecordingSeconds else { return false }
+        return heardSpeechSeconds > 0 || peakDB > quietPeakDB
     }
 }

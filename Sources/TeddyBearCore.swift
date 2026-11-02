@@ -84,6 +84,8 @@ struct TeddyPose: Equatable {
         /// Seen from behind, hips swaying; `phase` counts wiggles (1.0 = one full sway).
         case wiggling(phase: Double)
         case thumbsUp
+        /// Any full-body pose described by numbers (dance moves are built from these).
+        case posed(TeddyBodyPose)
     }
 
     let center: CGPoint
