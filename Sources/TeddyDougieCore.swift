@@ -1,9 +1,8 @@
 import CoreGraphics
 import Foundation
 
-/// The Dougie as a timeline of body poses. One loop is four beats at 85 BPM (about 2.82 s).
-/// Beats 1 and 2 are authored as keyframes; beats 3 and 4 are their mirror image, so the
-/// lean, the stepping foot and the sweeping paw swap sides every two beats.
+/// The Dougie as continuous motion. One loop is four beats at 85 BPM (about 2.82 s); beats 3
+/// and 4 mirror beats 1 and 2, so the lean, the stepping foot and the brushing paw swap sides.
 enum TeddyDougie {
     static let bpm = 85.0
     static let beatsPerLoop = 4
@@ -12,57 +11,71 @@ enum TeddyDougie {
     static let loopSeconds: TimeInterval = beatSeconds * Double(beatsPerLoop)
     static let danceSeconds: TimeInterval = loopSeconds * Double(loopCount)
 
-    /// Eight keyframes per loop (the counts 1 & 2 & 3 & 4 &), evenly spaced.
-    static let keysPerLoop = 8
-
-    // MARK: Keyframes
+    // MARK: Motion
 
     static let leftShoulder = CGPoint(x: 12.6, y: 28.5)
     static let rightShoulder = CGPoint(x: 27.4, y: 28.5)
 
-    private static func limb(_ angle: Double, _ length: CGFloat) -> TeddyBodyPose.Limb {
-        .init(angle: angle, length: length)
-    }
+    /// Peak lean, reached on counts 1 (right) and 3 (left).
+    static let maxLeanDegrees = 13.0
+    /// How quickly the weight shifts from side to side (higher is snappier).
+    static let rockSharpness = 2.2
 
-    private static func key(
-        lean: Double, bob: CGFloat, hip: CGFloat, head: Double,
-        leftArm: TeddyBodyPose.Limb, rightArm: TeddyBodyPose.Limb,
-        leftLeg: TeddyBodyPose.Limb, rightLeg: TeddyBodyPose.Limb, mouth: CGFloat
-    ) -> TeddyBodyPose {
+    /// The Dougie is one continuous motion, so every part is a smooth curve of the loop
+    /// fraction instead of a run of poses (stopping at each pose looked robotic):
+    /// - the whole body rocks side to side, leaning into the stepping foot, hips swaying with it;
+    /// - the knees dip on every beat;
+    /// - the paw on the high-shoulder side draws one circle per loop: up in front of the face to
+    ///   the forehead, slowly over the top of the head to behind the ear (the hair brush), then
+    ///   down the outside. The right paw does the same half a loop later, mirrored.
+    static func pose(atLoopFraction fraction: Double) -> TeddyBodyPose {
+        let t = fraction - fraction.rounded(.down)
+        // A weight shift, not a pendulum: the body moves onto the stepping foot fairly quickly
+        // and rides it out, which also gives the ragdoll parts something to follow through on.
+        let rock = tanh(rockSharpness * cos(2 * .pi * t)) / tanh(rockSharpness)
+        // 1 on every beat (t = 0, 0.25, 0.5, 0.75), easing to 0 between beats.
+        let dip = pow(0.5 + 0.5 * cos(8 * .pi * t), 1.5)
+
         var pose = TeddyBodyPose()
-        pose.leanDegrees = lean
-        pose.bob = bob
-        pose.hipShift = hip
         pose.feetPlanted = true
-        pose.headTiltDegrees = head
-        pose.leftArm = leftArm
-        pose.rightArm = rightArm
-        pose.leftLeg = leftLeg
-        pose.rightLeg = rightLeg
-        pose.face = .init(mouthOpen: mouth, isBlinking: false, winks: false)
+        pose.leanDegrees = maxLeanDegrees * rock
+        pose.hipShift = CGFloat(1.8 * rock)
+        pose.bob = CGFloat(0.8 - 3.2 * dip)
+        pose.headTiltDegrees = 8 * rock
+
+        pose.leftArm = brushingArm(at: t)
+        let right = brushingArm(at: t - 0.5)
+        pose.rightArm = .init(angle: -right.angle, length: right.length)
+
+        // Step-touch: both feet shift towards the stepping side, knees bending on the beat.
+        let legLength = CGFloat(6.5 - 1.4 * dip)
+        pose.rightLeg = .init(angle: 0.06 + 0.2 * rock, length: legLength)
+        pose.leftLeg = .init(angle: -0.06 + 0.2 * rock, length: legLength)
+
+        pose.face.mouthOpen = CGFloat(0.3 + 0.25 * dip)
         return pose
     }
 
-    /// Counts 1, &, 2, & (lean to the viewer's right, left paw sweeping over the head).
-    /// Angles run past pi on purpose: the paw travels over the top of the head.
-    private static let firstHalf: [TeddyBodyPose] = [
-        // 1: deep knee bend, step right (weight on right), paw at the left forehead, right arm swung out.
-        key(lean: 12, bob: -4, hip: 1.5, head: 6,
-            leftArm: limb(2.95, 15.5), rightArm: limb(0.9, 6.4),
-            leftLeg: limb(-0.06, 5.2), rightLeg: limb(0.28, 5.2), mouth: 0.9),
-        // &: rise, paw slides over the top-left of the head.
-        key(lean: 12, bob: 0, hip: 1.2, head: 8,
-            leftArm: limb(3.3, 16), rightArm: limb(0.8, 6.4),
-            leftLeg: limb(-0.05, 6.5), rightLeg: limb(0.2, 6.5), mouth: 0.65),
-        // 2: left foot taps beside the right, paw passes behind the left ear.
-        key(lean: 10, bob: -2.5, hip: 0.6, head: 6,
-            leftArm: limb(3.55, 14.5), rightArm: limb(0.7, 6.4),
-            leftLeg: limb(0.2, 6), rightLeg: limb(0.1, 5.6), mouth: 0.9),
-        // &: weight transfer, left arm drops, right arm rises.
-        key(lean: 0, bob: 1, hip: -0.4, head: 0,
-            leftArm: limb(5.75, 6.4), rightArm: limb(1.9, 9),
-            leftLeg: limb(0.06, 6.5), rightLeg: limb(0.06, 6.5), mouth: 0.65),
-    ]
+    /// The left arm's hair brush. Starting a quarter loop before count 1, the paw rises up
+    /// the outside of the body (never across the face), plants on the hair at the top of the
+    /// head around count 1, glides back over the ear through count 2, then drops down the side
+    /// and rests while the other paw takes its turn. Angles stay on the left side (negative).
+    static func brushingArm(at loopFraction: Double) -> TeddyBodyPose.Limb {
+        let s = wrapped(loopFraction + 0.25) / 0.75
+        guard s < 1 else {
+            return .init(angle: restAngle, length: restLength)
+        }
+        let angle = monotoneCubic(s, points: brushAngleKeys)
+        let length = monotoneCubic(s, points: brushLengthKeys)
+        return .init(angle: angle, length: CGFloat(length))
+    }
+
+    static let restAngle = -0.55
+    static let restLength = 6.6
+    /// (time through the brush, angle): up the side, top of the head, back over the ear, down.
+    static let brushAngleKeys: [(Double, Double)] = [(0, restAngle), (0.24, -2.55), (0.36, -3.04), (0.68, -2.62), (1, restAngle)]
+    /// (time through the brush, length): the arm stretches to reach the top of the head.
+    static let brushLengthKeys: [(Double, Double)] = [(0, restLength), (0.24, 14), (0.36, 18.5), (0.68, 15.5), (1, restLength)]
 
     /// Left and right swapped: negated lean, tilt, hip shift and angles.
     static func mirrored(_ pose: TeddyBodyPose) -> TeddyBodyPose {
@@ -70,71 +83,56 @@ enum TeddyDougie {
         m.leanDegrees = -pose.leanDegrees
         m.headTiltDegrees = -pose.headTiltDegrees
         m.hipShift = -pose.hipShift
-        m.leftArm = limb(-pose.rightArm.angle, pose.rightArm.length)
-        m.rightArm = limb(-pose.leftArm.angle, pose.leftArm.length)
-        m.leftLeg = limb(-pose.rightLeg.angle, pose.rightLeg.length)
-        m.rightLeg = limb(-pose.leftLeg.angle, pose.leftLeg.length)
+        m.leftArm = .init(angle: -pose.rightArm.angle, length: pose.rightArm.length)
+        m.rightArm = .init(angle: -pose.leftArm.angle, length: pose.leftArm.length)
+        m.leftLeg = .init(angle: -pose.rightLeg.angle, length: pose.rightLeg.length)
+        m.rightLeg = .init(angle: -pose.leftLeg.angle, length: pose.leftLeg.length)
         return m
-    }
-
-    /// Eight keyframes, then the first again to close the loop. Limb angles are unwrapped so
-    /// that interpolating takes the short way round.
-    static let keyframes: [TeddyBodyPose] = {
-        var keys = firstHalf + firstHalf.map(mirrored)
-        keys.append(keys[0])
-        for i in 1..<keys.count {
-            keys[i].leftArm.angle = unwrapped(keys[i].leftArm.angle, near: keys[i - 1].leftArm.angle)
-            keys[i].rightArm.angle = unwrapped(keys[i].rightArm.angle, near: keys[i - 1].rightArm.angle)
-            keys[i].leftLeg.angle = unwrapped(keys[i].leftLeg.angle, near: keys[i - 1].leftLeg.angle)
-            keys[i].rightLeg.angle = unwrapped(keys[i].rightLeg.angle, near: keys[i - 1].rightLeg.angle)
-        }
-        return keys
-    }()
-
-    private static func unwrapped(_ angle: Double, near reference: Double) -> Double {
-        let turn = 2 * Double.pi
-        return angle - turn * ((angle - reference) / turn).rounded()
     }
 
     /// Wraps an angle into -pi...pi.
     static func normalized(_ angle: Double) -> Double {
-        unwrapped(angle, near: 0)
+        let turn = 2 * Double.pi
+        return angle - turn * (angle / turn).rounded()
     }
 
-    // MARK: Interpolation
-
-    static func smoothstep(_ t: Double) -> Double {
-        let c = min(max(t, 0), 1)
-        return c * c * (3 - 2 * c)
+    private static func wrapped(_ t: Double) -> Double {
+        t - t.rounded(.down)
     }
 
-    private static func mix(_ a: Double, _ b: Double, _ t: Double) -> Double { a + (b - a) * t }
-    private static func mix(_ a: CGFloat, _ b: CGFloat, _ t: Double) -> CGFloat { a + (b - a) * CGFloat(t) }
-
-    private static func mix(_ a: TeddyBodyPose.Limb, _ b: TeddyBodyPose.Limb, _ t: Double) -> TeddyBodyPose.Limb {
-        limb(normalized(mix(a.angle, b.angle, t)), mix(a.length, b.length, t))
-    }
-
-    /// The pose `fraction` of the way through one loop (wraps), easing in and out of each key.
-    /// Limb angles come back in -pi...pi.
-    static func pose(atLoopFraction fraction: Double) -> TeddyBodyPose {
-        let wrapped = fraction - fraction.rounded(.down)
-        let scaled = wrapped * Double(keysPerLoop)
-        let index = min(Int(scaled), keysPerLoop - 1)
-        let t = smoothstep(scaled - Double(index))
-        let a = keyframes[index]
-        let b = keyframes[index + 1]
-        var pose = a
-        pose.leanDegrees = mix(a.leanDegrees, b.leanDegrees, t)
-        pose.bob = mix(a.bob, b.bob, t)
-        pose.hipShift = mix(a.hipShift, b.hipShift, t)
-        pose.headTiltDegrees = mix(a.headTiltDegrees, b.headTiltDegrees, t)
-        pose.leftArm = mix(a.leftArm, b.leftArm, t)
-        pose.rightArm = mix(a.rightArm, b.rightArm, t)
-        pose.leftLeg = mix(a.leftLeg, b.leftLeg, t)
-        pose.rightLeg = mix(a.rightLeg, b.rightLeg, t)
-        pose.face.mouthOpen = mix(a.face.mouthOpen, b.face.mouthOpen, t)
-        return pose
+    /// Monotone cubic (Fritsch-Carlson) through increasing x points: smooth, with no stops at
+    /// the points and no overshoot between them.
+    static func monotoneCubic(_ x: Double, points: [(Double, Double)]) -> Double {
+        guard let first = points.first, let last = points.last else { return 0 }
+        if x <= first.0 { return first.1 }
+        if x >= last.0 { return last.1 }
+        let n = points.count
+        var slopes = [Double](repeating: 0, count: n - 1)
+        for i in 0..<(n - 1) {
+            slopes[i] = (points[i + 1].1 - points[i].1) / (points[i + 1].0 - points[i].0)
+        }
+        var tangents = [Double](repeating: 0, count: n)
+        tangents[0] = slopes[0]
+        tangents[n - 1] = slopes[n - 2]
+        for i in 1..<(n - 1) {
+            tangents[i] = slopes[i - 1] * slopes[i] <= 0 ? 0 : (slopes[i - 1] + slopes[i]) / 2
+        }
+        for i in 0..<(n - 1) where slopes[i] != 0 {
+            let a = tangents[i] / slopes[i], b = tangents[i + 1] / slopes[i]
+            let h = a * a + b * b
+            if h > 9 {
+                let k = 3 / h.squareRoot()
+                tangents[i] = k * a * slopes[i]
+                tangents[i + 1] = k * b * slopes[i]
+            }
+        }
+        var i = 0
+        while x > points[i + 1].0 { i += 1 }
+        let (x0, y0) = points[i], (x1, y1) = points[i + 1]
+        let h = x1 - x0, u = (x - x0) / h
+        let u2 = u * u, u3 = u2 * u
+        return (2 * u3 - 3 * u2 + 1) * y0 + (u3 - 2 * u2 + u) * h * tangents[i]
+            + (-2 * u3 + 3 * u2) * y1 + (u3 - u2) * h * tangents[i + 1]
     }
 
     /// A blink every other loop, just before the next 1.
@@ -149,9 +147,15 @@ enum TeddyDougie {
         return time >= start && time < start + blinkSeconds
     }
 
-    /// The pose `time` seconds into the dance: four loops, with a blink now and then.
+    /// The pose `time` seconds into the dance: four loops with ragdoll follow-through, and a
+    /// blink now and then.
+    /// The whole dance with ragdoll follow-through (see TeddyRagdoll), simulated once.
+    static let ragdollFrames: [TeddyBodyPose] = TeddyRagdoll.simulate(seconds: danceSeconds) { time in
+        pose(atLoopFraction: time / loopSeconds)
+    }
+
     static func pose(atDanceTime time: TimeInterval) -> TeddyBodyPose {
-        var pose = Self.pose(atLoopFraction: min(max(time, 0), danceSeconds) / loopSeconds)
+        var pose = TeddyRagdoll.pose(at: min(max(time, 0), danceSeconds), in: ragdollFrames)
         pose.face.isBlinking = isBlinking(atDanceTime: time)
         return pose
     }

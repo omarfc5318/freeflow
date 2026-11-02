@@ -1159,6 +1159,10 @@ struct GeneralSettingsView: View {
             Divider()
 
             overlayDisplaySection
+
+            Divider()
+
+            DougieSongSettingsRow()
         }
     }
 

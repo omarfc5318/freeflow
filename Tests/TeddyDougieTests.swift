@@ -7,13 +7,18 @@ enum TeddyDougieTests {
         testPhraseVariants()
         testNearMissesAreTypedNormally()
         testDanceLengthIsFourLoops()
-        testKeyTimesEqualKeyframes()
+        testCountOneLeansIntoAKneeDip()
         testSecondHalfMirrorsFirst()
         testLoopIsContinuous()
-        testPawReachesTheHeadOnTheHighShoulderSide()
+        testPawBrushesOverTheHeadOnTheHighShoulderSide()
+        testBrushGlidesOverTheHairNotTheFace()
+        testRagdollHeadLagsAndSettles()
+        testRagdollKeepsTheBrushOnTheHead()
+        testRagdollRestingArmSwingsLoose()
         testBlinkIsOccasional()
         testRoutineStartsAndEndsInThePill()
         testRoutineDancesBetweenRuns()
+        testSongStartTime()
         testBeatLength()
         testBeatPatternTiming()
         testBeatIsAudibleAndBounded()
@@ -67,17 +72,17 @@ enum TeddyDougieTests {
             && abs(a.face.mouthOpen - b.face.mouthOpen) < 1e-6
     }
 
-    private static func testKeyTimesEqualKeyframes() {
-        for i in 0..<8 {
-            let pose = TeddyDougie.pose(atLoopFraction: Double(i) / 8)
-            TestSupport.expect(isClose(pose, TeddyDougie.keyframes[i]), "Key \(i) is reached on time")
+    private static func testCountOneLeansIntoAKneeDip() {
+        let count1 = TeddyDougie.pose(atLoopFraction: 0)
+        TestSupport.expectEqual(count1.leanDegrees, TeddyDougie.maxLeanDegrees)
+        TestSupport.expect(count1.bob < 0, "Count 1 is a knee dip")
+        let between = TeddyDougie.pose(atLoopFraction: 0.125)
+        TestSupport.expect(between.bob > count1.bob, "It rises between beats")
+        TestSupport.expect(count1.leftLeg.length < between.leftLeg.length, "A bent knee is shorter")
+        TestSupport.expect(TeddyDougie.pose(atLoopFraction: 0.5).leanDegrees < -12.9, "Count 3 leans left")
+        for beat in [0.25, 0.5, 0.75] {
+            TestSupport.expect(TeddyDougie.pose(atLoopFraction: beat).bob < 0, "Dips on every beat")
         }
-        let first = TeddyDougie.pose(atLoopFraction: 0)
-        TestSupport.expectEqual(first.leanDegrees, 12)
-        TestSupport.expect(first.bob < 0, "Count 1 is a knee bend")
-        let rise = TeddyDougie.pose(atLoopFraction: 0.125)
-        TestSupport.expectEqual(rise.bob, 0)
-        TestSupport.expect(first.leftLeg.length < rise.leftLeg.length, "Bent knee is shorter")
     }
 
     private static func testSecondHalfMirrorsFirst() {
@@ -112,15 +117,118 @@ enum TeddyDougieTests {
         CGPoint(x: shoulder.x + sin(limb.angle) * limb.length, y: shoulder.y + cos(limb.angle) * limb.length)
     }
 
-    private static func testPawReachesTheHeadOnTheHighShoulderSide() {
-        let count1 = TeddyDougie.keyframes[0]
-        let paw = tip(of: count1.leftArm, from: TeddyDougie.leftShoulder)
-        TestSupport.expect(paw.y < 15, "Paw is at head height")
-        TestSupport.expect(abs(paw.x - 20) < 9.4, "Paw is beside the head")
-        TestSupport.expect(count1.leanDegrees > 0, "Leaning right, so the left paw is high")
-        let count3 = TeddyDougie.keyframes[4]
-        TestSupport.expect(count3.leanDegrees < 0, "Count 3 leans left")
-        TestSupport.expect(tip(of: count3.rightArm, from: TeddyDougie.rightShoulder).y < 15, "Right paw is high on count 3")
+    /// The paw on the high-shoulder side brushes over the head: it reaches the top of the head
+    /// around counts 1 and 2 (left paw, leaning right) and 3 and 4 (right paw, leaning left).
+    private static func testPawBrushesOverTheHeadOnTheHighShoulderSide() {
+        func highest(_ arm: (TeddyBodyPose) -> TeddyBodyPose.Limb, shoulder: CGPoint, from: Double, to: Double) -> CGPoint {
+            var best = CGPoint(x: 0, y: 99)
+            var t = from
+            while t <= to {
+                let paw = tip(of: arm(TeddyDougie.pose(atLoopFraction: t)), from: shoulder)
+                if paw.y < best.y { best = paw }
+                t += 0.005
+            }
+            return best
+        }
+        let left = highest({ $0.leftArm }, shoulder: TeddyDougie.leftShoulder, from: -0.05, to: 0.3)
+        TestSupport.expect(left.y < 15 && abs(left.x - 20) < 12, "Left paw goes over the head on counts 1-2")
+        let right = highest({ $0.rightArm }, shoulder: TeddyDougie.rightShoulder, from: 0.45, to: 0.8)
+        TestSupport.expect(right.y < 15 && abs(right.x - 20) < 12, "Right paw goes over the head on counts 3-4")
+        let resting = TeddyDougie.pose(atLoopFraction: 0.6).leftArm
+        TestSupport.expect(tip(of: resting, from: TeddyDougie.leftShoulder).y > 30, "The other paw rests low meanwhile")
+    }
+
+    /// The brush glides along the hair: from the top of the head back over the ear, with the
+    /// paw never crossing in front of the face (left of the face's left edge, or above it).
+    private static func testBrushGlidesOverTheHairNotTheFace() {
+        let faceLeft = 13.0, faceTop = 10.0
+        var previousX = Double.infinity
+        var t = -0.25
+        while t < 0.5 {
+            let paw = tip(of: TeddyDougie.brushingArm(at: t), from: TeddyDougie.leftShoulder)
+            TestSupport.expect(Double(paw.x) < faceLeft || Double(paw.y) < faceTop, "Paw stays off the face at \(t)")
+            t += 0.005
+        }
+        // From the top of the head (around count 1) back to the ear (count 2) the paw moves outward.
+        t = 0.03
+        while t <= 0.25 {
+            let paw = tip(of: TeddyDougie.brushingArm(at: t), from: TeddyDougie.leftShoulder)
+            TestSupport.expect(Double(paw.x) <= previousX + 0.01, "The brush glides back over the ear at \(t)")
+            TestSupport.expect(paw.y < 16, "The paw stays on the head at \(t)")
+            previousX = Double(paw.x)
+            t += 0.01
+        }
+    }
+
+    /// Ragdoll: on each weight shift the head lags behind the choreography, swings past it
+    /// (follow-through) and settles, and it stays in a sane range for the whole dance.
+    private static func testRagdollHeadLagsAndSettles() {
+        let loop = TeddyDougie.loopSeconds
+        func firstTime(from start: Double, reaching level: Double, _ value: (Double) -> Double) -> Double {
+            var time = start
+            while time < start + loop / 2, value(time) < level { time += 0.002 }
+            return time
+        }
+        let shift = loop * 1.5 + 0.02 // the shift back to the right, heading into loop 3's count 1
+        let target = TeddyDougie.pose(atLoopFraction: 0).headTiltDegrees
+        // Halfway through the shift the choreographed head is upright, but the floppy head is
+        // still tipped the old way (it lags)...
+        let midShift = firstTime(from: shift, reaching: 0) { TeddyDougie.pose(atLoopFraction: $0 / loop).headTiltDegrees }
+        let lagging = TeddyDougie.pose(atDanceTime: midShift).headTiltDegrees
+        TestSupport.expect(lagging < -1, "The head lags the weight shift (\(lagging)°)")
+        // ...then swings past the pose (follow-through)...
+        var peak = -Double.infinity
+        var time = shift
+        while time < shift + loop / 2 { peak = max(peak, TeddyDougie.pose(atDanceTime: time).headTiltDegrees); time += 0.002 }
+        TestSupport.expect(peak > target + 1, "The head swings past the pose (\(peak)° vs \(target)°)")
+        // ...and settles back near it before the next shift.
+        let settled = TeddyDougie.pose(atDanceTime: shift + loop * 0.45).headTiltDegrees
+        TestSupport.expect(abs(settled - target) < 1.5, "Then it settles (\(settled)°)")
+        for frame in TeddyDougie.ragdollFrames {
+            TestSupport.expect(frame.headTiltDegrees.isFinite && abs(frame.headTiltDegrees) < 30, "Head stays in range")
+            TestSupport.expect(frame.bob > -8 && frame.bob < 5, "Bounce stays in range")
+            TestSupport.expect(frame.leftArm.angle.isFinite && frame.rightArm.angle.isFinite, "Arms stay finite")
+        }
+    }
+
+    private static func testRagdollKeepsTheBrushOnTheHead() {
+        let loop = TeddyDougie.loopSeconds
+        var best = 99.0
+        var time = loop * 2 - 0.15 * loop
+        while time <= loop * 2 + 0.3 * loop {
+            let pose = TeddyDougie.pose(atDanceTime: time)
+            best = min(best, Double(tip(of: pose.leftArm, from: TeddyDougie.leftShoulder).y))
+            time += 0.01
+        }
+        TestSupport.expect(best < 15.5, "With physics, the paw still reaches over the head (y \(best))")
+    }
+
+    /// While a paw rests low, the body's rocking swings it away from the choreographed angle.
+    private static func testRagdollRestingArmSwingsLoose() {
+        let loop = TeddyDougie.loopSeconds
+        var largest = 0.0
+        var time = loop * 2 + 0.5 * loop
+        while time <= loop * 2 + 0.75 * loop {
+            let simulated = TeddyDougie.pose(atDanceTime: time).leftArm.angle
+            let choreographed = TeddyDougie.pose(atLoopFraction: time / loop).leftArm.angle
+            largest = max(largest, abs(TeddyDougie.normalized(simulated - choreographed)))
+            time += 0.01
+        }
+        TestSupport.expect(largest > 0.05 && largest < 1.2, "The resting arm swings loose (\(largest) rad)")
+    }
+
+    private static func testSongStartTime() {
+        let defaults = UserDefaults(suiteName: "TeddyDougieTests.song")!
+        defaults.removePersistentDomain(forName: "TeddyDougieTests.song")
+        TestSupport.expect(TeddyDougieSong.fileURL(defaults: defaults) == nil, "No song: the built-in beat plays")
+        defaults.set("/nonexistent/song.m4a", forKey: TeddyDougieSong.pathKey)
+        TestSupport.expect(TeddyDougieSong.fileURL(defaults: defaults) == nil, "A missing file falls back to the beat")
+        defaults.set(22.0, forKey: TeddyDougieSong.startSecondsKey)
+        TestSupport.expectEqual(TeddyDougieSong.startTime(clampedTo: 230, defaults: defaults), 22)
+        TestSupport.expectEqual(TeddyDougieSong.startTime(clampedTo: 15, defaults: defaults), 0)
+        defaults.set(-5.0, forKey: TeddyDougieSong.startSecondsKey)
+        TestSupport.expectEqual(TeddyDougieSong.startTime(clampedTo: 230, defaults: defaults), 0)
+        defaults.removePersistentDomain(forName: "TeddyDougieTests.song")
     }
 
     private static func testBlinkIsOccasional() {

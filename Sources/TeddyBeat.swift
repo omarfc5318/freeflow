@@ -158,9 +158,13 @@ final class TeddyBeat {
     private var isPrepared = false
 
     private(set) var isPlaying = false
+    /// The user's own song file, when one is chosen in Settings.
+    private var songPlayer: AVAudioPlayer?
 
     func start() {
-        guard !isPlaying, prepare() else { return }
+        guard !isPlaying else { return }
+        if startSong() { return }
+        guard prepare() else { return }
         do {
             try engine.start()
         } catch {
@@ -177,8 +181,28 @@ final class TeddyBeat {
     func stop() {
         guard isPlaying else { return }
         isPlaying = false
+        if let song = songPlayer {
+            songPlayer = nil
+            // A short fade so the song doesn't cut off mid-word.
+            song.setVolume(0, fadeDuration: TeddyDougieSong.fadeSeconds)
+            DispatchQueue.main.asyncAfter(deadline: .now() + TeddyDougieSong.fadeSeconds) { song.stop() }
+            return
+        }
         player.stop()
         engine.stop()
+    }
+
+    /// Plays the song file chosen in Settings from its start time; false when none is set
+    /// or it can't be played, so the built-in beat plays instead.
+    private func startSong() -> Bool {
+        guard let url = TeddyDougieSong.fileURL(),
+              let song = try? AVAudioPlayer(contentsOf: url) else { return false }
+        song.currentTime = TeddyDougieSong.startTime(clampedTo: song.duration)
+        song.volume = TeddyDougieSong.volume
+        guard song.play() else { return false }
+        songPlayer = song
+        isPlaying = true
+        return true
     }
 
     private func prepare() -> Bool {
@@ -200,5 +224,31 @@ final class TeddyBeat {
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
         return true
+    }
+}
+
+/// The user's own song for Rio's Dougie: a local audio file they chose, and where in it to
+/// start. Nothing is downloaded or bundled; the file is only read from the user's Mac.
+enum TeddyDougieSong {
+    static let pathKey = "dougie_song_path"
+    static let startSecondsKey = "dougie_song_start_seconds"
+    static let volume: Float = 0.6
+    static let fadeSeconds: TimeInterval = 0.4
+
+    static func fileURL(defaults: UserDefaults = .standard) -> URL? {
+        guard let path = defaults.string(forKey: pathKey), !path.isEmpty,
+              FileManager.default.isReadableFile(atPath: path) else { return nil }
+        return URL(fileURLWithPath: path)
+    }
+
+    static func startSeconds(defaults: UserDefaults = .standard) -> TimeInterval {
+        max(0, defaults.double(forKey: startSecondsKey))
+    }
+
+    /// The chosen start, kept inside the song so playback always has something left to play.
+    static func startTime(clampedTo duration: TimeInterval, defaults: UserDefaults = .standard) -> TimeInterval {
+        let start = startSeconds(defaults: defaults)
+        guard duration > 0 else { return 0 }
+        return start < duration - 1 ? start : 0
     }
 }
