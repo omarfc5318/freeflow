@@ -45,6 +45,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/TeddyDougieCore.swift \
 	Sources/TeddySongSyncCore.swift \
 	Sources/TeddyLookCore.swift \
+	Sources/SpokenLookCore.swift \
 	Sources/TeddyRagdollCore.swift \
 	Sources/TeddyMilestoneCore.swift \
 	Sources/UpdateManager.swift \

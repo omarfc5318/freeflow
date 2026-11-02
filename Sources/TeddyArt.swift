@@ -60,7 +60,8 @@ enum TeddyArt {
         level: CGFloat,
         mood: TalkingBearView.Mood,
         isEditing: Bool = false,
-        outfit: TeddyOutfit = .hoodie
+        outfit: TeddyOutfit = .hoodie,
+        look: SpokenLook = .none
     ) {
         // Syllable flutter so a steady level still reads as speech.
         let flutter = 0.7 + 0.3 * CGFloat(abs(sin(time * 11)))
@@ -73,11 +74,11 @@ enum TeddyArt {
             isThinking: mood == .thinking,
             glasses: isEditing
         )
-        drawHead(in: &graphics, face: face, outfit: outfit, neckwear: true)
+        drawHead(in: &graphics, face: face, outfit: outfit, neckwear: true, look: look)
         if isEditing {
-            drawPencil(in: &graphics, outfit: outfit)
+            drawPencil(in: &graphics, outfit: outfit, look: look)
         } else {
-            drawMicrophone(in: &graphics, outfit: outfit)
+            drawMicrophone(in: &graphics, outfit: outfit, look: look)
         }
 
         switch mood {
@@ -98,24 +99,25 @@ enum TeddyArt {
         outfit: TeddyOutfit,
         from start: CGPoint,
         to paw: CGPoint,
-        width: CGFloat = 5.2
+        width: CGFloat = 5.2,
+        look: SpokenLook = .none
     ) {
+        let colors = sleeveColors(outfit: outfit, look: look)
         var path = Path()
         path.move(to: start)
         path.addLine(to: paw)
         stroke(&graphics, path, TeddyPalette.ink, width: width + outline * 2)
-        stroke(&graphics, path, outfit == .suit ? TeddyPalette.suit : TeddyPalette.hoodie, width: width)
+        stroke(&graphics, path, colors.sleeve, width: width)
         let dx = paw.x - start.x
         let dy = paw.y - start.y
         let length = max(0.001, (dx * dx + dy * dy).squareRoot())
         var cuff = Path()
         cuff.move(to: CGPoint(x: paw.x - dx / length * 3.6, y: paw.y - dy / length * 3.6))
         cuff.addLine(to: CGPoint(x: paw.x - dx / length * 2.0, y: paw.y - dy / length * 2.0))
-        let cuffColor = outfit == .suit ? TeddyPalette.shirt : TeddyPalette.hoodieDark
-        graphics.stroke(cuff, with: .color(cuffColor), style: StrokeStyle(lineWidth: width, lineCap: .butt))
+        graphics.stroke(cuff, with: .color(colors.cuff), style: StrokeStyle(lineWidth: width, lineCap: .butt))
     }
 
-    static func drawMicrophone(in graphics: inout GraphicsContext, outfit: TeddyOutfit = .hoodie) {
+    static func drawMicrophone(in graphics: inout GraphicsContext, outfit: TeddyOutfit = .hoodie, look: SpokenLook = .none) {
         // Handle, outlined, running down and out from the mic head.
         var handle = Path()
         handle.move(to: CGPoint(x: 30.6, y: 26))
@@ -123,7 +125,7 @@ enum TeddyArt {
         stroke(&graphics, handle, TeddyPalette.ink, width: 3.8)
         stroke(&graphics, handle, TeddyPalette.steel, width: 2.2)
 
-        drawSleeveStub(in: &graphics, outfit: outfit, from: CGPoint(x: 35.6, y: 33.6), to: CGPoint(x: 32.2, y: 29.2))
+        drawSleeveStub(in: &graphics, outfit: outfit, from: CGPoint(x: 35.6, y: 33.6), to: CGPoint(x: 32.2, y: 29.2), look: look)
 
         // Head with a cross-hatched grille.
         let head = circle(CGPoint(x: 29.3, y: 23.4), 3.4)
@@ -146,12 +148,12 @@ enum TeddyArt {
     }
 
     /// Edit mode: a pencil held in the same paw, eraser end up.
-    static func drawPencil(in graphics: inout GraphicsContext, outfit: TeddyOutfit = .hoodie) {
+    static func drawPencil(in graphics: inout GraphicsContext, outfit: TeddyOutfit = .hoodie, look: SpokenLook = .none) {
         var pencil = graphics
         pencil.translateBy(x: 27.8, y: 31.2)
         pencil.rotate(by: .radians(-0.98))
         drawPencilShape(in: &pencil, length: 15)
-        drawSleeveStub(in: &graphics, outfit: outfit, from: CGPoint(x: 35.6, y: 33.6), to: CGPoint(x: 32.2, y: 29.2))
+        drawSleeveStub(in: &graphics, outfit: outfit, from: CGPoint(x: 35.6, y: 33.6), to: CGPoint(x: 32.2, y: 29.2), look: look)
         sticker(&graphics, circle(CGPoint(x: 31.9, y: 28.2), 2.5), TeddyPalette.fur, rim: outline * 0.9)
     }
 

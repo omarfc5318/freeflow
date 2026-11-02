@@ -42,8 +42,13 @@ extension TeddyArt {
         outfit: TeddyOutfit,
         partyHat: Bool = false,
         neckwear: Bool = false,
-        faceShift: CGFloat = 0
+        faceShift: CGFloat = 0,
+        look: SpokenLook = .none
     ) {
+        if look != .none {
+            drawSpokenLookHead(in: &graphics, face: face, look: look)
+            return
+        }
         if neckwear && outfit == .suit { drawJacketShoulders(in: &graphics) }
         switch outfit {
         case .hoodie:

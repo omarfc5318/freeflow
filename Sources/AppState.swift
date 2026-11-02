@@ -663,6 +663,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private var activeStyleCategory: DictationStyleCategory = .other
     /// What the bear wears for the current dictation, from the app's writing style.
     private var teddyOutfit: TeddyOutfit = .hoodie
+    /// Language look of the last dictation, so the next one starts in it (the transcript is
+    /// only known after you stop). Main thread only.
+    private var lastSpokenLook: SpokenLook = .none
 
     @Published var isPressEnterVoiceCommandEnabled: Bool {
         didSet {
@@ -2412,6 +2415,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         activeStyleCategory = frontmostStyleCategory()
         teddyOutfit = TeddyOutfit.forStyle(style(for: activeStyleCategory))
         overlayManager.setOutfit(teddyOutfit)
+        overlayManager.setSpokenLook(
+            SpokenLook.atRecordingStart(selectedLanguage: transcriptionLanguage, lastDetected: lastSpokenLook)
+        )
         overlayManager.setRecordingTriggerMode(triggerMode, animated: false)
         return true
     }
@@ -3171,6 +3177,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         pressEnterCommandEnabled: self.isPressEnterVoiceCommandEnabled
                     )
                     try Task.checkCancellation()
+                    if let look = SpokenLook.detect(in: parsedTranscript.transcript) {
+                        await MainActor.run { [weak self] in self?.applySpokenLook(look) }
+                    }
                     if !sessionIntent.isCommandMode, let trick = TeddyCommand.trick(in: parsedTranscript.transcript) {
                         await MainActor.run { [weak self] in
                             self?.finishWithTeddyTrick(trick, savedAudioFileName: savedAudioFile?.fileName)
@@ -3807,6 +3816,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
         case .wiggle: return "Rio did a wiggle"
         case .dougie: return "Rio hit the Dougie"
         }
+    }
+
+    /// Puts the detected language's look on the pill (still showing while the text is
+    /// processed) and remembers it for the next dictation.
+    private func applySpokenLook(_ look: SpokenLook) {
+        lastSpokenLook = look
+        overlayManager.setSpokenLook(SpokenLook.forLanguage(transcriptionLanguage) ?? look)
     }
 
     /// "Rio go crazy" / "Rio show me ur shi jelly" / "Rio hit the Dougie": nothing is typed or saved. The bear jumps

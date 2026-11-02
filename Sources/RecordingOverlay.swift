@@ -16,6 +16,8 @@ final class RecordingOverlayState: ObservableObject {
     @Published var teddyTrip: TeddyTrip = .none
     @Published var moment: TeddyMoment?
     @Published var outfit: TeddyOutfit = .hoodie
+    /// What the talking bear wears for the spoken language (Arabic, Hindi or Urdu).
+    @Published var spokenLook: SpokenLook = .none
 }
 
 /// Voice tricks ("Rio go crazy", "Rio show me ur shi jelly", "Rio hit the Dougie"): while the bear is away the pill is empty, and
@@ -290,6 +292,14 @@ final class RecordingOverlayManager {
     /// The outfit the bear wears in every pill state; set when a recording starts.
     func setOutfit(_ outfit: TeddyOutfit) {
         DispatchQueue.main.async { self.overlayState.outfit = outfit }
+    }
+
+    /// The traditional look the talking bear wears while you dictate; the pill only.
+    func setSpokenLook(_ look: SpokenLook) {
+        DispatchQueue.main.async {
+            guard self.overlayState.spokenLook != look else { return }
+            self.overlayState.spokenLook = look
+        }
     }
 
     func showUpdateAvailable(version: String) {
@@ -1068,7 +1078,8 @@ struct RecordingOverlayView: View {
                     if state.teddyTrip != .away {
                         TalkingBearView(
                             mood: bearMood, audioLevel: state.audioLevel, height: 30,
-                            isEditing: state.isCommandMode, outfit: state.outfit
+                            isEditing: state.isCommandMode, outfit: state.outfit,
+                            look: state.spokenLook
                         )
                     }
 

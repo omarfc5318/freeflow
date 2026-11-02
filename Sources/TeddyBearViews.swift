@@ -18,6 +18,8 @@ struct TalkingBearView: View {
     var height: CGFloat = 28
     var isEditing = false
     var outfit: TeddyOutfit = .hoodie
+    /// Traditional look for the spoken language; replaces the outfit on the pill only.
+    var look: SpokenLook = .none
 
     /// Drawing space; the art is laid out on a 44 x 32 grid and scaled to `height`.
     static let gridSize = CGSize(width: 44, height: 32)
@@ -34,7 +36,8 @@ struct TalkingBearView: View {
                     level: mood == .talking ? CGFloat(min(max(audioLevel, 0), 1)) : 0,
                     mood: mood,
                     isEditing: isEditing,
-                    outfit: outfit
+                    outfit: outfit,
+                    look: look
                 )
             }
         }
