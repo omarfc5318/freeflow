@@ -42,6 +42,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/UndoDictationCore.swift \
 	Sources/TeddyBearCore.swift \
 	Sources/TeddyLookCore.swift \
+	Sources/TeddyMilestoneCore.swift \
 	Sources/UpdateManager.swift \
 	Sources/UsageStatsCore.swift \
 	Sources/WhisperBoostCore.swift \
