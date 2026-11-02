@@ -35,6 +35,8 @@ enum TeddyTrick: Equatable {
     case goCrazy
     /// "Teddy show me ur shi jelly": run to the middle, wiggle, thumbs up, run back.
     case wiggle
+    /// "Teddy, hit the Dougie": run to the middle, dance the Dougie for four loops, run back.
+    case dougie
 }
 
 enum TeddyCommand {
@@ -50,7 +52,24 @@ enum TeddyCommand {
         if rest.count == 2, ["go", "goes"].contains(rest[0]), rest[1] == "crazy" {
             return .goCrazy
         }
+        if isHitTheDougie(rest) { return .dougie }
         return isShowMeJelly(rest) ? .wiggle : nil
+    }
+
+    /// "hit the dougie", "do the dougie", "dougie". Speech-to-text also writes "duggie",
+    /// "dougy" and even "doggie"/"doggy". The verb and the article are optional, but nothing
+    /// else may be added.
+    private static func isHitTheDougie(_ words: [String]) -> Bool {
+        let dougies = ["dougie", "dougy", "dougi", "dougey", "duggie", "duggy", "dugie", "doogie", "doogy", "doggie", "doggy"]
+        let verbs = ["hit", "hits", "hitting", "do", "does", "doing"]
+        let articles = ["the", "da", "a"]
+        guard let last = words.last, dougies.contains(last) else { return false }
+        switch words.count {
+        case 1: return true
+        case 2: return verbs.contains(words[0])
+        case 3: return verbs.contains(words[0]) && articles.contains(words[1])
+        default: return false
+        }
     }
 
     /// "show me ur shi jelly". Speech-to-text spells it many ways ("your shy jelly",
@@ -105,6 +124,8 @@ struct TeddyRoutine {
     }
 
     let steps: [Step]
+    /// When the dance (and so the music) plays, in seconds from the start of the routine.
+    var beatWindow: ClosedRange<TimeInterval>?
 
     var duration: TimeInterval { steps.reduce(0) { $0 + $1.duration } }
 
@@ -176,6 +197,8 @@ struct TeddyRoutine {
             return TeddyLap.routine(on: TeddyLap.track(screenSize: screenSize, home: home, margin: margin))
         case .wiggle:
             return TeddyWiggle.routine(screenSize: screenSize, home: home, margin: margin)
+        case .dougie:
+            return TeddyDougie.routine(screenSize: screenSize, home: home, margin: margin)
         }
     }
 }
@@ -243,9 +266,14 @@ enum TeddyWiggle {
     static let secondsPerWiggle: TimeInterval = 0.5
     static let thumbsUpSeconds: TimeInterval = 1.3
 
+    /// The middle of the screen, but never above where the bear lands.
+    static func middle(landing: CGPoint, screenSize: CGSize) -> CGPoint {
+        CGPoint(x: screenSize.width / 2, y: max(landing.y, screenSize.height / 2))
+    }
+
     static func routine(screenSize: CGSize, home: CGPoint, margin: CGFloat) -> TeddyRoutine {
         let landing = TeddyRoutine.landing(for: home, screenSize: screenSize, margin: margin)
-        let middle = CGPoint(x: screenSize.width / 2, y: max(landing.y, screenSize.height / 2))
+        let middle = TeddyWiggle.middle(landing: landing, screenSize: screenSize)
         let wiggles = Double(wiggleCount)
         return TeddyRoutine(steps: [
             TeddyRoutine.jump(from: home, to: landing, leavingHome: true),

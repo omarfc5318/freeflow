@@ -41,6 +41,8 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/TranscriptionService.swift \
 	Sources/UndoDictationCore.swift \
 	Sources/TeddyBearCore.swift \
+	Sources/TeddyBeat.swift \
+	Sources/TeddyDougieCore.swift \
 	Sources/TeddyLookCore.swift \
 	Sources/UpdateManager.swift \
 	Sources/UsageStatsCore.swift \
