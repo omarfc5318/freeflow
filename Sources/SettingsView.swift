@@ -530,8 +530,7 @@ struct GeneralSettingsView: View {
     @Environment(\.openURL) private var openURL
     @AppStorage("show_menu_bar_icon") private var showMenuBarIcon = true
     @AppStorage("overlay_display_id") private var overlayDisplayID = 0
-    @AppStorage("use_compact_overlay") private var useCompactOverlay = true
-    @AppStorage(RecordingTimerPreference.storageKey) private var showRecordingTimer = RecordingTimerPreference.defaultEnabled
+    @AppStorage("use_compact_overlay") private var useCompactOverlay = false
     @State private var screensVersion = 0
     @State private var apiDraft = APIConfigurationDraft()
     @State private var advancedProviderSettingsExpanded = false
@@ -1152,15 +1151,10 @@ struct GeneralSettingsView: View {
             )
             OverlayStyleOptionRow(
                 title: "Drop-down pill",
-                subtitle: "Single pill hangs below the menu bar during recording. Larger and more visible, but covers a thin strip of whatever app is active.",
+                subtitle: "A small pill with a talking teddy bear hangs below the menu bar while you dictate. Easy to see, but covers a thin strip of whatever app is active.",
                 isMinimalist: false,
                 selection: $useCompactOverlay
             )
-
-            Toggle("Show recording timer", isOn: $showRecordingTimer)
-            Text("When off, the minimalist overlay shows a waveform instead of the timer, and the drop-down pill hides the timer. Applies to the next recording.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
             Divider()
 

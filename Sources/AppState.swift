@@ -736,6 +736,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     let audioRecorder = AudioRecorder()
     let hotkeyManager = HotkeyManager()
     let overlayManager = RecordingOverlayManager()
+    private let teddyLap = TeddyLapController()
     private var accessibilityTimer: Timer?
     private var audioLevelCancellable: AnyCancellable?
     private var debugOverlayTimer: Timer?
@@ -2568,6 +2569,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     private func beginRecording(triggerMode: RecordingTriggerMode) {
         os_log(.info, log: recordingLog, "beginRecording() entered")
+        // A new dictation ends the bear's lap at once.
+        teddyLap.stop()
         beginCriticalDictationActivity()
         clearPendingOverlayDismissToken()
         errorMessage = nil
@@ -3136,6 +3139,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         pressEnterCommandEnabled: self.isPressEnterVoiceCommandEnabled
                     )
                     try Task.checkCancellation()
+                    if !sessionIntent.isCommandMode, TeddyCommand.isGoCrazy(parsedTranscript.transcript) {
+                        await MainActor.run { [weak self] in
+                            self?.finishWithTeddyLap(savedAudioFileName: savedAudioFile?.fileName)
+                        }
+                        return
+                    }
                     // Capture the parsed raw transcript as lastTranscript before
                     // post-processing runs. If anything after this throws or focus
                     // shifts mid-paste, the Paste Again shortcut still has the raw
@@ -3708,6 +3717,44 @@ final class AppState: ObservableObject, @unchecked Sendable {
         DispatchQueue.main.async {
             if UpdateManager.shared.updateAvailable {
                 UpdateManager.shared.showUpdateAlert()
+            }
+        }
+    }
+
+    private static let teddyStatusText = "Teddy went crazy"
+    private static let teddyRestSeconds: TimeInterval = 0.8
+
+    /// "Teddy go crazy": nothing is typed or saved. The bear jumps out of the pill, runs
+    /// one lap around the screen and jumps back in; a new dictation stops it at once.
+    private func finishWithTeddyLap(savedAudioFileName: String?) {
+        guard isTranscribing else { return }
+        transcriptionTask = nil
+        transcribingAudioFileName = nil
+        isTranscribing = false
+        endCriticalDictationActivity()
+        if let savedAudioFileName {
+            Self.deleteAudioFile(savedAudioFileName)
+        }
+        audioRecorder.cleanup()
+        refreshAvailableMicrophonesIfNeeded()
+        debugStatusMessage = "Done"
+        statusText = Self.teddyStatusText
+        scheduleReadyStatusReset(after: 3, matching: [Self.teddyStatusText])
+
+        let dismissToken = UUID()
+        pendingOverlayDismissToken = dismissToken
+        guard let home = overlayManager.teddyHome() else {
+            overlayManager.dismiss()
+            return
+        }
+        overlayManager.setTeddyTrip(.away)
+        teddyLap.start(on: home.screen, home: home.point) { [weak self] in
+            guard let self, self.pendingOverlayDismissToken == dismissToken else { return }
+            self.overlayManager.setTeddyTrip(.back)
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.teddyRestSeconds) { [weak self] in
+                guard let self, self.pendingOverlayDismissToken == dismissToken else { return }
+                self.pendingOverlayDismissToken = nil
+                self.overlayManager.dismiss()
             }
         }
     }

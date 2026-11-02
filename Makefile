@@ -40,6 +40,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/TranscriptionRequestCore.swift \
 	Sources/TranscriptionService.swift \
 	Sources/UndoDictationCore.swift \
+	Sources/TeddyBearCore.swift \
 	Sources/UpdateManager.swift \
 	Sources/UsageStatsCore.swift \
 	Sources/WhisperBoostCore.swift \

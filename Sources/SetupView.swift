@@ -102,7 +102,7 @@ struct SetupView: View {
     @State private var isCapturingToggleShortcut = false
     @State private var isCapturingCopyAgainShortcut = false
     @StateObject private var testHotkeyHarness = SetupTestHotkeyHarness()
-    @AppStorage("use_compact_overlay") private var useCompactOverlay = true
+    @AppStorage("use_compact_overlay") private var useCompactOverlay = false
 
     private let totalSteps: [SetupStep] = SetupStep.allCases
     private var isCapturingShortcut: Bool {
@@ -886,7 +886,7 @@ struct SetupView: View {
                 )
                 OverlayStyleOptionRow(
                     title: "Drop-down pill",
-                    subtitle: "Single pill hangs below the menu bar during recording. Larger and more visible, but covers a thin strip of whatever app is active.",
+                    subtitle: "A small pill with a talking teddy bear hangs below the menu bar while you dictate. Easy to see, but covers a thin strip of whatever app is active.",
                     isMinimalist: false,
                     selection: $useCompactOverlay
                 )
