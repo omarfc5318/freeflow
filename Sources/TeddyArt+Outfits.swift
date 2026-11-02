@@ -2,17 +2,42 @@ import SwiftUI
 
 // Torsos and shoes for the full-body teddy, in both outfits and both views (40 x 50 grid).
 extension TeddyArt {
-    /// Hoodie or jacket: rounded top, straight-ish hem at y = 37.
-    static func torsoPath() -> Path {
+    /// Hoodie or jacket: rounded top, straight-ish hem at y = 37. A shoulder lift (positive is
+    /// up) tilts the top of the torso on that side. Lifts are the viewer's left / right.
+    static func torsoPath(leftLift: CGFloat = 0, rightLift: CGFloat = 0) -> Path {
+        let neck = 24.5 - (leftLift + rightLift) * 0.3
         var path = Path()
-        path.move(to: CGPoint(x: 20, y: 24.5))
-        path.addCurve(to: CGPoint(x: 28.6, y: 31.8), control1: CGPoint(x: 25, y: 24.5), control2: CGPoint(x: 28.6, y: 27.6))
+        path.move(to: CGPoint(x: 20, y: neck))
+        path.addCurve(
+            to: CGPoint(x: 28.6, y: 31.8 - rightLift * 0.55),
+            control1: CGPoint(x: 25, y: 24.5 - rightLift * 0.9),
+            control2: CGPoint(x: 28.6, y: 27.6 - rightLift * 0.8)
+        )
         path.addCurve(to: CGPoint(x: 27.2, y: 37.2), control1: CGPoint(x: 28.6, y: 34.2), control2: CGPoint(x: 28.2, y: 36))
         path.addQuadCurve(to: CGPoint(x: 12.8, y: 37.2), control: CGPoint(x: 20, y: 38.7))
-        path.addCurve(to: CGPoint(x: 11.4, y: 31.8), control1: CGPoint(x: 11.8, y: 36), control2: CGPoint(x: 11.4, y: 34.2))
-        path.addCurve(to: CGPoint(x: 20, y: 24.5), control1: CGPoint(x: 11.4, y: 27.6), control2: CGPoint(x: 15, y: 24.5))
+        path.addCurve(to: CGPoint(x: 11.4, y: 31.8 - leftLift * 0.55), control1: CGPoint(x: 11.8, y: 36), control2: CGPoint(x: 11.4, y: 34.2))
+        path.addCurve(
+            to: CGPoint(x: 20, y: neck),
+            control1: CGPoint(x: 11.4, y: 27.6 - leftLift * 0.8),
+            control2: CGPoint(x: 15, y: 24.5 - leftLift * 0.9)
+        )
         path.closeSubpath()
         return path
+    }
+
+    /// How much narrower the torso gets at full twist.
+    static let twistNarrowing: Double = 0.16
+    /// How far (grid points) the torso details slide at full twist.
+    static let twistSlide: Double = 3.2
+
+    /// The torso context for a twist: narrowed about the centre line.
+    static func twisted(_ graphics: GraphicsContext, _ twist: Double) -> GraphicsContext {
+        var narrowed = graphics
+        guard twist != 0 else { return narrowed }
+        narrowed.translateBy(x: 20, y: 0)
+        narrowed.scaleBy(x: 1 - CGFloat(abs(twist) * twistNarrowing), y: 1)
+        narrowed.translateBy(x: -20, y: 0)
+        return narrowed
     }
 
     /// The jeans or trousers seat that the torso hangs over.
@@ -22,25 +47,27 @@ extension TeddyArt {
 
     // MARK: Front
 
-    static func drawFrontTorso(in graphics: inout GraphicsContext, outfit: TeddyOutfit) {
+    static func drawFrontTorso(in graphics: inout GraphicsContext, outfit: TeddyOutfit, pose: TeddyBodyPose = .standing) {
         switch outfit {
-        case .hoodie: drawFrontHoodie(in: &graphics)
-        case .suit: drawFrontSuit(in: &graphics)
+        case .hoodie: drawFrontHoodie(in: &graphics, pose: pose)
+        case .suit: drawFrontSuit(in: &graphics, pose: pose)
         }
     }
 
-    private static func drawFrontHoodie(in graphics: inout GraphicsContext) {
+    private static func drawFrontHoodie(in graphics: inout GraphicsContext, pose: TeddyBodyPose) {
         sticker(&graphics, seatPath(), TeddyPalette.jeans)
         var fly = Path()
         fly.move(to: CGPoint(x: 20, y: 38.4))
         fly.addLine(to: CGPoint(x: 20, y: 41.6))
         graphics.stroke(fly, with: .color(TeddyPalette.jeansDark), style: StrokeStyle(lineWidth: 0.6, lineCap: .round, dash: [0.9, 0.7]))
 
-        let torso = torsoPath()
-        fill(&graphics, torso, TeddyPalette.hoodie)
-        var inside = graphics
+        var body = twisted(graphics, pose.twist)
+        let torso = torsoPath(leftLift: pose.leftShoulderLift, rightLift: pose.rightShoulderLift)
+        fill(&body, torso, TeddyPalette.hoodie)
+        var inside = body
         inside.clip(to: torso)
         fill(&inside, Path(CGRect(x: 10, y: 35.2, width: 20, height: 5)), TeddyPalette.hoodieDark)
+        inside.translateBy(x: CGFloat(pose.twist * twistSlide), y: 0)
         // Kangaroo pocket.
         var pocket = Path()
         pocket.move(to: CGPoint(x: 14.4, y: 30.4))
@@ -65,20 +92,22 @@ extension TeddyArt {
             stroke(&inside, cord, TeddyPalette.cord, width: 0.75)
             sticker(&inside, circle(CGPoint(x: bottom, y: 30.7), 0.75), TeddyPalette.cord, rim: 0.45)
         }
-        graphics.stroke(torso, with: .color(TeddyPalette.ink), style: StrokeStyle(lineWidth: outline, lineJoin: .round))
+        body.stroke(torso, with: .color(TeddyPalette.ink), style: StrokeStyle(lineWidth: outline, lineJoin: .round))
     }
 
-    private static func drawFrontSuit(in graphics: inout GraphicsContext) {
+    private static func drawFrontSuit(in graphics: inout GraphicsContext, pose: TeddyBodyPose) {
         sticker(&graphics, seatPath(), TeddyPalette.suit)
         var crease = Path()
         crease.move(to: CGPoint(x: 20, y: 38.6))
         crease.addLine(to: CGPoint(x: 20, y: 41.6))
         stroke(&graphics, crease, TeddyPalette.suitDark, width: 0.6)
 
-        let torso = torsoPath()
-        fill(&graphics, torso, TeddyPalette.suit)
-        var inside = graphics
+        var body = twisted(graphics, pose.twist)
+        let torso = torsoPath(leftLift: pose.leftShoulderLift, rightLift: pose.rightShoulderLift)
+        fill(&body, torso, TeddyPalette.suit)
+        var inside = body
         inside.clip(to: torso)
+        inside.translateBy(x: CGFloat(pose.twist * twistSlide), y: 0)
 
         // Waistcoat, white shirt and tie down the middle.
         var vest = Path()
@@ -130,38 +159,40 @@ extension TeddyArt {
         flaps.move(to: CGPoint(x: 26.8, y: 34.8))
         flaps.addLine(to: CGPoint(x: 24.8, y: 35.0))
         stroke(&inside, flaps, TeddyPalette.suitDark, width: 0.8)
-        graphics.stroke(torso, with: .color(TeddyPalette.ink), style: StrokeStyle(lineWidth: outline, lineJoin: .round))
+        body.stroke(torso, with: .color(TeddyPalette.ink), style: StrokeStyle(lineWidth: outline, lineJoin: .round))
     }
 
     // MARK: Back
 
-    static func drawBackTorso(in graphics: inout GraphicsContext, outfit: TeddyOutfit) {
+    static func drawBackTorso(in graphics: inout GraphicsContext, outfit: TeddyOutfit, pose: TeddyBodyPose = .standing) {
         switch outfit {
-        case .hoodie: drawBackHoodie(in: &graphics)
-        case .suit: drawBackSuit(in: &graphics)
+        case .hoodie: drawBackHoodie(in: &graphics, pose: pose)
+        case .suit: drawBackSuit(in: &graphics, pose: pose)
         }
     }
 
-    private static func drawBackHoodie(in graphics: inout GraphicsContext) {
+    private static func drawBackHoodie(in graphics: inout GraphicsContext, pose: TeddyBodyPose) {
         sticker(&graphics, seatPath(), TeddyPalette.jeans)
         drawBackPockets(in: &graphics, stitch: TeddyPalette.jeansDark)
 
-        let torso = torsoPath()
-        fill(&graphics, torso, TeddyPalette.hoodie)
-        var inside = graphics
+        var body = twisted(graphics, pose.twist)
+        let torso = torsoPath(leftLift: pose.leftShoulderLift, rightLift: pose.rightShoulderLift)
+        fill(&body, torso, TeddyPalette.hoodie)
+        var inside = body
         inside.clip(to: torso)
         fill(&inside, Path(CGRect(x: 10, y: 35.2, width: 20, height: 5)), TeddyPalette.hoodieDark)
+        inside.translateBy(x: CGFloat(pose.twist * twistSlide) * 0.5, y: 0)
         // The hood draped over the shoulders.
         fill(&inside, Path(ellipseIn: CGRect(x: 12.2, y: 23.6, width: 15.6, height: 6.2)), TeddyPalette.hoodieDark)
         var seam = Path()
         seam.move(to: CGPoint(x: 20, y: 30.2))
         seam.addLine(to: CGPoint(x: 20, y: 35))
         inside.stroke(seam, with: .color(TeddyPalette.hoodieDark), style: StrokeStyle(lineWidth: 0.7, lineCap: .round, dash: [1.2, 1.2]))
-        graphics.stroke(torso, with: .color(TeddyPalette.ink), style: StrokeStyle(lineWidth: outline, lineJoin: .round))
-        drawTail(in: &graphics)
+        body.stroke(torso, with: .color(TeddyPalette.ink), style: StrokeStyle(lineWidth: outline, lineJoin: .round))
+        drawTail(in: &graphics, shift: CGFloat(pose.twist * twistSlide) * 0.8)
     }
 
-    private static func drawBackSuit(in graphics: inout GraphicsContext) {
+    private static func drawBackSuit(in graphics: inout GraphicsContext, pose: TeddyBodyPose) {
         sticker(&graphics, seatPath(), TeddyPalette.suit)
         var welts = Path()
         welts.move(to: CGPoint(x: 14.0, y: 39.4))
@@ -170,10 +201,12 @@ extension TeddyArt {
         welts.addLine(to: CGPoint(x: 26.0, y: 39.4))
         stroke(&graphics, welts, TeddyPalette.suitDark, width: 0.8)
 
-        let torso = torsoPath()
-        fill(&graphics, torso, TeddyPalette.suit)
-        var inside = graphics
+        var body = twisted(graphics, pose.twist)
+        let torso = torsoPath(leftLift: pose.leftShoulderLift, rightLift: pose.rightShoulderLift)
+        fill(&body, torso, TeddyPalette.suit)
+        var inside = body
         inside.clip(to: torso)
+        inside.translateBy(x: CGFloat(pose.twist * twistSlide) * 0.5, y: 0)
         fill(&inside, Path(ellipseIn: CGRect(x: 13.6, y: 23.4, width: 12.8, height: 4.0)), TeddyPalette.suitLight)
         var seams = Path()
         seams.move(to: CGPoint(x: 20, y: 27))
@@ -188,8 +221,8 @@ extension TeddyArt {
         vent.move(to: CGPoint(x: 20.8, y: 34.6))
         vent.addLine(to: CGPoint(x: 20.8, y: 37.8))
         stroke(&inside, vent, TeddyPalette.suitDark, width: 0.6)
-        graphics.stroke(torso, with: .color(TeddyPalette.ink), style: StrokeStyle(lineWidth: outline, lineJoin: .round))
-        drawTail(in: &graphics)
+        body.stroke(torso, with: .color(TeddyPalette.ink), style: StrokeStyle(lineWidth: outline, lineJoin: .round))
+        drawTail(in: &graphics, shift: CGFloat(pose.twist * twistSlide) * 0.8)
     }
 
     /// Two jeans back pockets with stitching.
@@ -206,16 +239,23 @@ extension TeddyArt {
         }
     }
 
-    private static func drawTail(in graphics: inout GraphicsContext) {
-        sticker(&graphics, circle(CGPoint(x: 20, y: 38.0), 2.5), TeddyPalette.fur)
-        fill(&graphics, circle(CGPoint(x: 19.3, y: 37.3), 0.8), TeddyPalette.tan)
+    private static func drawTail(in graphics: inout GraphicsContext, shift: CGFloat = 0) {
+        sticker(&graphics, circle(CGPoint(x: 20 + shift, y: 38.0), 2.5), TeddyPalette.fur)
+        fill(&graphics, circle(CGPoint(x: 19.3 + shift, y: 37.3), 0.8), TeddyPalette.tan)
     }
 
     // MARK: Shoes
 
     /// White low-top sneakers (plain, light grey sole, no logo) or black dress shoes.
     /// Front-view toes point outwards; from behind only the heel shows.
-    static func drawShoe(in graphics: inout GraphicsContext, at tip: CGPoint, isLeft: Bool, isBack: Bool, outfit: TeddyOutfit) {
+    /// `tilt` (radians, 0 flat) points the toe down about the ankle, like a toe tap.
+    static func drawShoe(in graphics: inout GraphicsContext, at tip: CGPoint, isLeft: Bool, isBack: Bool, outfit: TeddyOutfit, tilt: Double = 0) {
+        var graphics = graphics
+        if tilt != 0 {
+            graphics.translateBy(x: tip.x, y: tip.y)
+            graphics.rotate(by: .radians(isLeft ? -tilt : tilt))
+            graphics.translateBy(x: -tip.x, y: -tip.y)
+        }
         let isSneaker = outfit == .hoodie
         let width: CGFloat = isBack ? 7.0 : 8.8
         let height: CGFloat = 4.6

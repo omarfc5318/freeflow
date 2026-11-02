@@ -41,7 +41,8 @@ extension TeddyArt {
         face: TeddyFace,
         outfit: TeddyOutfit,
         partyHat: Bool = false,
-        neckwear: Bool = false
+        neckwear: Bool = false,
+        faceShift: CGFloat = 0
     ) {
         if neckwear && outfit == .suit { drawJacketShoulders(in: &graphics) }
         switch outfit {
@@ -53,7 +54,16 @@ extension TeddyArt {
             drawEars(in: &graphics, innerEars: true, clipsInsideHood: false)
             drawFurDisc(in: &graphics)
         }
-        drawFace(in: &graphics, face)
+        if faceShift == 0 {
+            drawFace(in: &graphics, face)
+        } else {
+            // Head turn: the features slide sideways and squash a touch, like looking round.
+            var features = graphics
+            features.translateBy(x: headCenter.x + faceShift, y: 0)
+            features.scaleBy(x: 1 - abs(faceShift) * 0.03, y: 1)
+            features.translateBy(x: -headCenter.x, y: 0)
+            drawFace(in: &features, face)
+        }
         switch outfit {
         case .hoodie:
             drawHoodLip(in: &graphics)
