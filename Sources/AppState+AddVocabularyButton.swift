@@ -62,5 +62,6 @@ extension AppState {
         statusText = status
         scheduleReadyStatusReset(after: 3, matching: [status])
         Task { @MainActor in VocabularyNotificationManager.shared.flashCheckmark() }
+        showLearnedWordsPill(added)
     }
 }

@@ -11,6 +11,24 @@ enum TeddyBearTests {
         testTripDurationCoversJumpsAndLoop()
         testWiggleRoutineOrder()
         testWiggleRoutineEndsInThePill()
+        testLearnedCardLabel()
+        testLearnedCardWidthStaysInBounds()
+    }
+
+    private static func testLearnedCardLabel() {
+        TestSupport.expectEqual(TeddyLearnedCard.label(for: ["Siobhan"]), "Siobhan")
+        TestSupport.expectEqual(TeddyLearnedCard.label(for: ["Siobhan", " Niamh "]), "Siobhan, Niamh")
+        TestSupport.expectEqual(TeddyLearnedCard.label(for: ["Siobhan", "Niamh", "Tadhg", "Kubeflow"]), "Siobhan, Niamh +2")
+        TestSupport.expectEqual(TeddyLearnedCard.label(for: ["", "  "]), "")
+        let long = TeddyLearnedCard.label(for: [String(repeating: "x", count: 40)])
+        TestSupport.expectEqual(long.count, TeddyLearnedCard.maxLabelCharacters)
+        TestSupport.expect(long.hasSuffix("…"), "Long words are cut with an ellipsis")
+    }
+
+    private static func testLearnedCardWidthStaysInBounds() {
+        TestSupport.expectEqual(TeddyLearnedCard.pillWidth(for: "Ana"), 150)
+        TestSupport.expect(TeddyLearnedCard.pillWidth(for: "Siobhan, Krzysztof") > 150, "Grows with the words")
+        TestSupport.expectEqual(TeddyLearnedCard.pillWidth(for: String(repeating: "x", count: 60)), 380)
     }
 
     private static func testGoCrazyMatchesOnlyTheWholePhrase() {

@@ -39,6 +39,44 @@ struct TalkingBearView: View {
     }
 }
 
+// MARK: - Learned-word card (pill)
+
+/// The pill bear peeking in with one paw on a white card that shows the words it just
+/// learned from the user's corrections.
+struct LearnedWordView: View {
+    let label: String
+
+    var body: some View {
+        HStack(spacing: -7) {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
+                Canvas { graphics, size in
+                    let scale = size.height / 32
+                    graphics.scaleBy(x: scale, y: scale)
+                    TeddyArt.drawBearHoldingCard(in: &graphics, time: context.date.timeIntervalSinceReferenceDate)
+                }
+            }
+            .frame(width: 30 * 36 / 32, height: 30)
+            .zIndex(1)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Learned")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.black.opacity(0.55))
+                Text(label)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.black)
+                    .lineLimit(1)
+            }
+            .padding(.leading, 11)
+            .padding(.trailing, 8)
+            .padding(.vertical, 2)
+            .background(RoundedRectangle(cornerRadius: 6).fill(.white))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Learned \(label)")
+    }
+}
+
 // MARK: - Full-body teddy (voice tricks)
 
 /// The same bear, full body: a chubby teddy on two feet with fat arms.
@@ -240,6 +278,23 @@ enum TeddyArt {
         case .idle:
             break
         }
+    }
+
+    /// On a 36 x 32 grid: the pill bear's head, smiling, with a paw at the right edge
+    /// that rests on the card next to it.
+    static func drawBearHoldingCard(in graphics: inout GraphicsContext, time: TimeInterval) {
+        // A small proud bounce.
+        graphics.translateBy(x: 0, y: -CGFloat(abs(sin(time * 4))) * 0.8)
+        drawHead(in: &graphics, mouthOpen: 0.3, isBlinking: isBlinking(at: time), isThinking: false)
+        let paw = circle(CGPoint(x: 31.5, y: 24.5), 3.3)
+        fill(&graphics, paw, .white)
+        graphics.stroke(paw, with: .color(.black), lineWidth: outline)
+        var toes = Path()
+        for x in [30.2, 32.8] {
+            toes.move(to: CGPoint(x: x, y: 21.6))
+            toes.addLine(to: CGPoint(x: x, y: 23.2))
+        }
+        graphics.stroke(toes, with: .color(.black), style: StrokeStyle(lineWidth: 0.7, lineCap: .round))
     }
 
     private static func drawMicrophone(in graphics: inout GraphicsContext) {

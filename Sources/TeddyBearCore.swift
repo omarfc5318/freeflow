@@ -1,6 +1,33 @@
 import CoreGraphics
 import Foundation
 
+/// The card the bear holds up in the pill when corrections are learned.
+enum TeddyLearnedCard {
+    static let showSeconds: TimeInterval = 2.5
+    static let maxShownWords = 2
+    static let maxLabelCharacters = 28
+
+    /// "Siobhan", "Siobhan, Niamh", or "Siobhan, Niamh +2"; long text ends in "…".
+    static func label(for words: [String]) -> String {
+        let cleaned = words
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return "" }
+        var label = cleaned.prefix(maxShownWords).joined(separator: ", ")
+        if label.count > maxLabelCharacters {
+            label = String(label.prefix(maxLabelCharacters - 1)) + "…"
+        }
+        let hidden = cleaned.count - min(cleaned.count, maxShownWords)
+        return hidden > 0 ? "\(label) +\(hidden)" : label
+    }
+
+    /// Bear, overlapping card and padding; the card grows with the text.
+    static func pillWidth(for label: String) -> CGFloat {
+        let card = CGFloat(label.count) * 7.4 + 22
+        return min(380, max(150, 34 + card - 7 + 28))
+    }
+}
+
 /// Voice tricks for the bear. Only a dictation that is nothing but a trick phrase counts,
 /// so a sentence that happens to contain one is still typed normally.
 enum TeddyTrick: Equatable {

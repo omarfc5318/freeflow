@@ -3721,6 +3721,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Shows the bear holding up words just learned from corrections, unless a dictation
+    /// or one of the bear's tricks is using the pill.
+    func showLearnedWordsPill(_ words: [String]) {
+        guard !isRecording, !isTranscribing, !teddyTrip.isRunning, pendingOverlayDismissToken == nil else { return }
+        overlayManager.showLearned(words)
+    }
+
     private static let teddyRestSeconds: TimeInterval = 0.8
 
     private static func teddyStatusText(for trick: TeddyTrick) -> String {

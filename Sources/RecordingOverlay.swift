@@ -14,6 +14,7 @@ final class RecordingOverlayState: ObservableObject {
     @Published var errorMessage: String?
     @Published var toastID: UUID?
     @Published var teddyTrip: TeddyTrip = .none
+    @Published var learnedLabel = ""
 }
 
 /// Voice tricks ("Teddy go crazy", "Teddy show me ur shi jelly"): while the bear is away the pill is empty, and
@@ -30,6 +31,8 @@ enum OverlayPhase {
     case transcribing
     case feedback
     case updateAvailable
+    /// The bear holds up a card with words just learned from the user's corrections.
+    case learned
 }
 
 // MARK: - NSScreen Helpers
@@ -85,6 +88,7 @@ private func makeNotchContent<V: View>(
 
 final class RecordingOverlayManager {
     private var overlayWindow: NSPanel?
+    private var learnedToken: UUID?
     private let overlayState = RecordingOverlayState()
     private var lockedOverlayWidth: CGFloat?
 
@@ -254,6 +258,29 @@ final class RecordingOverlayManager {
         }
     }
 
+    /// Drops the pill down for a moment with the bear holding up the learned words.
+    /// Skipped while a dictation is in progress; a new dictation replaces it at once.
+    func showLearned(_ words: [String]) {
+        let label = TeddyLearnedCard.label(for: words)
+        guard !label.isEmpty else { return }
+        DispatchQueue.main.async {
+            let busy: Set<OverlayPhase> = [.initializing, .recording, .transcribing]
+            if self.overlayWindow != nil, busy.contains(self.overlayState.phase) { return }
+            let token = UUID()
+            self.learnedToken = token
+            self.lockedOverlayWidth = nil
+            self.overlayState.isCommandMode = false
+            self.overlayState.teddyTrip = .none
+            self.overlayState.learnedLabel = label
+            self.overlayState.phase = .learned
+            self.showOverlayPanel(animatedResize: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + TeddyLearnedCard.showSeconds) {
+                guard self.learnedToken == token, self.overlayState.phase == .learned else { return }
+                self.dismissAll()
+            }
+        }
+    }
+
     func showUpdateAvailable(version: String) {
         DispatchQueue.main.async {
             self.lockedOverlayWidth = nil
@@ -382,7 +409,7 @@ final class RecordingOverlayManager {
             return true
         case .feedback:
             return overlayState.errorMessage?.isEmpty ?? true
-        case .updateAvailable:
+        case .updateAvailable, .learned:
             return false
         }
     }
@@ -413,8 +440,9 @@ final class RecordingOverlayManager {
 
         let width = overlayWidth
         let useCompact = (UserDefaults.standard.object(forKey: "use_compact_overlay") as? Bool) ?? false
-        let forceDropDownPill = overlayState.phase == .feedback
-            && !(overlayState.errorMessage?.isEmpty ?? true)
+        let forceDropDownPill = (overlayState.phase == .feedback
+            && !(overlayState.errorMessage?.isEmpty ?? true))
+            || overlayState.phase == .learned
         // Compact mode: overlay sits flush with the menu bar on every display.
         // notchOverlap equals the menu-bar height on non-notched screens too,
         // so zero protrusion is universal — not notch-only. The legacy
@@ -450,6 +478,12 @@ final class RecordingOverlayManager {
             }()
             guard screenHasNotch else { return feedbackWidth }
             return max(notchWidth, feedbackWidth)
+        }
+
+        if overlayState.phase == .learned {
+            let learnedWidth = TeddyLearnedCard.pillWidth(for: overlayState.learnedLabel)
+            guard screenHasNotch else { return learnedWidth }
+            return max(notchWidth, learnedWidth)
         }
 
         if overlayState.phase == .updateAvailable {
@@ -1014,6 +1048,8 @@ struct RecordingOverlayView: View {
                 ErrorOverlayView(message: message)
             } else if state.phase == .feedback {
                 FailureIndicatorView()
+            } else if state.phase == .learned {
+                LearnedWordView(label: state.learnedLabel)
             } else if state.phase == .updateAvailable {
                 UpdateAvailableOverlayView(onPress: onUpdateOverlayPressed)
             } else {
