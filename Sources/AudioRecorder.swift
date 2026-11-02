@@ -743,6 +743,17 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
         }
     }
 
+    /// Like `cleanup()` but never blocks the caller: it runs after any queued work on the
+    /// session queue (such as a deferred hardware stop) and before any later recording starts.
+    func cleanupWithoutWaiting() {
+        sessionQueue.async {
+            if let url = self.tempFileURL {
+                try? FileManager.default.removeItem(at: url)
+                self.tempFileURL = nil
+            }
+        }
+    }
+
     func cleanup() {
         let cleanup = {
             if let url = self.tempFileURL {

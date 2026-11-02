@@ -4,6 +4,7 @@ import Foundation
 enum TeddyMomentTests {
     static func run() {
         testSpeechGate()
+        testModeSwitchKeepsHeardSpeech()
         testErrorShrug()
         testWordMilestones()
         testStreakMilestones()
@@ -19,9 +20,10 @@ enum TeddyMomentTests {
     }
 
     private static func testSpeechGate() {
-        func skip(_ seconds: Double, _ heard: Double, _ peak: Float, command: Bool = false) -> Bool {
+        func skip(_ seconds: Double, _ heard: Double, _ peak: Float, command: Bool = false, whisper: Bool = false) -> Bool {
             TeddyShrug.shouldSkipTranscription(
-                isCommandMode: command, recordedSeconds: seconds, heardSpeechSeconds: heard, peakDB: peak
+                isCommandMode: command, recordedSeconds: seconds, heardSpeechSeconds: heard, peakDB: peak,
+                whisperMode: whisper
             )
         }
         TestSupport.expect(skip(0.16, 0, -30), "A quick tap is skipped")
@@ -29,12 +31,43 @@ enum TeddyMomentTests {
         TestSupport.expect(!skip(3, 1.2, -20), "Speech is sent")
         TestSupport.expect(!skip(3, 0, -30), "Loud audio without detected speech is sent")
         TestSupport.expect(!skip(0.16, 0, -90, command: true), "Edit Mode always sends")
+        // Review regressions: whispers and low-gain mics are never dropped as silence.
+        TestSupport.expect(!skip(0.8, 0, -55), "A quiet phrase above the room floor is sent")
+        TestSupport.expect(!skip(2, 0, -75, whisper: true), "Whisper mode never skips a real recording")
+        TestSupport.expect(skip(0.16, 0, -30, whisper: true), "Whisper mode still skips a tap")
+    }
+
+    /// Review regression: switching from hold to tap mode mid-recording used to replace the
+    /// detector, forgetting the speech said while holding, so the dictation was skipped.
+    private static func testModeSwitchKeepsHeardSpeech() {
+        var detector = SilenceAutoStop(delay: 5)
+        for _ in 0..<50 { _ = detector.shouldStop(afterBufferWithRMS: powf(10, -62 / 20), duration: 0.02) }
+        for _ in 0..<75 { _ = detector.shouldStop(afterBufferWithRMS: powf(10, -25 / 20), duration: 0.02) }
+        let heard = detector.heardSpeechSeconds
+        TestSupport.expect(heard > 1, "Speech while holding is heard")
+        detector.restartCountdown()
+        var stopped = false
+        for _ in 0..<300 { stopped = stopped || detector.shouldStop(afterBufferWithRMS: powf(10, -62 / 20), duration: 0.02) }
+        TestSupport.expect(!stopped, "After the switch, new speech is needed before auto-stop")
+        TestSupport.expect(detector.heardSpeechSeconds == heard, "The speech heard before the switch is kept")
+        TestSupport.expect(
+            !TeddyShrug.shouldSkipTranscription(
+                isCommandMode: false, recordedSeconds: 9, heardSpeechSeconds: detector.heardSpeechSeconds,
+                peakDB: detector.peakDB
+            ),
+            "So the dictation is still sent"
+        )
     }
 
     private static func testErrorShrug() {
-        TestSupport.expect(TeddyShrug.shouldShrugOnError(recordedSeconds: 0.5), "Short recording shrugs")
-        TestSupport.expect(!TeddyShrug.shouldShrugOnError(recordedSeconds: 1.0), "One second shows the error")
-        TestSupport.expect(!TeddyShrug.shouldShrugOnError(recordedSeconds: 8), "Long recording shows the error")
+        let rejected = "Submission failed: Provider rejected the request (HTTP 400). Check your model name."
+        TestSupport.expect(TeddyShrug.shouldShrugOnError(recordedSeconds: 0.5, errorDescription: rejected), "Short rejected recording shrugs")
+        TestSupport.expect(!TeddyShrug.shouldShrugOnError(recordedSeconds: 1.0, errorDescription: rejected), "One second shows the error")
+        TestSupport.expect(!TeddyShrug.shouldShrugOnError(recordedSeconds: 8, errorDescription: rejected), "Long recording shows the error")
+        // Review regression: real setup problems on short recordings still show their error.
+        for other in ["Submission failed: Invalid API key (HTTP 401)", "Submission failed: Rate limited (HTTP 429)", "Upload failed: The network connection was lost."] {
+            TestSupport.expect(!TeddyShrug.shouldShrugOnError(recordedSeconds: 0.5, errorDescription: other), "Shows: \(other)")
+        }
     }
 
     private static func testWordMilestones() {

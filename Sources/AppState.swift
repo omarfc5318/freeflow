@@ -2028,7 +2028,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
             if isRecording {
                 activeRecordingTriggerMode = .toggle
                 overlayManager.setRecordingTriggerMode(.toggle, animated: true)
-                if silenceAutoStop != nil { silenceAutoStop = SilenceAutoStop(delay: handsFreeAutoStopDelay) }
+                silenceAutoStop?.restartCountdown()
             } else if pendingShortcutStartMode != nil {
                 pendingShortcutStartMode = .toggle
             }
@@ -2651,8 +2651,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
         // Open the TCP+TLS connections to the configured hosts while the user speaks, so the
         // upload and cleanup requests after release skip DNS and the handshake. Credential-free
         // and carries no user data.
-        if !apiKey.isEmpty || !resolvedTranscriptionAPIKey.isEmpty {
-            LLMAPITransport.prewarm(baseURLs: [resolvedTranscriptionBaseURL, apiBaseURL])
+        // Only hosts this dictation will actually call: each one needs its own key to be used.
+        let prewarmHosts = (resolvedTranscriptionAPIKey.isEmpty ? [] : [resolvedTranscriptionBaseURL])
+            + (apiKey.isEmpty ? [] : [apiBaseURL])
+        if !prewarmHosts.isEmpty {
+            LLMAPITransport.prewarm(baseURLs: prewarmHosts)
         }
 
         // Start engine on background thread so UI isn't blocked
@@ -3062,7 +3065,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
             isCommandMode: sessionIntent.isCommandMode,
             recordedSeconds: recordedSeconds,
             heardSpeechSeconds: silenceAutoStop?.heardSpeechSeconds ?? 0,
-            peakDB: silenceAutoStop?.peakDB ?? 0
+            peakDB: silenceAutoStop?.peakDB ?? 0,
+            whisperMode: whisperModeEnabled
         )
         stopSilenceAutoStop()
         audioLevelCancellable?.cancel()
@@ -3102,7 +3106,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
             guard let self else { return }
             guard let fileURL else {
                 self.isTranscribing = false
-                self.audioRecorder.cleanup()
+                self.audioRecorder.cleanupWithoutWaiting()
                 self.endCriticalDictationActivity()
                 self.errorMessage = "No audio recorded"
                 self.statusText = "Error"
@@ -3328,7 +3332,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         self.transcriptionTask = nil
                         self.transcribingAudioFileName = nil
                         let userFacingErrorMessage = self.formattedTranscriptionError(error)
-                        let shrugs = TeddyShrug.shouldShrugOnError(recordedSeconds: recordedSeconds)
+                        let shrugs = TeddyShrug.shouldShrugOnError(
+                            recordedSeconds: recordedSeconds, errorDescription: error.localizedDescription
+                        )
                         self.errorMessage = shrugs ? nil : userFacingErrorMessage
                         self.isTranscribing = false
                         self.endCriticalDictationActivity()
@@ -3782,7 +3788,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         transcribingAudioFileName = nil
         isTranscribing = false
         endCriticalDictationActivity()
-        audioRecorder.cleanup()
+        // The microphone may still be shutting down; don't block the main thread on it.
+        audioRecorder.cleanupWithoutWaiting()
         refreshAvailableMicrophonesIfNeeded()
         debugStatusMessage = "Done"
         let status = "Didn't catch that"

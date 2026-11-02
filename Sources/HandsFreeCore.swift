@@ -36,6 +36,8 @@ struct SilenceAutoStop {
     let delay: TimeInterval
     private var noiseFloorDB: Float?
     private var speechSeconds: TimeInterval = 0
+    /// All speech heard in this recording; unlike `speechSeconds`, never reset.
+    private var totalSpeechSeconds: TimeInterval = 0
     private var silentSeconds: TimeInterval = 0
     private var burstSeconds: TimeInterval = 0
     private var audibleSeconds: TimeInterval = 0
@@ -47,7 +49,7 @@ struct SilenceAutoStop {
     var isEnabled: Bool { delay > 0 }
 
     /// Seconds of the recording that sounded like speech so far.
-    var heardSpeechSeconds: TimeInterval { speechSeconds }
+    var heardSpeechSeconds: TimeInterval { totalSpeechSeconds }
     /// Loudest buffer so far, in dBFS.
     private(set) var peakDB: Float = -120
 
@@ -68,11 +70,21 @@ struct SilenceAutoStop {
         }
         if burstSeconds >= Self.speechBurstSeconds {
             speechSeconds += duration
+            totalSpeechSeconds += duration
             silentSeconds = 0
         } else {
             silentSeconds += duration
         }
         return isEnabled && speechSeconds >= Self.minimumSpeechSeconds && silentSeconds >= delay
+    }
+
+    /// Switching from hold to tap mode restarts the auto-stop countdown (new speech is needed
+    /// before it can stop again) but keeps what was already heard, so the recording is still
+    /// known to contain speech.
+    mutating func restartCountdown() {
+        speechSeconds = 0
+        silentSeconds = 0
+        burstSeconds = 0
     }
 
     private mutating func updateNoiseFloor(_ levelDB: Float, duration: TimeInterval) {
@@ -95,11 +107,18 @@ struct SilenceAutoStop {
 enum SpeechPresence {
     /// Shorter recordings are rejected by providers and hold no words.
     static let minimumRecordingSeconds: TimeInterval = 0.3
-    /// Below this the microphone heard nothing louder than a quiet room.
-    static let quietPeakDB: Float = -50
+    /// Below this the microphone heard nothing louder than a quiet room. The quietest real
+    /// dictation measured peaked at -39 dBFS; this leaves room for whispers and low-gain mics.
+    static let quietPeakDB: Float = -60
 
-    static func isWorthTranscribing(recordedSeconds: TimeInterval, heardSpeechSeconds: TimeInterval, peakDB: Float) -> Bool {
+    /// In whisper mode the speech is expected to be very quiet, so only taps are skipped.
+    static func isWorthTranscribing(
+        recordedSeconds: TimeInterval,
+        heardSpeechSeconds: TimeInterval,
+        peakDB: Float,
+        whisperMode: Bool = false
+    ) -> Bool {
         guard recordedSeconds >= minimumRecordingSeconds else { return false }
-        return heardSpeechSeconds > 0 || peakDB > quietPeakDB
+        return whisperMode || heardSpeechSeconds > 0 || peakDB > quietPeakDB
     }
 }

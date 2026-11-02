@@ -40,16 +40,20 @@ enum TeddyShrug {
 
     /// True when a finished recording should not be sent at all. Edit Mode always sends.
     static func shouldSkipTranscription(
-        isCommandMode: Bool, recordedSeconds: TimeInterval, heardSpeechSeconds: TimeInterval, peakDB: Float
+        isCommandMode: Bool, recordedSeconds: TimeInterval, heardSpeechSeconds: TimeInterval, peakDB: Float,
+        whisperMode: Bool = false
     ) -> Bool {
         guard !isCommandMode else { return false }
         return !SpeechPresence.isWorthTranscribing(
-            recordedSeconds: recordedSeconds, heardSpeechSeconds: heardSpeechSeconds, peakDB: peakDB
+            recordedSeconds: recordedSeconds, heardSpeechSeconds: heardSpeechSeconds, peakDB: peakDB,
+            whisperMode: whisperMode
         )
     }
 
-    /// True when a transcription error on a very short recording should be a shrug, not a red toast.
-    static func shouldShrugOnError(recordedSeconds: TimeInterval) -> Bool {
-        recordedSeconds < shortRecordingSeconds
+    /// True when a very short recording was rejected by the provider as unusable audio
+    /// (HTTP 400): a shrug, not a red toast. Real problems such as a bad key (401/403), rate
+    /// limits (429), server or network failures still show their error.
+    static func shouldShrugOnError(recordedSeconds: TimeInterval, errorDescription: String) -> Bool {
+        recordedSeconds < shortRecordingSeconds && errorDescription.contains("HTTP 400")
     }
 }

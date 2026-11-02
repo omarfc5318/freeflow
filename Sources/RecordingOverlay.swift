@@ -268,8 +268,9 @@ final class RecordingOverlayManager {
         DispatchQueue.main.async {
             // A moment that closes a dictation replaces that dictation's own pill (still
             // recording or transcribing); AppState has already ruled out a newer recording.
+            // The update notice is never covered by a learned word or a milestone.
             let busy: Set<OverlayPhase> = interruptsTranscribing
-                ? [.initializing] : [.initializing, .recording, .transcribing]
+                ? [.initializing] : [.initializing, .recording, .transcribing, .updateAvailable]
             if self.overlayWindow != nil, busy.contains(self.overlayState.phase) { return }
             let token = UUID()
             self.momentToken = token
