@@ -137,13 +137,21 @@ extension AppState {
         UsageStatsCore.summary(of: usageDays, today: Date(), calendar: .current)
     }
 
+    private static let milestoneDelay: TimeInterval = 1.0
+
     /// Counts the words spoken and the recording time; the text itself is not kept.
     func recordUsage(spokenText: String, seconds: TimeInterval) {
         guard usageStatsEnabled else { return }
+        let before = usageSummary
         usageDays = UsageStatsCore.recording(
             words: UsageStatsCore.wordCount(spokenText), seconds: seconds,
             on: Date(), into: usageDays, calendar: .current
         )
+        guard let milestone = TeddyMilestoneCore.crossed(before: before, after: usageSummary) else { return }
+        // After the paste, so it does not collide with the closing pill.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.milestoneDelay) { [weak self] in
+            self?.showTeddyMoment(.milestone(milestone.label))
+        }
     }
 
     func resetUsageStats() {

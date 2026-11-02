@@ -661,6 +661,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     private var recordingStartedAt: Date?
     private var activeStyleCategory: DictationStyleCategory = .other
+    /// What the bear wears for the current dictation, from the app's writing style.
+    private var teddyOutfit: TeddyOutfit = .hoodie
 
     @Published var isPressEnterVoiceCommandEnabled: Bool {
         didSet {
@@ -2074,7 +2076,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
         performAfterShortcutReleased { [weak self] in
             guard let self, self.lastDictationInsertion?.id == insertion.id else { return }
             let outcome = DictationUndo.undo(insertion)
-            if outcome == .removed { self.lastDictationInsertion = nil }
+            if outcome == .removed {
+                self.lastDictationInsertion = nil
+                self.showTeddyMoment(.undone)
+            }
             let status = outcome.statusText
             self.statusText = status
             self.scheduleReadyStatusReset(after: 3, matching: [status])
@@ -2110,17 +2115,17 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private static let undoLookupAttempts = 12
 
     /// Hands-free: ends a tap-to-toggle recording after the chosen stretch of silence.
-    /// Levels are watched from the start so the noise floor is known; only a recording in
+    /// Levels are watched from the start so the noise floor is known and speech can be told from a tap; only a recording in
     /// tap mode is stopped, so holding the shortcut always keeps recording.
     private func startSilenceAutoStop() {
-        guard handsFreeAutoStopDelay > 0 else { return stopSilenceAutoStop() }
+        // Always tracked, even with auto-stop off: the level is what tells a tap from speech.
         silenceAutoStop = SilenceAutoStop(delay: handsFreeAutoStopDelay)
         audioRecorder.onLevelSample = { [weak self] rms, duration in
             DispatchQueue.main.async {
                 guard let self, self.isRecording, var detector = self.silenceAutoStop else { return }
                 let shouldStop = detector.shouldStop(afterBufferWithRMS: rms, duration: duration)
                 self.silenceAutoStop = detector
-                guard shouldStop, self.activeRecordingTriggerMode == .toggle else { return }
+                guard shouldStop, self.handsFreeAutoStopDelay > 0, self.activeRecordingTriggerMode == .toggle else { return }
                 os_log(.info, log: recordingLog, "Hands-free: stopping after silence")
                 self.cancelPendingShortcutStart()
                 self.stopAndTranscribe()
@@ -2405,6 +2410,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
         currentSessionIntent = resolvedIntent
         activeStyleCategory = frontmostStyleCategory()
+        teddyOutfit = TeddyOutfit.forStyle(style(for: activeStyleCategory))
+        overlayManager.setOutfit(teddyOutfit)
         overlayManager.setRecordingTriggerMode(triggerMode, animated: false)
         return true
     }
@@ -3050,6 +3057,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let boostsQuietSpeech = whisperModeEnabled
         audioRecorder.onRecordingReady = nil
         audioRecorder.onRecordingFailure = nil
+        // Read before the detector is cleared: a tap or a silent recording is never sent.
+        let skipsTranscription = TeddyShrug.shouldSkipTranscription(
+            isCommandMode: sessionIntent.isCommandMode,
+            recordedSeconds: recordedSeconds,
+            heardSpeechSeconds: silenceAutoStop?.heardSpeechSeconds ?? 0,
+            peakDB: silenceAutoStop?.peakDB ?? 0
+        )
         stopSilenceAutoStop()
         audioLevelCancellable?.cancel()
         audioLevelCancellable = nil
@@ -3076,6 +3090,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
         statusText = "Preparing audio..."
         errorMessage = nil
         playAlertSound(named: "Pop")
+        if skipsTranscription {
+            tearDownRealtimeService()
+            inFlightContextTask?.cancel()
+            contextCaptureTask = nil
+            audioRecorder.stopRecording { [weak self] _ in self?.finishWithoutTranscribing() }
+            return
+        }
         overlayManager.showTranscribing()
         audioRecorder.stopRecording { [weak self] fileURL in
             guard let self else { return }
@@ -3240,7 +3261,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                             self.statusText = shouldPressEnterAfterPaste ? enterOnlyStatusText : "Nothing to transcribe"
                             self.clearPendingOverlayDismissToken()
                             if !self.showPostTranscriptionUpdateReminderIfNeeded() {
-                                self.overlayManager.dismiss()
+                                self.showClosingMoment(shouldPressEnterAfterPaste ? .sent : .didntCatchThat)
                             }
                             if shouldPressEnterAfterPaste {
                                 if useOriginalFieldInsertion {
@@ -3262,7 +3283,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
                             } else {
                                 self.clearPendingOverlayDismissToken()
                                 if !self.showPostTranscriptionUpdateReminderIfNeeded() {
-                                    self.overlayManager.dismiss()
+                                    if shouldPressEnterAfterPaste {
+                                        self.showClosingMoment(.sent)
+                                    } else {
+                                        self.overlayManager.dismiss()
+                                    }
                                 }
                             }
 
@@ -3286,7 +3311,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         self.audioRecorder.cleanup()
                         self.refreshAvailableMicrophonesIfNeeded()
 
-                        self.scheduleReadyStatusReset(after: 3, matching: [completionStatusText, "Nothing to transcribe", enterOnlyStatusText])
+                        self.scheduleReadyStatusReset(after: 3, matching: [completionStatusText, "Nothing to transcribe", enterOnlyStatusText, "Didn't catch that"])
                     }
                 } catch is CancellationError {
                     await MainActor.run {
@@ -3303,11 +3328,18 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         self.transcriptionTask = nil
                         self.transcribingAudioFileName = nil
                         let userFacingErrorMessage = self.formattedTranscriptionError(error)
-                        self.errorMessage = userFacingErrorMessage
+                        let shrugs = TeddyShrug.shouldShrugOnError(recordedSeconds: recordedSeconds)
+                        self.errorMessage = shrugs ? nil : userFacingErrorMessage
                         self.isTranscribing = false
                         self.endCriticalDictationActivity()
-                        self.statusText = "Error"
-                        self.overlayManager.showError(userFacingErrorMessage)
+                        if shrugs {
+                            // A tap or very short recording the provider rejected: no red error.
+                            self.statusText = "Didn't catch that"
+                            self.showClosingMoment(.didntCatchThat)
+                        } else {
+                            self.statusText = "Error"
+                            self.overlayManager.showError(userFacingErrorMessage)
+                        }
                         self.lastPostProcessedTranscript = ""
                         self.lastRawTranscript = ""
                         self.lastContextSummary = ""
@@ -3728,11 +3760,36 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// Shows the bear holding up words just learned from corrections, unless a dictation
-    /// or one of the bear's tricks is using the pill.
-    func showLearnedWordsPill(_ words: [String]) {
+    /// Shows a bear moment (learned words, milestone, undone) unless a dictation or one of
+    /// the bear's tricks is using the pill.
+    func showTeddyMoment(_ moment: TeddyMoment) {
         guard !isRecording, !isTranscribing, !teddyTrip.isRunning, pendingOverlayDismissToken == nil else { return }
-        overlayManager.showLearned(words)
+        overlayManager.showMoment(moment)
+    }
+
+    /// A moment that closes a dictation (didn't catch that, sent). It replaces the
+    /// transcribing pill right away; a newly started recording is never interrupted.
+    private func showClosingMoment(_ moment: TeddyMoment) {
+        guard !isRecording, !teddyTrip.isRunning else { return overlayManager.dismiss() }
+        overlayManager.showMoment(moment, interruptsTranscribing: true)
+    }
+
+    /// A recording with nothing in it (a tap of the shortcut, or silence): nothing is sent
+    /// or saved, and the bear shrugs instead of the provider's error showing.
+    private func finishWithoutTranscribing() {
+        guard isTranscribing else { return }
+        transcriptionTask = nil
+        transcribingAudioFileName = nil
+        isTranscribing = false
+        endCriticalDictationActivity()
+        audioRecorder.cleanup()
+        refreshAvailableMicrophonesIfNeeded()
+        debugStatusMessage = "Done"
+        let status = "Didn't catch that"
+        statusText = status
+        scheduleReadyStatusReset(after: 3, matching: [status])
+        clearPendingOverlayDismissToken()
+        showClosingMoment(.didntCatchThat)
     }
 
     private static let teddyRestSeconds: TimeInterval = 0.8
@@ -3769,7 +3826,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
             return
         }
         overlayManager.setTeddyTrip(.away)
-        teddyTrip.start(trick, on: home.screen, home: home.point) { [weak self] in
+        teddyTrip.start(trick, on: home.screen, home: home.point, outfit: teddyOutfit) { [weak self] in
             guard let self, self.pendingOverlayDismissToken == dismissToken else { return }
             self.overlayManager.setTeddyTrip(.back)
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.teddyRestSeconds) { [weak self] in

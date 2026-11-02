@@ -43,12 +43,13 @@ struct TalkingBearView: View {
     }
 }
 
-// MARK: - Learned-word card (pill)
+// MARK: - Moment card (pill)
 
-/// The pill bear peeking in with one paw on a white card that shows the words it just
-/// learned from the user's corrections.
-struct LearnedWordView: View {
-    let label: String
+/// The pill bear peeking in with one paw on a white card that shows a short message:
+/// words just learned, "Didn't catch that", "Undone", "Sent" or a milestone.
+struct TeddyMomentView: View {
+    let moment: TeddyMoment
+    var outfit: TeddyOutfit = .hoodie
 
     var body: some View {
         HStack(spacing: -7) {
@@ -56,17 +57,22 @@ struct LearnedWordView: View {
                 Canvas { graphics, size in
                     let scale = size.height / 32
                     graphics.scaleBy(x: scale, y: scale)
-                    TeddyArt.drawBearHoldingCard(in: &graphics, time: context.date.timeIntervalSinceReferenceDate)
+                    TeddyArt.drawMomentBear(
+                        in: &graphics,
+                        time: context.date.timeIntervalSinceReferenceDate,
+                        moment: moment,
+                        outfit: outfit
+                    )
                 }
             }
             .frame(width: 30 * 36 / 32, height: 30)
             .zIndex(1)
 
             VStack(alignment: .leading, spacing: 0) {
-                Text("Learned")
+                Text(moment.caption)
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(.black.opacity(0.55))
-                Text(label)
+                Text(moment.text)
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(.black)
                     .lineLimit(1)
@@ -77,7 +83,7 @@ struct LearnedWordView: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(.white))
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Learned \(label)")
+        .accessibilityLabel("\(moment.caption): \(moment.text)")
     }
 }
 

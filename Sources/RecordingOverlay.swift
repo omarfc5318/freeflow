@@ -14,7 +14,8 @@ final class RecordingOverlayState: ObservableObject {
     @Published var errorMessage: String?
     @Published var toastID: UUID?
     @Published var teddyTrip: TeddyTrip = .none
-    @Published var learnedLabel = ""
+    @Published var moment: TeddyMoment?
+    @Published var outfit: TeddyOutfit = .hoodie
 }
 
 /// Voice tricks ("Teddy go crazy", "Teddy show me ur shi jelly"): while the bear is away the pill is empty, and
@@ -31,8 +32,8 @@ enum OverlayPhase {
     case transcribing
     case feedback
     case updateAvailable
-    /// The bear holds up a card with words just learned from the user's corrections.
-    case learned
+    /// The bear holds up a card with a short message (learned words, didn't catch that, ...).
+    case moment
 }
 
 // MARK: - NSScreen Helpers
@@ -88,7 +89,7 @@ private func makeNotchContent<V: View>(
 
 final class RecordingOverlayManager {
     private var overlayWindow: NSPanel?
-    private var learnedToken: UUID?
+    private var momentToken: UUID?
     private let overlayState = RecordingOverlayState()
     private var lockedOverlayWidth: CGFloat?
 
@@ -258,27 +259,36 @@ final class RecordingOverlayManager {
         }
     }
 
-    /// Drops the pill down for a moment with the bear holding up the learned words.
-    /// Skipped while a dictation is in progress; a new dictation replaces it at once.
-    func showLearned(_ words: [String]) {
-        let label = TeddyLearnedCard.label(for: words)
-        guard !label.isEmpty else { return }
+    /// Drops the pill down for a moment with the bear holding up a card. Skipped while a
+    /// recording is starting or running; `interruptsTranscribing` lets the moments that
+    /// fire at the very end of a dictation replace the closing transcribing pill. A new
+    /// dictation replaces the moment at once.
+    func showMoment(_ moment: TeddyMoment, interruptsTranscribing: Bool = false) {
+        guard !moment.text.isEmpty else { return }
         DispatchQueue.main.async {
-            let busy: Set<OverlayPhase> = [.initializing, .recording, .transcribing]
+            // A moment that closes a dictation replaces that dictation's own pill (still
+            // recording or transcribing); AppState has already ruled out a newer recording.
+            let busy: Set<OverlayPhase> = interruptsTranscribing
+                ? [.initializing] : [.initializing, .recording, .transcribing]
             if self.overlayWindow != nil, busy.contains(self.overlayState.phase) { return }
             let token = UUID()
-            self.learnedToken = token
+            self.momentToken = token
             self.lockedOverlayWidth = nil
             self.overlayState.isCommandMode = false
             self.overlayState.teddyTrip = .none
-            self.overlayState.learnedLabel = label
-            self.overlayState.phase = .learned
+            self.overlayState.moment = moment
+            self.overlayState.phase = .moment
             self.showOverlayPanel(animatedResize: true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + TeddyLearnedCard.showSeconds) {
-                guard self.learnedToken == token, self.overlayState.phase == .learned else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + moment.seconds) {
+                guard self.momentToken == token, self.overlayState.phase == .moment else { return }
                 self.dismissAll()
             }
         }
+    }
+
+    /// The outfit the bear wears in every pill state; set when a recording starts.
+    func setOutfit(_ outfit: TeddyOutfit) {
+        DispatchQueue.main.async { self.overlayState.outfit = outfit }
     }
 
     func showUpdateAvailable(version: String) {
@@ -409,7 +419,7 @@ final class RecordingOverlayManager {
             return true
         case .feedback:
             return overlayState.errorMessage?.isEmpty ?? true
-        case .updateAvailable, .learned:
+        case .updateAvailable, .moment:
             return false
         }
     }
@@ -442,7 +452,7 @@ final class RecordingOverlayManager {
         let useCompact = (UserDefaults.standard.object(forKey: "use_compact_overlay") as? Bool) ?? false
         let forceDropDownPill = (overlayState.phase == .feedback
             && !(overlayState.errorMessage?.isEmpty ?? true))
-            || overlayState.phase == .learned
+            || overlayState.phase == .moment
         // Compact mode: overlay sits flush with the menu bar on every display.
         // notchOverlap equals the menu-bar height on non-notched screens too,
         // so zero protrusion is universal — not notch-only. The legacy
@@ -480,10 +490,10 @@ final class RecordingOverlayManager {
             return max(notchWidth, feedbackWidth)
         }
 
-        if overlayState.phase == .learned {
-            let learnedWidth = TeddyLearnedCard.pillWidth(for: overlayState.learnedLabel)
-            guard screenHasNotch else { return learnedWidth }
-            return max(notchWidth, learnedWidth)
+        if overlayState.phase == .moment {
+            let momentWidth = TeddyLearnedCard.pillWidth(for: overlayState.moment?.text ?? "")
+            guard screenHasNotch else { return momentWidth }
+            return max(notchWidth, momentWidth)
         }
 
         if overlayState.phase == .updateAvailable {
@@ -1048,14 +1058,17 @@ struct RecordingOverlayView: View {
                 ErrorOverlayView(message: message)
             } else if state.phase == .feedback {
                 FailureIndicatorView()
-            } else if state.phase == .learned {
-                LearnedWordView(label: state.learnedLabel)
+            } else if state.phase == .moment, let moment = state.moment {
+                TeddyMomentView(moment: moment, outfit: state.outfit)
             } else if state.phase == .updateAvailable {
                 UpdateAvailableOverlayView(onPress: onUpdateOverlayPressed)
             } else {
                 ZStack {
                     if state.teddyTrip != .away {
-                        TalkingBearView(mood: bearMood, audioLevel: state.audioLevel, height: 30)
+                        TalkingBearView(
+                            mood: bearMood, audioLevel: state.audioLevel, height: 30,
+                            isEditing: state.isCommandMode, outfit: state.outfit
+                        )
                     }
 
                     HStack {
