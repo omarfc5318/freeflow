@@ -1,6 +1,8 @@
 import SwiftUI
 
-// Full-body teddy: front and back views used by the voice tricks.
+// Full-body teddy: front and back views used by the voice tricks. Every action, from the
+// old running/jumping/standing/thumbs-up/wiggling to the numeric `.posed` dance poses,
+// ends up in the one renderer `drawBody`.
 extension TeddyArt {
     // MARK: Full-body teddy
 
@@ -12,18 +14,18 @@ extension TeddyArt {
         outfit: TeddyOutfit = .hoodie
     ) {
         switch action {
-        case .posed:
-            drawFrontTeddy(in: &graphics, time: time, pose: .standing)
+        case let .posed(pose):
+            drawBody(in: &graphics, time: time, pose: pose, outfit: outfit)
         case .running:
-            drawFrontTeddy(in: &graphics, time: time, pose: .running)
+            drawBody(in: &graphics, time: time, pose: runningPose(time: time), outfit: outfit)
         case .jumping:
-            drawFrontTeddy(in: &graphics, time: time, pose: .jumping)
+            drawBody(in: &graphics, time: time, pose: jumpingPose(time: time), outfit: outfit)
         case .standing:
-            drawFrontTeddy(in: &graphics, time: time, pose: .standing)
+            drawBody(in: &graphics, time: time, pose: standingPose(time: time), outfit: outfit)
         case .thumbsUp:
-            drawFrontTeddy(in: &graphics, time: time, pose: .thumbsUp)
+            drawBody(in: &graphics, time: time, pose: thumbsUpPose(), outfit: outfit)
         case let .wiggling(phase):
-            drawBackTeddy(in: &graphics, sway: CGFloat(sin(phase * 2 * .pi)))
+            drawBody(in: &graphics, time: time, pose: wigglePose(sway: CGFloat(sin(phase * 2 * .pi))), outfit: outfit)
         case let .turning(towardBack, progress):
             // Squash to a sliver and switch sides halfway, like spinning on the spot.
             let squash = max(0.08, CGFloat(abs(cos(progress * .pi))))
@@ -31,125 +33,191 @@ extension TeddyArt {
             graphics.scaleBy(x: squash, y: 1)
             graphics.translateBy(x: -20, y: 0)
             let showsBack = towardBack ? progress >= 0.5 : progress < 0.5
-            if showsBack {
-                drawBackTeddy(in: &graphics, sway: 0)
-            } else {
-                drawFrontTeddy(in: &graphics, time: time, pose: .standing)
-            }
+            let pose = showsBack ? wigglePose(sway: 0) : standingPose(time: time)
+            drawBody(in: &graphics, time: time, pose: pose, outfit: outfit)
         }
     }
 
-    enum FrontPose {
-        case running
-        case jumping
-        case standing
-        case thumbsUp
+    // MARK: Poses for the classic actions
+
+    static func standingPose(time: TimeInterval) -> TeddyBodyPose {
+        var pose = TeddyBodyPose.standing
+        pose.face.isBlinking = isBlinking(at: time)
+        return pose
     }
+
+    /// Fat arms swing opposite stubby legs, and the whole bear bounces.
+    static func runningPose(time: TimeInterval) -> TeddyBodyPose {
+        let stride = time * 16
+        let swing = sin(stride) * 0.75
+        let legSwing = swing * 0.55
+        var pose = TeddyBodyPose.standing
+        pose.bob = CGFloat(abs(sin(stride))) * 2
+        pose.leftLeg = .init(angle: legSwing, length: 6.5 - CGFloat(max(0, legSwing)) * 3.2)
+        pose.rightLeg = .init(angle: -legSwing, length: 6.5 - CGFloat(max(0, -legSwing)) * 3.2)
+        pose.leftArm = .init(angle: -swing - 0.35, length: 6.4)
+        pose.rightArm = .init(angle: swing + 0.35, length: 6.4)
+        pose.face.mouthOpen = 0.55 + 0.15 * CGFloat(abs(sin(stride * 0.5)))
+        pose.showsSpeedLines = true
+        return pose
+    }
+
+    /// Both arms thrown up, legs tucked and splayed.
+    static func jumpingPose(time: TimeInterval) -> TeddyBodyPose {
+        var pose = TeddyBodyPose.standing
+        pose.leftLeg = .init(angle: -0.35, length: 4.5)
+        pose.rightLeg = .init(angle: 0.35, length: 4.5)
+        pose.leftArm = .init(angle: -2.5, length: 6.4)
+        pose.rightArm = .init(angle: 2.5, length: 6.4)
+        pose.face.mouthOpen = 0.55 + 0.15 * CGFloat(abs(sin(time * 8)))
+        return pose
+    }
+
+    static func thumbsUpPose() -> TeddyBodyPose {
+        var pose = TeddyBodyPose.standing
+        pose.leftArm = .init(angle: -0.3, length: 6.4)
+        pose.rightArm = .init(angle: 2.35, length: 6.4)
+        pose.rightPaw = .thumbsUp
+        pose.face = .init(mouthOpen: 0.35, isBlinking: false, winks: true)
+        pose.showsSparkle = true
+        return pose
+    }
+
+    /// Seen from behind, hips swaying (`sway` -1...1) while the feet stay planted.
+    static func wigglePose(sway: CGFloat) -> TeddyBodyPose {
+        var pose = TeddyBodyPose.standing
+        pose.side = .back
+        pose.hipShift = sway * 3.2
+        pose.feetPlanted = true
+        pose.leftLeg = .init(angle: -0.092, length: 6.53)
+        pose.rightLeg = .init(angle: 0.092, length: 6.53)
+        pose.leftArm = .init(angle: -0.4, length: 6.2)
+        pose.rightArm = .init(angle: 0.4, length: 6.2)
+        return pose
+    }
+
+    // MARK: The renderer
 
     static let bodyRect = CGRect(x: 11.5, y: 24.5, width: 17, height: 16)
     static let leftHip = CGPoint(x: 15.2, y: 37.5)
     static let rightHip = CGPoint(x: 24.8, y: 37.5)
     static let leftShoulder = CGPoint(x: 12.6, y: 28.5)
     static let rightShoulder = CGPoint(x: 27.4, y: 28.5)
+    /// Where the feet touch the ground; the whole bear leans about this point.
+    static let groundPoint = CGPoint(x: 20, y: 46)
+    /// Tilt of the upper body per grid point of hip shift (a full wiggle is 3.2 points).
+    static let hipTiltPerPoint: Double = 0.18 / 3.2
 
-    /// Facing the viewer. Running swings fat arms opposite stubby legs; jumping throws both
-    /// arms up; the thumbs up raises one paw and winks.
-    static func drawFrontTeddy(in graphics: inout GraphicsContext, time: TimeInterval, pose: FrontPose) {
-        let stride = time * 16
-        let swing = pose == .running ? sin(stride) * 0.75 : 0
-        if pose == .running {
-            graphics.translateBy(x: 0, y: -CGFloat(abs(sin(stride))) * 2)
-            drawSpeedLines(in: &graphics)
+    /// Draws any `TeddyBodyPose`, front or back, in the given outfit.
+    static func drawBody(in graphics: inout GraphicsContext, time: TimeInterval, pose: TeddyBodyPose, outfit: TeddyOutfit) {
+        var body = graphics
+        body.translateBy(x: 0, y: -pose.bob)
+        if pose.leanDegrees != 0 {
+            body.translateBy(x: groundPoint.x, y: groundPoint.y)
+            body.rotate(by: .degrees(pose.leanDegrees))
+            body.translateBy(x: -groundPoint.x, y: -groundPoint.y)
+        }
+        if pose.showsSpeedLines { drawSpeedLines(in: &body) }
+
+        let isBack = pose.side == .back
+        let legs = [(leftHip, pose.leftLeg, true), (rightHip, pose.rightLeg, false)]
+        for (hip, limb, isLeft) in legs {
+            drawLeg(in: &body, hip: hip, limb: limb, pose: pose, outfit: outfit, isLeft: isLeft)
         }
 
-        // Legs and feet behind the tummy; each leg lifts as it swings forward.
-        let legSwing = swing * 0.55
-        let isJumping = pose == .jumping
-        let leftLift = isJumping ? 2 : CGFloat(max(0, legSwing)) * 3.2
-        let rightLift = isJumping ? 2 : CGFloat(max(0, -legSwing)) * 3.2
-        limb(&graphics, from: leftHip, angle: isJumping ? -0.35 : legSwing, length: 6.5 - leftLift, width: 6.6, end: .foot)
-        limb(&graphics, from: rightHip, angle: isJumping ? 0.35 : -legSwing, length: 6.5 - rightLift, width: 6.6, end: .foot)
-
-        drawTummy(in: &graphics, withPatch: true)
-
-        switch pose {
-        case .jumping:
-            limb(&graphics, from: leftShoulder, angle: -2.5, length: 6.4, width: 6, end: .paw)
-            limb(&graphics, from: rightShoulder, angle: 2.5, length: 6.4, width: 6, end: .paw)
-        case .thumbsUp:
-            limb(&graphics, from: leftShoulder, angle: -0.3, length: 6.4, width: 6, end: .paw)
-            let fist = limb(&graphics, from: rightShoulder, angle: 2.35, length: 6.4, width: 6, end: .none)
-            drawThumbsUpFist(in: &graphics, at: fist)
-            drawSparkle(in: &graphics, at: CGPoint(x: fist.x + 5, y: fist.y - 6.5), size: 2.4, time: time)
-        case .running, .standing:
-            limb(&graphics, from: leftShoulder, angle: -swing - 0.35, length: 6.4, width: 6, end: .paw)
-            limb(&graphics, from: rightShoulder, angle: swing + 0.35, length: 6.4, width: 6, end: .paw)
+        // Hips, tummy and arms sway together, tilting against the hip shift.
+        var upper = body
+        upper.translateBy(x: 20 + pose.hipShift, y: 32)
+        upper.rotate(by: .radians(-Double(pose.hipShift) * hipTiltPerPoint))
+        upper.translateBy(x: -20, y: -32)
+        if isBack {
+            drawBackTorso(in: &upper, outfit: outfit)
+        } else {
+            drawFrontTorso(in: &upper, outfit: outfit)
         }
 
-        // The pill bear's head, scaled onto the body.
-        var head = graphics
+        // The pill bear's head, scaled onto the body; it hardly follows the hips.
+        var head = body
+        head.translateBy(x: -pose.hipShift * 0.156, y: 0)
+        head.translateBy(x: 20, y: 24)
+        head.rotate(by: .degrees(pose.headTiltDegrees))
+        head.translateBy(x: -20, y: -24)
         head.translateBy(x: 20 - 16 * 0.82, y: 15 - 18.5 * 0.82)
         head.scaleBy(x: 0.82, y: 0.82)
-        let open: CGFloat
-        switch pose {
-        case .running, .jumping: open = 0.55 + 0.15 * CGFloat(abs(sin(stride * 0.5)))
-        case .standing: open = 0
-        case .thumbsUp: open = 0.35
+        if isBack {
+            drawHeadBack(in: &head, outfit: outfit)
+        } else {
+            let face = TeddyFace(
+                mouthOpen: pose.face.mouthOpen,
+                isBlinking: pose.face.isBlinking,
+                winks: pose.face.winks
+            )
+            drawHead(in: &head, face: face, outfit: outfit)
         }
-        drawHead(
-            in: &head,
-            mouthOpen: open,
-            isBlinking: pose == .standing && isBlinking(at: time),
-            isThinking: false,
-            winks: pose == .thumbsUp
-        )
+
+        // Arms last, so a paw reaching for the head passes in front of it.
+        let tips = [
+            drawArm(in: &upper, shoulder: leftShoulder, limb: pose.leftArm, outfit: outfit, paw: .round),
+            drawArm(in: &upper, shoulder: rightShoulder, limb: pose.rightArm, outfit: outfit, paw: pose.rightPaw),
+        ]
+        if pose.showsSparkle {
+            let anchor = pose.rightPaw == .thumbsUp ? CGPoint(x: tips[1].x + 5, y: tips[1].y - 6.5) : CGPoint(x: 33.5, y: 9)
+            drawSparkle(in: &upper, at: anchor, size: 2.4, time: time)
+        }
     }
 
-    /// Seen from behind: plain back of the head, a little round tail, and hips that sway
-    /// side to side (`sway` -1...1) while the feet stay planted.
-    static func drawBackTeddy(in graphics: inout GraphicsContext, sway: CGFloat) {
-        let hipShift = sway * 3.2
-        let footY: CGFloat = 44
+    // MARK: Limbs
 
-        // Planted feet, legs leaning towards the swaying hips.
-        for (hip, footX) in [(leftHip, CGFloat(14.6)), (rightHip, CGFloat(25.4))] {
-            let shiftedHip = CGPoint(x: hip.x + hipShift, y: hip.y)
-            limb(&graphics, from: shiftedHip, to: CGPoint(x: footX, y: footY), width: 6.6, end: .heel)
-        }
-
-        // Body and tail swing with the hips and tilt slightly the other way.
-        var hips = graphics
-        hips.translateBy(x: 20 + hipShift, y: 32)
-        hips.rotate(by: .radians(Double(-sway) * 0.18))
-        hips.translateBy(x: -20, y: -32)
-        drawTummy(in: &hips, withPatch: false)
-        // Stitched seam down the back.
-        var seam = Path()
-        seam.move(to: CGPoint(x: 20, y: 26))
-        seam.addLine(to: CGPoint(x: 20, y: 35))
-        hips.stroke(seam, with: .color(.black), style: StrokeStyle(lineWidth: 0.7, lineCap: .round, dash: [1.2, 1.2]))
-        let tail = circle(CGPoint(x: 20 + sway * 1.4, y: 37.2), 2.9)
-        hips.fill(tail, with: .color(.white))
-        hips.stroke(tail, with: .color(.black), lineWidth: outline)
-
-        limb(&hips, from: leftShoulder, angle: -0.4, length: 6.2, width: 6, end: .paw)
-        limb(&hips, from: rightShoulder, angle: 0.4, length: 6.2, width: 6, end: .paw)
-
-        // Back of the head stays nearly still, nodding along a little.
-        var head = graphics
-        head.translateBy(x: 20 - 16 * 0.82 - sway * 0.5, y: 15 - 18.5 * 0.82)
-        head.scaleBy(x: 0.82, y: 0.82)
-        drawHeadShape(in: &head, innerEars: false)
+    static func drawLeg(
+        in graphics: inout GraphicsContext,
+        hip: CGPoint,
+        limb: TeddyBodyPose.Limb,
+        pose: TeddyBodyPose,
+        outfit: TeddyOutfit,
+        isLeft: Bool
+    ) {
+        let start = CGPoint(x: hip.x + pose.hipShift, y: hip.y)
+        let base = pose.feetPlanted ? hip : start
+        let tip = CGPoint(x: base.x + CGFloat(sin(limb.angle)) * limb.length, y: base.y + CGFloat(cos(limb.angle)) * limb.length)
+        var path = Path()
+        path.move(to: start)
+        path.addLine(to: tip)
+        stroke(&graphics, path, TeddyPalette.ink, width: 6.6 + outline * 2)
+        stroke(&graphics, path, outfit == .suit ? TeddyPalette.suit : TeddyPalette.jeans, width: 6.6)
+        drawShoe(in: &graphics, at: tip, isLeft: isLeft, isBack: pose.side == .back, outfit: outfit)
     }
 
-    static func drawTummy(in graphics: inout GraphicsContext, withPatch: Bool) {
-        let body = Path(ellipseIn: bodyRect)
-        fill(&graphics, body, .white)
-        graphics.stroke(body, with: .color(.black), lineWidth: outline)
-        if withPatch {
-            let patch = Path(ellipseIn: CGRect(x: 15.6, y: 29.5, width: 8.8, height: 8))
-            graphics.stroke(patch, with: .color(.black), lineWidth: 0.8)
+    /// A fat sleeve the whole way from the shoulder, with the paw at the end. Returns the tip.
+    @discardableResult
+    static func drawArm(
+        in graphics: inout GraphicsContext,
+        shoulder: CGPoint,
+        limb: TeddyBodyPose.Limb,
+        outfit: TeddyOutfit,
+        paw: TeddyBodyPose.PawShape
+    ) -> CGPoint {
+        let direction = CGPoint(x: CGFloat(sin(limb.angle)), y: CGFloat(cos(limb.angle)))
+        let tip = CGPoint(x: shoulder.x + direction.x * limb.length, y: shoulder.y + direction.y * limb.length)
+        let width: CGFloat = 6.2
+        var sleeve = Path()
+        sleeve.move(to: shoulder)
+        sleeve.addLine(to: tip)
+        stroke(&graphics, sleeve, TeddyPalette.ink, width: width + outline * 2)
+        stroke(&graphics, sleeve, outfit == .suit ? TeddyPalette.suit : TeddyPalette.hoodie, width: width)
+        if limb.length > 4.5 {
+            var cuff = Path()
+            cuff.move(to: CGPoint(x: tip.x - direction.x * 3.7, y: tip.y - direction.y * 3.7))
+            cuff.addLine(to: CGPoint(x: tip.x - direction.x * 2.1, y: tip.y - direction.y * 2.1))
+            let cuffColor = outfit == .suit ? TeddyPalette.shirt : TeddyPalette.hoodieDark
+            graphics.stroke(cuff, with: .color(cuffColor), style: StrokeStyle(lineWidth: width, lineCap: .butt))
         }
+        switch paw {
+        case .round:
+            sticker(&graphics, circle(tip, width / 2 + 0.4), TeddyPalette.fur)
+        case .thumbsUp:
+            drawThumbsUpFist(in: &graphics, at: tip)
+        }
+        return tip
     }
 
     /// A classic thumbs up: a chunky fist with curled fingers on the outer side and a short,
@@ -159,20 +227,21 @@ extension TeddyArt {
         var thumb = Path()
         thumb.move(to: CGPoint(x: center.x - 1.5, y: center.y - 1.6))
         thumb.addLine(to: CGPoint(x: center.x - 2.3, y: center.y - 5.4))
-        let thumbStyle = StrokeStyle(lineWidth: 3.6, lineCap: .round)
 
-        graphics.stroke(thumb, with: .color(.black), style: StrokeStyle(lineWidth: 3.6 + outline * 2, lineCap: .round))
-        graphics.stroke(fist, with: .color(.black), lineWidth: outline * 2)
-        graphics.stroke(thumb, with: .color(.white), style: thumbStyle)
-        fill(&graphics, fist, .white)
+        stroke(&graphics, thumb, TeddyPalette.ink, width: 3.6 + outline * 2)
+        graphics.stroke(fist, with: .color(TeddyPalette.ink), lineWidth: outline * 2)
+        stroke(&graphics, thumb, TeddyPalette.fur, width: 3.6)
+        fill(&graphics, fist, TeddyPalette.fur)
 
         var curls = Path()
         for y in [center.y - 0.7, center.y + 0.9, center.y + 2.4] {
             curls.move(to: CGPoint(x: center.x + 0.6, y: y))
             curls.addLine(to: CGPoint(x: center.x + 3.3, y: y))
         }
-        graphics.stroke(curls, with: .color(.black), style: StrokeStyle(lineWidth: 0.7, lineCap: .round))
+        stroke(&graphics, curls, TeddyPalette.ink, width: 0.7)
     }
+
+    // MARK: Effects
 
     static func drawSparkle(in graphics: inout GraphicsContext, at center: CGPoint, size: CGFloat, time: TimeInterval) {
         let pulse = 0.75 + 0.25 * CGFloat(sin(time * 8))
@@ -183,57 +252,8 @@ extension TeddyArt {
         star.addQuadCurve(to: CGPoint(x: center.x, y: center.y + r), control: center)
         star.addQuadCurve(to: CGPoint(x: center.x - r, y: center.y), control: center)
         star.addQuadCurve(to: CGPoint(x: center.x, y: center.y - r), control: center)
-        graphics.stroke(star, with: .color(.black), lineWidth: 1.6)
-        fill(&graphics, star, .white)
-    }
-
-    enum LimbEnd {
-        case foot
-        case heel
-        case paw
-        case none
-    }
-
-    /// A rounded, outlined limb hanging from `start`; `angle` swings it (0 = straight down,
-    /// positive = to the right). Returns where it ends.
-    @discardableResult
-    static func limb(
-        _ graphics: inout GraphicsContext,
-        from start: CGPoint,
-        angle: Double,
-        length: CGFloat,
-        width: CGFloat,
-        end: LimbEnd
-    ) -> CGPoint {
-        let tip = CGPoint(x: start.x + CGFloat(sin(angle)) * length, y: start.y + CGFloat(cos(angle)) * length)
-        limb(&graphics, from: start, to: tip, width: width, end: end)
-        return tip
-    }
-
-    static func limb(_ graphics: inout GraphicsContext, from start: CGPoint, to tip: CGPoint, width: CGFloat, end: LimbEnd) {
-        var path = Path()
-        path.move(to: start)
-        path.addLine(to: tip)
-        graphics.stroke(path, with: .color(.black), style: StrokeStyle(lineWidth: width + outline * 2, lineCap: .round))
-        graphics.stroke(path, with: .color(.white), style: StrokeStyle(lineWidth: width, lineCap: .round))
-
-        switch end {
-        case .foot:
-            let foot = Path(ellipseIn: CGRect(x: tip.x - 3, y: tip.y - 1.2, width: 7.4, height: 4.4))
-            fill(&graphics, foot, .white)
-            graphics.stroke(foot, with: .color(.black), lineWidth: outline)
-            fill(&graphics, Path(ellipseIn: CGRect(x: tip.x + 0.4, y: tip.y + 0.1, width: 3, height: 1.9)), .black)
-        case .heel:
-            let heel = Path(ellipseIn: CGRect(x: tip.x - 3.4, y: tip.y - 1.6, width: 6.8, height: 4))
-            fill(&graphics, heel, .white)
-            graphics.stroke(heel, with: .color(.black), lineWidth: outline)
-        case .paw:
-            let paw = circle(tip, width / 2 + 0.4)
-            fill(&graphics, paw, .white)
-            graphics.stroke(paw, with: .color(.black), lineWidth: outline)
-        case .none:
-            break
-        }
+        graphics.stroke(star, with: .color(TeddyPalette.ink), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
+        fill(&graphics, star, Color(red: 1.0, green: 0.88, blue: 0.3))
     }
 
     static func drawSpeedLines(in graphics: inout GraphicsContext) {
@@ -242,7 +262,7 @@ extension TeddyArt {
             lines.move(to: CGPoint(x: 6 - length, y: y))
             lines.addLine(to: CGPoint(x: 6, y: y))
         }
-        graphics.stroke(lines, with: .color(.white), style: StrokeStyle(lineWidth: 2.6, lineCap: .round))
-        graphics.stroke(lines, with: .color(.black), style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
+        stroke(&graphics, lines, TeddyPalette.ink, width: 2.8)
+        stroke(&graphics, lines, .white, width: 1.3)
     }
 }
