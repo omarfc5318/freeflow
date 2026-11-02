@@ -102,6 +102,16 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
     /// to a realtime transcription socket. The recorder writes a normalized
     /// 16 kHz mono PCM16 WAV file independently for upload-based transcription.
     var onPCM16Samples: ((Data) -> Void)?
+    /// Called on the capture queue with each buffer's RMS level (0...1) and length in
+    /// seconds. Levels only; no audio leaves the recorder through this callback. Set and
+    /// cleared from the main thread while capture runs, so access goes through a lock.
+    var onLevelSample: (@Sendable (Float, TimeInterval) -> Void)? {
+        get { levelSampleHandlerLock.withLock { $0 } }
+        set { levelSampleHandlerLock.withLock { $0 = newValue } }
+    }
+    private let levelSampleHandlerLock = OSAllocatedUnfairLock<(@Sendable (Float, TimeInterval) -> Void)?>(
+        initialState: nil
+    )
     private let recordingConverterLock = OSAllocatedUnfairLock<AVAudioConverter?>(initialState: nil)
     private let pcm16ConverterLock = OSAllocatedUnfairLock<AVAudioConverter?>(initialState: nil)
     private let recordingTargetFormat: AVAudioFormat = {
@@ -750,6 +760,9 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
         ) else { return 0 }
 
         let rms = rmsLevel(for: inputBuffer)
+        if let handler = onLevelSample, sourceFormat.sampleRate > 0 {
+            handler(rms, Double(frameCount) / sourceFormat.sampleRate)
+        }
         let normalizedDisplayLevel = liveLevelNormalizerLock.withLock {
             $0.normalizedLevel(forRMS: rms)
         }

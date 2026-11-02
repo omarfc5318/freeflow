@@ -4,7 +4,7 @@ import ServiceManagement
 
 // MARK: - Shared Helpers
 
-private struct SettingsCard<Content: View>: View {
+struct SettingsCard<Content: View>: View {
     let title: String
     let icon: String
     let content: Content
@@ -435,6 +435,14 @@ struct SettingsView: View {
                 switch appState.selectedSettingsTab {
                 case .general, .none:
                     GeneralSettingsView()
+                case .dictionary:
+                    DictionarySettingsView()
+                case .styles:
+                    StylesSettingsView()
+                case .scratchpad:
+                    ScratchpadView()
+                case .insights:
+                    InsightsView()
                 case .prompts:
                     PromptsSettingsView()
                 case .macros:
@@ -530,8 +538,6 @@ struct GeneralSettingsView: View {
     @State private var isValidatingKey = false
     @State private var keyValidationError: String?
     @State private var successfulAPIConfiguration: ValidatedAPIConfiguration?
-    @State private var customVocabularyInput: String = ""
-    @FocusState private var customVocabularyFocused: Bool
     @State private var micPermissionGranted = false
     @State private var showMutedHint = false
     @State private var copiedBuildInfo = false
@@ -734,9 +740,6 @@ struct GeneralSettingsView: View {
                 SettingsCard("Sound Volume", icon: "speaker.wave.2.fill") {
                     soundVolumeSection
                 }
-                SettingsCard("Custom Vocabulary", icon: "text.book.closed.fill") {
-                    vocabularySection
-                }
                 SettingsCard("Permissions", icon: "lock.shield.fill") {
                     permissionsSection
                 }
@@ -751,14 +754,12 @@ struct GeneralSettingsView: View {
             isValidatingKey = false
             keyValidationError = nil
             successfulAPIConfiguration = nil
-            customVocabularyInput = appState.customVocabulary
             checkMicPermission()
             appState.refreshLaunchAtLoginStatus()
             Task { await githubCache.fetchIfNeeded() }
         }
         .onDisappear {
             apiDraft.dismiss()
-            commitCustomVocabulary()
         }
         .onChange(of: appState.committedAPIConfiguration) { saved in
             apiDraft.reconcile(saved)
@@ -1102,6 +1103,20 @@ struct GeneralSettingsView: View {
 
             Divider()
 
+            VStack(alignment: .leading, spacing: 6) {
+                Picker("Hands-free: stop after silence", selection: $appState.handsFreeAutoStopDelay) {
+                    ForEach(SilenceAutoStop.delayChoices, id: \.self) { delay in
+                        Text(delay == 0 ? "Off" : "\(Int(delay)) seconds").tag(delay)
+                    }
+                }
+                Text("Tap your toggle shortcut once and just talk: recording ends by itself when you've been quiet this long. Holding the shortcut is never cut off.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Shortcut Start Delay")
@@ -1279,6 +1294,14 @@ struct GeneralSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            Toggle("Spell names from the current window", isOn: $appState.screenNamesVocabularyEnabled)
+                .disabled(!appState.contextCaptureEnabled)
+
+            Text("Names in the window context (people, channels, products) are also sent to speech-to-text as spelling hints for that one dictation. Used only when the context is ready by the time you stop talking; nothing is saved to your Dictionary.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             Divider()
 
             Toggle("Preserve exact wording", isOn: $appState.preserveExactWording)
@@ -1342,6 +1365,12 @@ struct GeneralSettingsView: View {
             Text("Select which microphone to use for recording.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Toggle("Whisper mode", isOn: $appState.whisperModeEnabled)
+            Text("Boosts quiet speech before transcription, so you can dictate softly in shared spaces. Speak close to the microphone: very faint speech that is lost in background hiss can't be recovered. Live streaming transcription is skipped while this is on.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             VStack(spacing: 6) {
                 MicrophoneOptionRow(
@@ -1411,39 +1440,6 @@ struct GeneralSettingsView: View {
         }
         .onChange(of: appState.alertSoundsEnabled) { enabled in
             if !enabled { showMutedHint = false }
-        }
-    }
-
-    // MARK: Custom Vocabulary
-
-    private func commitCustomVocabulary() {
-        let trimmed = customVocabularyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        if appState.customVocabulary != trimmed {
-            appState.customVocabulary = trimmed
-        }
-    }
-
-    private var vocabularySection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Words and phrases to preserve during post-processing.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            TextEditor(text: $customVocabularyInput)
-                .font(.system(.body, design: .monospaced))
-                .frame(minHeight: 80, maxHeight: 140)
-                .focused($customVocabularyFocused)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                )
-                .onChange(of: customVocabularyFocused) { focused in
-                    if !focused { commitCustomVocabulary() }
-                }
-
-            Text("Separate entries with commas, new lines, or semicolons.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -2764,7 +2760,7 @@ struct FlowLayout: Layout {
     }
 }
 
-// MARK: - Voice Macros Settings
+// MARK: - Snippets & Macros Settings
 
 struct VoiceMacrosSettingsView: View {
     @EnvironmentObject var appState: AppState
@@ -2774,7 +2770,7 @@ struct VoiceMacrosSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
-                SettingsCard("Voice Macros", icon: "music.mic") {
+                SettingsCard("Snippets & Macros", icon: "music.mic") {
                     macrosSection
                 }
             }
@@ -2788,7 +2784,7 @@ struct VoiceMacrosSettingsView: View {
     private var macrosSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Bypass post-processing and immediately paste your predefined text.")
+                Text("Say a phrase to paste saved text. A macro fires when the phrase is all you say; turn on \"Expand anywhere\" to make it a snippet that also works mid-sentence.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -2803,7 +2799,7 @@ struct VoiceMacrosSettingsView: View {
                         .font(.system(size: 30))
                         .foregroundStyle(.tertiary)
                         .padding(.bottom, 4)
-                    Text("No Voice Macros Yet")
+                    Text("No Snippets or Macros Yet")
                         .font(.headline)
                         .foregroundStyle(.secondary)
                     Text("Click 'Add Macro' to define your first voice macro.")
@@ -2820,6 +2816,13 @@ struct VoiceMacrosSettingsView: View {
                             HStack {
                                 Text(macro.command)
                                     .font(.headline)
+                                if macro.expandsInline {
+                                    Text("Snippet")
+                                        .font(.caption2.weight(.semibold))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                                }
                                 Spacer()
                                 Button("Edit") {
                                     editingMacro = macro
@@ -2858,6 +2861,7 @@ struct VoiceMacroEditorView: View {
 
     @State private var command: String = ""
     @State private var payload: String = ""
+    @State private var expandsInline = false
 
     var body: some View {
         VStack(spacing: 20) {
@@ -2877,6 +2881,12 @@ struct VoiceMacroEditorView: View {
                     .font(.system(.body, design: .monospaced))
                     .frame(height: 150)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+
+                Toggle("Expand anywhere in a sentence (snippet)", isOn: $expandsInline)
+                    .padding(.top, 8)
+                Text("Saying \"here's my calendar link\" pastes the sentence with the link in place of the phrase. Snippets match the words you say, so they don't expand when Output Language translates your dictation.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             HStack {
@@ -2889,7 +2899,8 @@ struct VoiceMacroEditorView: View {
                     let newMacro = VoiceMacro(
                         id: macro?.id ?? UUID(),
                         command: command.trimmingCharacters(in: .whitespacesAndNewlines),
-                        payload: payload
+                        payload: payload,
+                        expandsInline: expandsInline
                     )
                     
                     if let existingIndex = appState.voiceMacros.firstIndex(where: { $0.id == newMacro.id }) {
@@ -2910,6 +2921,7 @@ struct VoiceMacroEditorView: View {
             if let m = macro {
                 command = m.command
                 payload = m.payload
+                expandsInline = m.expandsInline
             }
         }
     }

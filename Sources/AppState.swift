@@ -13,6 +13,24 @@ struct VoiceMacro: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     var command: String
     var payload: String
+    /// Snippet behavior: also expand the command when it is said inside a longer dictation.
+    var expandsInline: Bool = false
+
+    init(id: UUID = UUID(), command: String, payload: String, expandsInline: Bool = false) {
+        self.id = id
+        self.command = command
+        self.payload = payload
+        self.expandsInline = expandsInline
+    }
+
+    // Macros saved before snippets existed have no `expandsInline` key.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        command = try container.decode(String.self, forKey: .command)
+        payload = try container.decode(String.self, forKey: .payload)
+        expandsInline = try container.decodeIfPresent(Bool.self, forKey: .expandsInline) ?? false
+    }
 }
 
 struct PrecomputedMacro {
@@ -22,8 +40,12 @@ struct PrecomputedMacro {
 
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general
-    case prompts
+    case dictionary
+    case styles
     case macros
+    case scratchpad
+    case insights
+    case prompts
     case runLog
     case debug
 
@@ -38,8 +60,12 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: return "General"
+        case .dictionary: return "Dictionary"
+        case .styles: return "Styles"
+        case .macros: return "Snippets & Macros"
+        case .scratchpad: return "Scratchpad"
+        case .insights: return "Insights"
         case .prompts: return "Prompts"
-        case .macros: return "Voice Macros"
         case .runLog: return "Run Log"
         case .debug: return "Debug"
         }
@@ -48,6 +74,10 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .general: return "gearshape"
+        case .dictionary: return "text.book.closed"
+        case .styles: return "textformat"
+        case .scratchpad: return "note.text"
+        case .insights: return "chart.bar"
         case .prompts: return "text.bubble"
         case .macros: return "music.mic"
         case .runLog: return "clock.arrow.circlepath"
@@ -212,6 +242,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let savedHoldCustomShortcutStorageKey = "saved_hold_custom_shortcut"
     private let savedToggleCustomShortcutStorageKey = "saved_toggle_custom_shortcut"
     private let savedCopyAgainCustomShortcutStorageKey = "saved_copy_again_custom_shortcut"
+    private let undoLastShortcutStorageKey = "undo_last_shortcut"
+    private let savedUndoLastCustomShortcutStorageKey = "saved_undo_last_custom_shortcut"
     private let customVocabularyStorageKey = "custom_vocabulary"
     private let transcriptionLanguageStorageKey = "transcription_language"
     private let selectedMicrophoneStorageKey = "selected_microphone_id"
@@ -226,6 +258,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let preserveClipboardStorageKey = "preserve_clipboard"
     private let preserveExactWordingStorageKey = "preserve_exact_wording"
     private let keepDictationInClipboardHistoryStorageKey = "keep_dictation_in_clipboard_history"
+    private let learnFromCorrectionsStorageKey = "learn_from_corrections"
     private let pressEnterVoiceCommandStorageKey = "press_enter_voice_command_enabled"
     private let alertSoundsEnabledStorageKey = "alert_sounds_enabled"
     private let soundVolumeStorageKey = "sound_volume"
@@ -385,6 +418,19 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @Published private(set) var savedCopyAgainCustomShortcut: ShortcutBinding? {
         didSet {
             persistOptionalShortcut(savedCopyAgainCustomShortcut, key: savedCopyAgainCustomShortcutStorageKey)
+        }
+    }
+
+    @Published var undoLastShortcut: ShortcutBinding {
+        didSet {
+            persistShortcut(undoLastShortcut, key: undoLastShortcutStorageKey)
+            restartHotkeyMonitoring()
+        }
+    }
+
+    @Published private(set) var savedUndoLastCustomShortcut: ShortcutBinding? {
+        didSet {
+            persistOptionalShortcut(savedUndoLastCustomShortcut, key: savedUndoLastCustomShortcutStorageKey)
         }
     }
 
@@ -554,6 +600,68 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Watches dictated text briefly after paste and adds the user's spelling fixes to vocabulary.
+    @Published var learnFromCorrectionsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(learnFromCorrectionsEnabled, forKey: learnFromCorrectionsStorageKey)
+            if !learnFromCorrectionsEnabled { correctionWatcher.cancel() }
+        }
+    }
+
+    private(set) lazy var correctionWatcher = CorrectionWatcher { [weak self] corrections in
+        self?.learnVocabulary(from: corrections)
+    }
+
+    // MARK: Dictionary, styles, whisper mode and stats (logic in AppState+Enhancements.swift)
+
+    /// "When I hear X, write Y" rules applied to every dictation.
+    @Published var wordReplacements: [WordReplacement] =
+        AppState.loadStoredJSON(forKey: AppState.wordReplacementsStorageKey) ?? [] {
+        didSet { Self.storeJSON(wordReplacements, forKey: Self.wordReplacementsStorageKey) }
+    }
+
+    /// Tone per app category; categories not listed use `.standard`.
+    @Published var dictationStyles: [DictationStyleCategory: DictationStyle] = AppState.loadDictationStyles() {
+        didSet { Self.storeDictationStyles(dictationStyles) }
+    }
+
+    /// Boosts quiet recordings before transcription.
+    @Published var whisperModeEnabled: Bool = UserDefaults.standard.bool(forKey: AppState.whisperModeStorageKey) {
+        didSet { UserDefaults.standard.set(whisperModeEnabled, forKey: Self.whisperModeStorageKey) }
+    }
+
+    /// Hands-free: seconds of silence that end a tap-to-toggle recording; 0 turns it off.
+    @Published var handsFreeAutoStopDelay: TimeInterval = AppState.loadHandsFreeAutoStopDelay() {
+        didSet { UserDefaults.standard.set(handsFreeAutoStopDelay, forKey: Self.handsFreeAutoStopDelayStorageKey) }
+    }
+
+    /// Adds names from the app-context summary to that dictation's speech-to-text vocabulary.
+    @Published var screenNamesVocabularyEnabled: Bool =
+        UserDefaults.standard.object(forKey: AppState.screenNamesVocabularyStorageKey) as? Bool ?? true {
+        didSet { UserDefaults.standard.set(screenNamesVocabularyEnabled, forKey: Self.screenNamesVocabularyStorageKey) }
+    }
+
+    /// Where the last dictation landed, for Undo Last Dictation. Memory only.
+    var lastDictationInsertion: DictationUndo.Insertion?
+    /// Identifies the newest insertion being looked for, so an older lookup can't overwrite it.
+    var undoLookupToken = UUID()
+    /// Watches the current tap-to-toggle recording for trailing silence.
+    var silenceAutoStop: SilenceAutoStop?
+
+    /// Per-day word, time and session counts. Never holds dictated text.
+    @Published var usageDays: [String: DailyUsage] =
+        AppState.loadStoredJSON(forKey: AppState.usageStatsStorageKey) ?? [:] {
+        didSet { Self.storeJSON(usageDays, forKey: Self.usageStatsStorageKey) }
+    }
+
+    /// Whether `recordUsage` keeps counting. Existing counts stay until reset.
+    @Published var usageStatsEnabled: Bool = AppState.loadUsageStatsEnabled() {
+        didSet { UserDefaults.standard.set(usageStatsEnabled, forKey: Self.usageStatsEnabledStorageKey) }
+    }
+
+    private var recordingStartedAt: Date?
+    private var activeStyleCategory: DictationStyleCategory = .other
+
     @Published var isPressEnterVoiceCommandEnabled: Bool {
         didSet {
             UserDefaults.standard.set(isPressEnterVoiceCommandEnabled, forKey: pressEnterVoiceCommandStorageKey)
@@ -700,6 +808,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
             forKey: savedCopyAgainCustomShortcutStorageKey,
             fallback: shortcuts.copyAgain.isCustom ? shortcuts.copyAgain : nil
         )
+        let storedUndoLast = Self.loadShortcut(forKey: undoLastShortcutStorageKey)
+        let undoLastShortcut = storedUndoLast.binding ?? .disabled
+        let savedUndoLastCustomShortcut = Self.loadSavedCustomShortcut(
+            forKey: savedUndoLastCustomShortcutStorageKey,
+            fallback: undoLastShortcut.isCustom ? undoLastShortcut : nil
+        )
         let customVocabulary = UserDefaults.standard.string(forKey: customVocabularyStorageKey) ?? ""
         let transcriptionLanguage = Self.normalizeTranscriptionLanguage(
             UserDefaults.standard.string(forKey: transcriptionLanguageStorageKey) ?? ""
@@ -737,6 +851,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
             : UserDefaults.standard.bool(forKey: preserveClipboardStorageKey)
         let preserveExactWording = UserDefaults.standard.bool(forKey: preserveExactWordingStorageKey)
         let keepDictationInClipboardHistory = UserDefaults.standard.bool(forKey: keepDictationInClipboardHistoryStorageKey)
+        let learnFromCorrectionsEnabled = UserDefaults.standard.object(forKey: learnFromCorrectionsStorageKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: learnFromCorrectionsStorageKey)
         let realtimeStreamingEnabled = UserDefaults.standard.bool(forKey: realtimeStreamingEnabledStorageKey)
         let realtimeStreamingModel = UserDefaults.standard.string(forKey: realtimeStreamingModelStorageKey) ?? ""
         let dictationAudioInterruptionEnabled = UserDefaults.standard.bool(
@@ -803,6 +920,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.savedHoldCustomShortcut = savedHoldCustomShortcut.binding
         self.savedToggleCustomShortcut = savedToggleCustomShortcut.binding
         self.savedCopyAgainCustomShortcut = savedCopyAgainCustomShortcut.binding
+        self.undoLastShortcut = undoLastShortcut
+        self.savedUndoLastCustomShortcut = savedUndoLastCustomShortcut.binding
         self.isCommandModeEnabled = isCommandModeEnabled
         self.commandModeStyle = commandModeStyle
         self.commandModeManualModifier = commandModeManualModifier
@@ -822,6 +941,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.preserveClipboard = preserveClipboard
         self.preserveExactWording = preserveExactWording
         self.keepDictationInClipboardHistory = keepDictationInClipboardHistory
+        self.learnFromCorrectionsEnabled = learnFromCorrectionsEnabled
         self.realtimeStreamingEnabled = realtimeStreamingEnabled
         self.realtimeStreamingModel = realtimeStreamingModel
         self.dictationAudioInterruptionEnabled = dictationAudioInterruptionEnabled
@@ -856,6 +976,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
         if savedCopyAgainCustomShortcut.didUpdateStoredValue {
             persistOptionalShortcut(savedCopyAgainCustomShortcut.binding, key: savedCopyAgainCustomShortcutStorageKey)
+        }
+        if storedUndoLast.didNormalize {
+            persistShortcut(undoLastShortcut, key: undoLastShortcutStorageKey)
+        }
+        if savedUndoLastCustomShortcut.didUpdateStoredValue {
+            persistOptionalShortcut(savedUndoLastCustomShortcut.binding, key: savedUndoLastCustomShortcutStorageKey)
         }
 
         overlayManager.onStopButtonPressed = { [weak self] in
@@ -1126,12 +1252,17 @@ final class AppState: ObservableObject, @unchecked Sendable {
         return trimmed.isEmpty ? apiKey : trimmed
     }
 
-    func makeTranscriptionService() throws -> TranscriptionService {
+    /// `contextTerms` are names from the current window, used for this dictation only,
+    /// after the user's own Dictionary so they never push it out of the prompt.
+    func makeTranscriptionService(contextTerms: [String] = []) throws -> TranscriptionService {
         try TranscriptionService(
             apiKey: resolvedTranscriptionAPIKey,
             baseURL: resolvedTranscriptionBaseURL,
             transcriptionModel: transcriptionModel,
-            language: resolvedTranscriptionLanguage
+            language: resolvedTranscriptionLanguage,
+            vocabularyPrompt: TranscriptionRequestCore.vocabularyPrompt(
+                terms: Self.vocabularyEntries(in: customVocabulary) + contextTerms
+            )
         )
     }
 
@@ -1293,12 +1424,20 @@ final class AppState: ObservableObject, @unchecked Sendable {
             instructionExecutionGuardEnabled: instructionExecutionGuardEnabled
         )
         let capturedCustomVocabulary = customVocabulary
-        let capturedCustomSystemPrompt = customSystemPrompt
+        let textRules = dictationTextRules(
+            customSystemPrompt: customSystemPrompt,
+            category: DictationStyleCore.category(
+                bundleIdentifier: item.contextBundleIdentifier, windowTitle: item.contextWindowTitle
+            )
+        )
+        let boostsQuietSpeech = whisperModeEnabled
 
         Task {
             do {
+                let boostedFileURL = boostsQuietSpeech ? Self.whisperBoostedCopy(of: audioURL) : nil
+                defer { Self.removeTemporaryAudio(boostedFileURL) }
                 let transcriptionService = try makeTranscriptionService()
-                let rawTranscript = try await transcriptionService.transcribe(fileURL: audioURL)
+                let rawTranscript = try await transcriptionService.transcribe(fileURL: boostedFileURL ?? audioURL)
                 let parsedTranscript = Self.parseTranscriptCommands(
                     from: rawTranscript,
                     pressEnterCommandEnabled: self.isPressEnterVoiceCommandEnabled
@@ -1317,10 +1456,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
                     context: restoredContext,
                     postProcessingService: postProcessingService,
                     customVocabulary: capturedCustomVocabulary,
-                    customSystemPrompt: capturedCustomSystemPrompt,
+                    customSystemPrompt: textRules.systemPrompt,
                     outputLanguage: self.outputLanguage,
                     dictationLanguage: Self.dictationLanguageName(for: self.transcriptionLanguage),
-                    preserveExactWording: self.preserveExactWording
+                    preserveExactWording: self.preserveExactWording,
+                    textRules: textRules
                 )
                 finalTranscript = result.finalTranscript
                 processingStatus = Self.statusMessage(
@@ -1571,7 +1711,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     }
 
     var usesFnShortcut: Bool {
-        holdShortcut.usesFnKey || toggleShortcut.usesFnKey || copyAgainShortcut.usesFnKey
+        holdShortcut.usesFnKey || toggleShortcut.usesFnKey || copyAgainShortcut.usesFnKey || undoLastShortcut.usesFnKey
     }
 
     var hasEnabledHoldShortcut: Bool {
@@ -1611,6 +1751,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
             return savedToggleCustomShortcut
         case .copyAgain:
             return savedCopyAgainCustomShortcut
+        case .undoLast:
+            return savedUndoLastCustomShortcut
         }
     }
 
@@ -1661,16 +1803,19 @@ final class AppState: ObservableObject, @unchecked Sendable {
         if role != .copyAgain, binding.conflicts(with: copyAgainShortcut) {
             return "This shortcut is already used by Paste Again."
         }
-        if role == .copyAgain {
+        if role != .undoLast, binding.conflicts(with: undoLastShortcut) {
+            return "This shortcut is already used by Undo Last Dictation."
+        }
+        if role == .copyAgain || role == .undoLast {
             if binding.conflicts(with: holdShortcut) {
-                return "Paste Again cannot share a shortcut with Hold to Talk."
+                return "\(role.title) cannot share a shortcut with Hold to Talk."
             }
             if binding.conflicts(with: toggleShortcut) {
-                return "Paste Again cannot share a shortcut with Tap to Toggle."
+                return "\(role.title) cannot share a shortcut with Tap to Toggle."
             }
             if isCommandModeEnabled, commandModeStyle == .manual,
                bindingCollides(binding, with: commandModeManualModifier) {
-                return "Paste Again cannot share the Edit Mode modifier."
+                return "\(role.title) cannot share the Edit Mode modifier."
             }
         }
 
@@ -1690,6 +1835,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 savedCopyAgainCustomShortcut = binding
             }
             copyAgainShortcut = binding
+        case .undoLast:
+            if binding.isCustom {
+                savedUndoLastCustomShortcut = binding
+            }
+            undoLastShortcut = binding
         }
 
         return nil
@@ -1715,6 +1865,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         if !copyAgainBinding.isDisabled && copyAgainBinding.modifiers.contains(manualModifier) {
             return "That modifier is already part of the Paste Again shortcut."
         }
+        if !undoLastShortcut.isDisabled && undoLastShortcut.modifiers.contains(manualModifier) {
+            return "That modifier is already part of the Undo Last Dictation shortcut."
+        }
         // Modifier-only bindings carry identity in keyCode, not modifiers.
         if !holdBinding.isDisabled,
            holdBinding.kind == .modifierKey,
@@ -1733,6 +1886,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
            let bindingModifier = ShortcutBinding.modifier(forKeyCode: copyAgainBinding.keyCode),
            bindingModifier == manualModifier {
             return "That modifier is already the Paste Again shortcut."
+        }
+        if !undoLastShortcut.isDisabled,
+           undoLastShortcut.kind == .modifierKey,
+           let bindingModifier = ShortcutBinding.modifier(forKeyCode: undoLastShortcut.keyCode),
+           bindingModifier == manualModifier {
+            return "That modifier is already the Undo Last Dictation shortcut."
         }
 
         return nil
@@ -1815,6 +1974,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
             hold: holdShortcut,
             toggle: toggleShortcut,
             copyAgain: copyAgainShortcut,
+            undoLast: undoLastShortcut,
             permittedAdditionalExactMatchModifiers: permittedAdditionalExactMatchModifiers
         )
     }
@@ -1839,6 +1999,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
             copyLastTranscriptToPasteboard()
             return
         }
+        if event == .undoLastTriggered {
+            undoLastDictation()
+            return
+        }
 
         guard let action = shortcutSessionController.handle(event: event, isTranscribing: isTranscribing) else {
             return
@@ -1861,6 +2025,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
             if isRecording {
                 activeRecordingTriggerMode = .toggle
                 overlayManager.setRecordingTriggerMode(.toggle, animated: true)
+                if silenceAutoStop != nil { silenceAutoStop = SilenceAutoStop(delay: handsFreeAutoStopDelay) }
             } else if pendingShortcutStartMode != nil {
                 pendingShortcutStartMode = .toggle
             }
@@ -1888,9 +2053,83 @@ final class AppState: ObservableObject, @unchecked Sendable {
     func copyLastTranscriptToPasteboard() {
         guard !lastTranscript.isEmpty else { return }
         let pendingClipboardRestore = writeTranscriptToPasteboard(lastTranscript)
+        recordInsertionForUndo(lastTranscript, processIdentifier: nil)
         pasteAtCursorWhenShortcutReleased { [weak self] in
             self?.restoreClipboardIfNeeded(pendingClipboardRestore)
         }
+    }
+
+    /// Removes the last dictation from the field it went into; see DictationUndo.
+    func undoLastDictation() {
+        guard !isRecording, !isTranscribing else { return }
+        guard let insertion = lastDictationInsertion else {
+            let status = "Nothing to undo"
+            statusText = status
+            scheduleReadyStatusReset(after: 3, matching: [status])
+            return
+        }
+        // The removal must not be learned as a correction.
+        correctionWatcher.cancel()
+        performAfterShortcutReleased { [weak self] in
+            guard let self, self.lastDictationInsertion?.id == insertion.id else { return }
+            let outcome = DictationUndo.undo(insertion)
+            if outcome == .removed { self.lastDictationInsertion = nil }
+            let status = outcome.statusText
+            self.statusText = status
+            self.scheduleReadyStatusReset(after: 3, matching: [status])
+        }
+    }
+
+    /// Forgets the previous dictation, then watches for this one to land in the focused field.
+    /// Undo only ever acts on an insertion seen there, so a failed or blocked paste leaves
+    /// nothing to undo. Pass nil to just forget.
+    private func recordInsertionForUndo(_ transcript: String?, processIdentifier: pid_t?) {
+        lastDictationInsertion = nil
+        let token = UUID()
+        undoLookupToken = token
+        guard let transcript,
+              let pid = processIdentifier ?? NSWorkspace.shared.frontmostApplication?.processIdentifier else { return }
+        let text = transcriptTextForInsertion(transcript)
+        lookUpInsertion(text: text, processIdentifier: pid, token: token, attempt: 0)
+    }
+
+    /// The paste waits for the shortcut to be released, so look a few times.
+    private func lookUpInsertion(text: String, processIdentifier: pid_t, token: UUID, attempt: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.undoLookupInterval) { [weak self] in
+            guard let self, self.undoLookupToken == token else { return }
+            if let insertion = DictationUndo.locate(text: text, processIdentifier: processIdentifier) {
+                self.lastDictationInsertion = insertion
+            } else if attempt + 1 < Self.undoLookupAttempts {
+                self.lookUpInsertion(text: text, processIdentifier: processIdentifier, token: token, attempt: attempt + 1)
+            }
+        }
+    }
+
+    private static let undoLookupInterval: TimeInterval = 0.25
+    private static let undoLookupAttempts = 12
+
+    /// Hands-free: ends a tap-to-toggle recording after the chosen stretch of silence.
+    /// Levels are watched from the start so the noise floor is known; only a recording in
+    /// tap mode is stopped, so holding the shortcut always keeps recording.
+    private func startSilenceAutoStop() {
+        guard handsFreeAutoStopDelay > 0 else { return stopSilenceAutoStop() }
+        silenceAutoStop = SilenceAutoStop(delay: handsFreeAutoStopDelay)
+        audioRecorder.onLevelSample = { [weak self] rms, duration in
+            DispatchQueue.main.async {
+                guard let self, self.isRecording, var detector = self.silenceAutoStop else { return }
+                let shouldStop = detector.shouldStop(afterBufferWithRMS: rms, duration: duration)
+                self.silenceAutoStop = detector
+                guard shouldStop, self.activeRecordingTriggerMode == .toggle else { return }
+                os_log(.info, log: recordingLog, "Hands-free: stopping after silence")
+                self.cancelPendingShortcutStart()
+                self.stopAndTranscribe()
+            }
+        }
+    }
+
+    private func stopSilenceAutoStop() {
+        audioRecorder.onLevelSample = nil
+        silenceAutoStop = nil
     }
 
     func toggleRecording() {
@@ -1919,6 +2158,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         activeTextInsertionTarget = nil
         audioRecorder.onRecordingReady = nil
         audioRecorder.onRecordingFailure = nil
+        stopSilenceAutoStop()
         audioLevelCancellable?.cancel()
         audioLevelCancellable = nil
         cancelRecordingInitializationTimer()
@@ -2095,6 +2335,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let t0 = CFAbsoluteTimeGetCurrent()
         os_log(.info, log: recordingLog, "startRecording() entered")
         guard !isRecording && !isTranscribing else { return }
+        correctionWatcher.stop()
         let scheduledSelectionSnapshot = pendingSelectionSnapshot
         let selectionSnapshot = scheduledSelectionSnapshot
             ?? contextService.collectSelectionSnapshot(captureInsertionTarget: originalFieldInsertionEnabled)
@@ -2162,8 +2403,20 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
 
         currentSessionIntent = resolvedIntent
+        activeStyleCategory = frontmostStyleCategory()
         overlayManager.setRecordingTriggerMode(triggerMode, animated: false)
         return true
+    }
+
+    /// Only looks up the window title (an Accessibility call) when a style is set and the app is a browser.
+    private func frontmostStyleCategory() -> DictationStyleCategory {
+        guard hasCustomDictationStyles else { return .other }
+        let frontmostApp = NSWorkspace.shared.frontmostApplication
+        let bundleIdentifier = frontmostApp?.bundleIdentifier
+        let windowTitle = bundleIdentifier.map { DictationStyleCore.browsers.contains($0) } == true
+            ? focusedWindowTitle(for: frontmostApp)
+            : nil
+        return DictationStyleCore.category(bundleIdentifier: bundleIdentifier, windowTitle: windowTitle)
     }
 
     private func ensureScreenCaptureAccess() -> Bool {
@@ -2272,6 +2525,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         cancelRecordingInitializationTimer()
         audioRecorder.onRecordingReady = nil
         audioRecorder.onRecordingFailure = nil
+        stopSilenceAutoStop()
         audioLevelCancellable?.cancel()
         audioLevelCancellable = nil
         overlayManager.dismiss()
@@ -2319,6 +2573,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         errorMessage = nil
 
         isRecording = true
+        recordingStartedAt = Date()
         statusText = "Starting..."
         hasShownScreenshotPermissionAlert = false
         // Keep this recording's display preference fixed, including during startup silence.
@@ -2400,6 +2655,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         .sink { [weak self] level in
                             self?.overlayManager.updateAudioLevel(level)
                         }
+                    self.startSilenceAutoStop()
                 }
             } catch {
                 DispatchQueue.main.async {
@@ -2415,6 +2671,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         cancelRecordingInitializationTimer()
         audioRecorder.onRecordingReady = nil
         audioRecorder.onRecordingFailure = nil
+        stopSilenceAutoStop()
         audioLevelCancellable?.cancel()
         audioLevelCancellable = nil
         contextCaptureTask?.cancel()
@@ -2617,7 +2874,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         outputLanguage: String = "",
         dictationLanguage: String = "",
         preserveExactWording: Bool,
-        contextGeneration: UUID? = nil
+        contextGeneration: UUID? = nil,
+        textRules: DictationTextRules = .none
     ) async -> (finalTranscript: String, outcome: TranscriptProcessingOutcome, prompt: String) {
         let trimmedRawTranscript = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -2657,6 +2915,39 @@ final class AppState: ObservableObject, @unchecked Sendable {
             return (macro.payload, .voiceMacro(command: macro.command), "")
         }
 
+        // Dictionary replacements run before cleanup, so the model sees the intended words, and
+        // again after it, in case cleanup reintroduced a misheard form. Snippets expand last.
+        let processed = await processDictation(
+            dictationTranscript: textRules.beforeCleanup(trimmedRawTranscript),
+            context: context,
+            postProcessingService: postProcessingService,
+            customVocabulary: customVocabulary,
+            customSystemPrompt: customSystemPrompt,
+            outputLanguage: outputLanguage,
+            dictationLanguage: dictationLanguage,
+            preserveExactWording: preserveExactWording,
+            contextSummaryProvider: contextSummaryProvider
+        )
+        let cleanupRan: Bool
+        switch processed.outcome {
+        case .postProcessingSucceeded, .preservedExactWordingTranslated: cleanupRan = true
+        default: cleanupRan = false
+        }
+        let finished = textRules.afterCleanup(processed.finalTranscript, cleanupRan: cleanupRan)
+        return (finished, processed.outcome, processed.prompt)
+    }
+
+    private func processDictation(
+        dictationTranscript trimmedRawTranscript: String,
+        context: AppContext,
+        postProcessingService: PostProcessingService,
+        customVocabulary: String,
+        customSystemPrompt: String,
+        outputLanguage: String,
+        dictationLanguage: String,
+        preserveExactWording: Bool,
+        contextSummaryProvider: (@Sendable () async -> String)?
+    ) async -> (finalTranscript: String, outcome: TranscriptProcessingOutcome, prompt: String) {
         // Preserve-exact-wording mode. Two sub-cases so translation
         // stays honored:
         //
@@ -2742,13 +3033,23 @@ final class AppState: ObservableObject, @unchecked Sendable {
         activeTextInsertionTarget = nil
         let sessionIntent = currentSessionIntent
         currentSessionIntent = .dictation
+        let textRules = dictationTextRules(customSystemPrompt: customSystemPrompt, category: activeStyleCategory)
+        activeStyleCategory = .other
+        let recordedSeconds = recordingStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+        recordingStartedAt = nil
+        let boostsQuietSpeech = whisperModeEnabled
         audioRecorder.onRecordingReady = nil
         audioRecorder.onRecordingFailure = nil
+        stopSilenceAutoStop()
         audioLevelCancellable?.cancel()
         audioLevelCancellable = nil
         debugStatusMessage = "Preparing audio"
         let contextGeneration = contextCaptureGeneration
         let sessionContext = capturedContext
+        // Names on screen, only when the context summary is already in: never waits for it.
+        let screenNameTerms = contextCaptureEnabled && screenNamesVocabularyEnabled
+            ? ContextVocabularyCore.terms(fromSummary: sessionContext?.contextSummary ?? "")
+            : []
         let inFlightContextTask = contextCaptureTask
         capturedContext = nil
         // Keep the handle so disabling context or cancelling transcription can cancel it.
@@ -2820,11 +3121,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
                     activeRealtime?.cancel()
                 }
                 do {
-                    let transcriptionService = try self.makeTranscriptionService()
+                    // The saved recording stays untouched; only a temporary boosted copy is transcribed.
+                    let boostedFileURL = boostsQuietSpeech ? Self.whisperBoostedCopy(of: transcriptionFileURL) : nil
+                    defer { Self.removeTemporaryAudio(boostedFileURL) }
+                    let transcriptionService = try self.makeTranscriptionService(contextTerms: screenNameTerms)
                     async let transcript = Self.resolveRawTranscript(
                         realtimeService: activeRealtime,
                         fileService: transcriptionService,
-                        fileURL: transcriptionFileURL
+                        fileURL: boostedFileURL ?? transcriptionFileURL
                     )
                     let rawTranscript = try await transcript
                     let parsedTranscript = Self.parseTranscriptCommands(
@@ -2853,11 +3157,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         context: appContext,
                         postProcessingService: postProcessingService,
                         customVocabulary: self.customVocabulary,
-                        customSystemPrompt: self.customSystemPrompt,
+                        customSystemPrompt: textRules.systemPrompt,
                         outputLanguage: self.outputLanguage,
                         dictationLanguage: Self.dictationLanguageName(for: self.transcriptionLanguage),
                         preserveExactWording: self.preserveExactWording,
-                        contextGeneration: contextGeneration
+                        contextGeneration: contextGeneration,
+                        textRules: textRules
                     )
                     try Task.checkCancellation()
 
@@ -2890,7 +3195,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                             rawTranscript: trimmedRawTranscript,
                             postProcessedTranscript: trimmedFinalTranscript,
                             postProcessingPrompt: publication.prompt,
-                            systemPrompt: Self.resolvedSystemPrompt(self.customSystemPrompt),
+                            systemPrompt: Self.resolvedSystemPrompt(textRules.systemPrompt),
                             context: appContext,
                             processingStatus: processingStatus,
                             intent: sessionIntent,
@@ -2945,11 +3250,21 @@ final class AppState: ObservableObject, @unchecked Sendable {
                                 }
                             }
 
+                            // Edit Mode replaces a selection and Enter sends the text: neither can be undone here.
+                            self.recordInsertionForUndo(
+                                sessionIntent.isCommandMode || shouldPressEnterAfterPaste ? nil : trimmedFinalTranscript,
+                                processIdentifier: useOriginalFieldInsertion ? textInsertionTarget?.processIdentifier : nil
+                            )
                             self.insertTranscriptWhenShortcutReleased(
                                 trimmedFinalTranscript, target: textInsertionTarget,
                                 shouldPressEnter: shouldPressEnterAfterPaste,
                                 useOriginalField: useOriginalFieldInsertion
                             )
+                            // A message sent with Enter leaves nothing to correct.
+                            if self.learnFromCorrectionsEnabled && !shouldPressEnterAfterPaste {
+                                self.correctionWatcher.start(transcript: trimmedFinalTranscript)
+                            }
+                            self.recordUsage(spokenText: trimmedRawTranscript, seconds: recordedSeconds)
                         }
 
                         self.audioRecorder.cleanup()
@@ -3054,7 +3369,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
     }
 
     private func startRealtimeStreamingIfEnabled() {
-        guard realtimeStreamingEnabled else { return }
+        // Whisper mode boosts the finished file, so it must be transcribed from that file.
+        guard realtimeStreamingEnabled, !whisperModeEnabled else { return }
         let trimmedBase = resolvedTranscriptionBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedBase.isEmpty else {
             os_log(.info, log: recordingLog, "realtime streaming requested but base URL is empty — skipping")
@@ -3247,6 +3563,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
             // Permission errors are fatal — stop recording
             tearDownRealtimeService()
             audioRecorder.cancelRecording()
+            stopSilenceAutoStop()
             audioLevelCancellable?.cancel()
             audioLevelCancellable = nil
             contextCaptureTask?.cancel()
@@ -3881,7 +4198,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         recordingInitializationTimer = nil
     }
 
-    private func scheduleReadyStatusReset(after delay: TimeInterval, matching statuses: Set<String>? = nil) {
+    func scheduleReadyStatusReset(after delay: TimeInterval, matching statuses: Set<String>? = nil) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
             if let statuses, !statuses.contains(self.statusText) {

@@ -145,6 +145,12 @@ struct MenuBarView: View {
                     appState.copyLastTranscriptToPasteboard()
                 }
 
+                Button(appState.undoLastShortcut.isDisabled
+                    ? "Undo Last Dictation"
+                    : "Undo Last Dictation  (\(appState.undoLastShortcut.displayName))") {
+                    appState.undoLastDictation()
+                }
+
                 let truncatedTranscript = appState.lastTranscript.count > 35
                     ? String(appState.lastTranscript.prefix(35)) + "…"
                     : appState.lastTranscript
@@ -184,6 +190,11 @@ struct MenuBarView: View {
                 if appState.pasteWordToVocabulary() != nil {
                     VocabularyNotificationManager.shared.flashCheckmark()
                 }
+            }
+
+            Button("Open Scratchpad") {
+                appState.selectedSettingsTab = .scratchpad
+                NotificationCenter.default.post(name: .showSettings, object: nil)
             }
 
             Divider()

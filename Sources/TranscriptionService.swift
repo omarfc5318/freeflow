@@ -60,6 +60,8 @@ class TranscriptionService {
     private let baseURL: URL
     private let transcriptionModel: String
     private let language: String?
+    /// Vocabulary hint sent as Whisper's `prompt`, or nil to send none.
+    private let vocabularyPrompt: String?
     private var transcriptionResponseFormat: String {
         Self.responseFormat(forModel: transcriptionModel)
     }
@@ -72,7 +74,8 @@ class TranscriptionService {
         apiKey: String,
         baseURL: String = "https://api.groq.com/openai/v1",
         transcriptionModel: String = "whisper-large-v3",
-        language: String? = nil
+        language: String? = nil,
+        vocabularyPrompt: String? = nil
     ) throws {
         self.apiKey = apiKey
         self.baseURL = try Self.normalizedBaseURL(from: baseURL)
@@ -80,6 +83,7 @@ class TranscriptionService {
         self.transcriptionModel = trimmedModel.isEmpty ? "whisper-large-v3" : trimmedModel
         let trimmedLanguage = language?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.language = (trimmedLanguage?.isEmpty == false) ? trimmedLanguage : nil
+        self.vocabularyPrompt = vocabularyPrompt
     }
 
     static func responseFormat(forModel model: String) -> String {
@@ -163,6 +167,62 @@ class TranscriptionService {
     }
 
     private func transcribeAudioWithURLSession(fileURL: URL) async throws -> String {
+        let upload = preparedUploadAudio(for: fileURL)
+        defer { upload.cleanup() }
+        let audioData = try Data(contentsOf: upload.fileURL)
+
+        guard let prompt = vocabularyPrompt else {
+            return try await transcriptionResult(audioData: audioData, fileURL: upload.fileURL, prompt: nil).get()
+        }
+
+        // Both requests run at once, so this costs no extra wait: the vocabulary version
+        // spells names and jargon correctly, and the plain one shows whether anyone spoke.
+        async let promptedRequest = transcriptionResult(audioData: audioData, fileURL: upload.fileURL, prompt: prompt)
+        async let plainRequest = transcriptionResult(audioData: audioData, fileURL: upload.fileURL, prompt: nil)
+        let (prompted, plain) = await (promptedRequest, plainRequest)
+
+        switch TranscriptionRequestCore.choose(
+            prompted: try? prompted.get(),
+            plain: try? plain.get(),
+            prompt: prompt,
+            isSilencePhrase: TranscriptionResponseParser.isStockSilencePhrase
+        ) {
+        case .prompted:
+            return try prompted.get()
+        case .plain:
+            if case .failure(let error) = prompted {
+                os_log(.error, log: transcriptionLog, "Vocabulary request failed, used plain transcript: %{public}@", error.localizedDescription)
+            }
+            return try plain.get()
+        case nil:
+            return try plain.get()
+        }
+    }
+
+    private func transcriptionResult(audioData: Data, fileURL: URL, prompt: String?) async -> Result<String, Error> {
+        do {
+            let (data, response) = try await sendTranscription(audioData: audioData, fileURL: fileURL, prompt: prompt)
+            return .success(try validateTranscriptionResponse(data: data, response: response, fileURL: fileURL))
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// A lossless FLAC copy when the provider accepts FLAC, otherwise the recording itself.
+    private func preparedUploadAudio(for fileURL: URL) -> PreparedUploadAudio {
+        guard TranscriptionRequestCore.acceptsFLAC(host: baseURL.host),
+              fileURL.pathExtension.lowercased() == "wav" else {
+            return PreparedUploadAudio(fileURL: fileURL, deleteOnCleanup: false)
+        }
+        do {
+            return PreparedUploadAudio(fileURL: try FLACUploadAudio.flacCopy(of: fileURL), deleteOnCleanup: true)
+        } catch {
+            os_log(.error, log: transcriptionLog, "FLAC encoding skipped: %{public}@", error.localizedDescription)
+            return PreparedUploadAudio(fileURL: fileURL, deleteOnCleanup: false)
+        }
+    }
+
+    private func sendTranscription(audioData: Data, fileURL: URL, prompt: String?) async throws -> (Data, URLResponse) {
         let url = baseURL
             .appendingPathComponent("audio")
             .appendingPathComponent("transcriptions")
@@ -173,19 +233,18 @@ class TranscriptionService {
         let boundary = UUID().uuidString
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        let audioData = try Data(contentsOf: fileURL)
         let body = makeMultipartBody(
             audioData: audioData,
             fileName: fileURL.lastPathComponent,
             model: transcriptionModel,
             responseFormat: transcriptionResponseFormat,
             language: language,
+            prompt: prompt,
             boundary: boundary
         )
 
         do {
-            let (data, response) = try await LLMAPITransport.upload(for: request, from: body)
-            return try validateTranscriptionResponse(data: data, response: response, fileURL: fileURL)
+            return try await LLMAPITransport.upload(for: request, from: body)
         } catch {
             let nsError = error as NSError
             os_log(
@@ -230,6 +289,9 @@ class TranscriptionService {
         if fileName.lowercased().hasSuffix(".wav") {
             return "audio/wav"
         }
+        if fileName.lowercased().hasSuffix(".flac") {
+            return "audio/flac"
+        }
         if fileName.lowercased().hasSuffix(".mp3") {
             return "audio/mpeg"
         }
@@ -250,6 +312,7 @@ class TranscriptionService {
         model: String,
         responseFormat: String,
         language: String?,
+        prompt: String?,
         boundary: String
     ) -> Data {
         var body = Data()
@@ -270,6 +333,12 @@ class TranscriptionService {
             append("--\(boundary)\r\n")
             append("Content-Disposition: form-data; name=\"language\"\r\n\r\n")
             append("\(language)\r\n")
+        }
+
+        if let prompt, !prompt.isEmpty {
+            append("--\(boundary)\r\n")
+            append("Content-Disposition: form-data; name=\"prompt\"\r\n\r\n")
+            append("\(prompt)\r\n")
         }
 
         append("--\(boundary)\r\n")
