@@ -122,19 +122,27 @@ extension TeddyArt {
 
     /// Draws any `TeddyBodyPose`, front or back, in the given outfit.
     static func drawBody(in graphics: inout GraphicsContext, time: TimeInterval, pose: TeddyBodyPose, outfit: TeddyOutfit) {
+        // With planted feet the body leans and drops from the hips (like a person bending their
+        // knees); otherwise the whole bear tips about the ground point.
+        let pivot = pose.feetPlanted ? hipCenter : groundPoint
         var body = graphics
         body.translateBy(x: 0, y: -pose.bob)
         if pose.leanDegrees != 0 {
-            body.translateBy(x: groundPoint.x, y: groundPoint.y)
+            body.translateBy(x: pivot.x, y: pivot.y)
             body.rotate(by: .degrees(pose.leanDegrees))
-            body.translateBy(x: -groundPoint.x, y: -groundPoint.y)
+            body.translateBy(x: -pivot.x, y: -pivot.y)
         }
         if pose.showsSpeedLines { drawSpeedLines(in: &body) }
 
         let isBack = pose.side == .back
         let legs = [(leftHip, pose.leftLeg, true), (rightHip, pose.rightLeg, false)]
         for (hip, limb, isLeft) in legs {
-            drawLeg(in: &body, hip: hip, limb: limb, pose: pose, outfit: outfit, isLeft: isLeft)
+            if pose.feetPlanted {
+                var ground = graphics
+                drawPlantedLeg(in: &ground, hip: hip, limb: limb, pose: pose, pivot: pivot, outfit: outfit, isLeft: isLeft)
+            } else {
+                drawLeg(in: &body, hip: hip, limb: limb, pose: pose, outfit: outfit, isLeft: isLeft)
+            }
         }
 
         // Hips, tummy and arms sway together, tilting against the hip shift.
@@ -180,6 +188,52 @@ extension TeddyArt {
     }
 
     // MARK: Limbs
+
+    static let hipCenter = CGPoint(x: 20, y: 37.5)
+    /// Hip to sole when standing straight.
+    static let standingLegLength: CGFloat = 6.5
+
+    /// A leg whose foot stays on the ground (at its stepped or tapped spot) while the hip moves
+    /// with the body's drop, lean and sway; the knee bows outwards when the hip comes down.
+    static func drawPlantedLeg(
+        in graphics: inout GraphicsContext,
+        hip: CGPoint,
+        limb: TeddyBodyPose.Limb,
+        pose: TeddyBodyPose,
+        pivot: CGPoint,
+        outfit: TeddyOutfit,
+        isLeft: Bool
+    ) {
+        // Where the hip ends up: swayed, leaned about the pivot, dropped by the bob.
+        let swayed = CGPoint(x: hip.x + pose.hipShift, y: hip.y)
+        let radians = pose.leanDegrees * .pi / 180
+        let dx = Double(swayed.x - pivot.x), dy = Double(swayed.y - pivot.y)
+        let start = CGPoint(
+            x: pivot.x + CGFloat(dx * cos(radians) - dy * sin(radians)),
+            y: pivot.y + CGFloat(dx * sin(radians) + dy * cos(radians)) - pose.bob
+        )
+        let shift = isLeft ? pose.leftFootShift : pose.rightFootShift
+        let lift = isLeft ? pose.leftFootLift : pose.rightFootLift
+        let tip = CGPoint(
+            x: hip.x + CGFloat(sin(limb.angle)) * standingLegLength + shift,
+            y: hip.y + standingLegLength - lift
+        )
+        // Knee bend: the closer hip and foot, the more the knee bows outwards.
+        let chord = CGPoint(x: tip.x - start.x, y: tip.y - start.y)
+        let chordLength = max(0.001, hypot(chord.x, chord.y))
+        let natural = standingLegLength + 0.6
+        let bend = max(0.4, sqrt(max(0, natural * natural - chordLength * chordLength)) * 0.55)
+        var normal = CGPoint(x: chord.y / chordLength, y: -chord.x / chordLength)
+        if (normal.x < 0) != isLeft { normal = CGPoint(x: -normal.x, y: -normal.y) }
+        let knee = CGPoint(x: (start.x + tip.x) / 2 + normal.x * bend, y: (start.y + tip.y) / 2 + normal.y * bend)
+        var path = Path()
+        path.move(to: start)
+        path.addQuadCurve(to: tip, control: knee)
+        stroke(&graphics, path, TeddyPalette.ink, width: 6.6 + outline * 2)
+        stroke(&graphics, path, outfit == .suit ? TeddyPalette.suit : TeddyPalette.jeans, width: 6.6)
+        let tilt = pose.side == .front ? min(0.55, Double(max(0, lift)) * 0.2) : 0
+        drawShoe(in: &graphics, at: tip, isLeft: isLeft, isBack: pose.side == .back, outfit: outfit, tilt: tilt)
+    }
 
     static func drawLeg(
         in graphics: inout GraphicsContext,

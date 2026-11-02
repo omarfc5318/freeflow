@@ -168,7 +168,11 @@ final class TeddyTripController {
     ) {
         stop()
         let frame = screen.frame
-        let routine = TeddyRoutine.make(trick, screenSize: frame.size, home: home, margin: Self.margin)
+        // Dance on the song's own beat when the user's song plays; the built-in beat is 85 BPM.
+        let danceBPM = TeddyDougieSong.fileURL() != nil ? TeddyDougieSong.bpm() : TeddyDougie.defaultBPM
+        let routine = TeddyRoutine.make(
+            trick, screenSize: frame.size, home: home, margin: Self.margin, danceBPM: danceBPM
+        )
 
         let panel = NSPanel(
             contentRect: frame,

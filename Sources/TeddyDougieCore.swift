@@ -48,7 +48,8 @@ enum TeddyDougie {
     static let shoulderRise = 1.5
     /// How far the chest turns towards the step (see `TeddyBodyPose.twist`).
     static let maxTwist = 0.4
-    static let hipSway = 3.0
+    /// Kept small: with planted feet a big slide stretches the trailing leg out flat.
+    static let hipSway = 1.2
 
     /// The weight shift, -1 (left) ... 1 (right): quick across the "&", then riding it out.
     static func rock(at fraction: Double) -> Double {
@@ -64,7 +65,8 @@ enum TeddyDougie {
     // Feet: a step-touch. The right foot steps out at count 1, the left slides in and taps
     // at count 2; counts 3 and 4 do the same the other way round.
     /// How far a foot sits to the side of its home spot when the stance is shifted.
-    static let stanceShift = 4.0
+    /// Rio's legs are short, so a wider step reads as a split rather than a step.
+    static let stanceShift = 2.0
     private static let slideStart = 0.58, tapStart = 0.75, tapEnd = 0.83, stepStart = 0.87
     private static let slideLift = 0.6, tapLift = 1.2, stepLift = 2.0
 
@@ -106,7 +108,8 @@ enum TeddyDougie {
         pose.feetPlanted = true
         pose.leanDegrees = maxLeanDegrees * rock
         pose.hipShift = CGFloat(hipSway * rock)
-        pose.bob = CGFloat(0.8 - 3.6 * dip * depth)
+        // Shallow enough for Rio's short legs: deeper drops splay the planted legs sideways.
+        pose.bob = CGFloat(0.5 - 2.1 * dip * depth)
         pose.headTiltDegrees = 7 * rock + 3 * rock * dip * depth
         pose.twist = maxTwist * rock
         pose.leftShoulderLift = CGFloat(shoulderLift(forRock: rock))
@@ -347,7 +350,8 @@ enum TeddyDougie {
 
     // MARK: Routine
 
-    static let danceScale: CGFloat = 2.2
+    /// Big enough (about a fifth of the screen height) that each joint reads clearly.
+    static let danceScale: CGFloat = 3.0
     static let approachSeconds: TimeInterval = 0.8
     static let walkBackSeconds: TimeInterval = 0.6
     private static let approachSteps = 4, walkBackSteps = 3

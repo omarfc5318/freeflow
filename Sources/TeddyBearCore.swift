@@ -225,14 +225,18 @@ struct TeddyRoutine {
         )
     }
 
-    static func make(_ trick: TeddyTrick, screenSize: CGSize, home: CGPoint, margin: CGFloat) -> TeddyRoutine {
+    /// `danceBPM` is the tempo the Dougie is danced at: the user's song tempo when it plays,
+    /// otherwise the built-in beat's.
+    static func make(
+        _ trick: TeddyTrick, screenSize: CGSize, home: CGPoint, margin: CGFloat, danceBPM: Double = TeddyDougie.defaultBPM
+    ) -> TeddyRoutine {
         switch trick {
         case .goCrazy:
             return TeddyLap.routine(on: TeddyLap.track(screenSize: screenSize, home: home, margin: margin))
         case .wiggle:
             return TeddyWiggle.routine(screenSize: screenSize, home: home, margin: margin)
         case .dougie:
-            return TeddyDougie.routine(screenSize: screenSize, home: home, margin: margin)
+            return TeddyDougie.routine(screenSize: screenSize, home: home, margin: margin, bpm: danceBPM)
         }
     }
 }

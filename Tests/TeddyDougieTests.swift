@@ -126,8 +126,8 @@ enum TeddyDougieTests {
         let count1 = TeddyDougie.pose(atLoopFraction: 0)
         TestSupport.expect(count1.leanDegrees > 9 && count1.leanDegrees < 12, "Count 1 leans right about 10 degrees")
         TestSupport.expect(count1.bob < -1.5, "Count 1 is a knee drop")
-        TestSupport.expect(count1.rightFootShift >= 3.5, "The right foot steps out wide")
-        TestSupport.expect(count1.leftFootShift <= -3.5, "The left foot is still out on the other side")
+        TestSupport.expect(count1.rightFootShift >= TeddyDougie.stanceShift * 0.875, "The right foot steps out wide")
+        TestSupport.expect(count1.leftFootShift <= -TeddyDougie.stanceShift * 0.875, "The left foot is still out on the other side")
         let between = TeddyDougie.pose(atLoopFraction: 0.125)
         TestSupport.expect(between.bob > count1.bob + 1, "The body rises a little between counts")
         TestSupport.expect(count1.leftLeg.length < between.leftLeg.length, "A bent knee is shorter")
@@ -147,7 +147,7 @@ enum TeddyDougieTests {
         let two = TeddyDougie.pose(atLoopFraction: 0.25)
         TestSupport.expect(one.rightFootLift < 0.05, "The stepping foot is down and takes the weight on count 1")
         TestSupport.expect(abs(two.leftFootShift - two.rightFootShift) < 0.1, "On count 2 the left foot is beside the right")
-        TestSupport.expect(two.leftFootShift > 3.5, "Both feet are over on the right")
+        TestSupport.expect(two.leftFootShift > TeddyDougie.stanceShift * 0.875, "Both feet are over on the right")
         var tap = 0.0
         var t = 0.25
         while t < 0.4 { tap = max(tap, TeddyDougie.pose(atLoopFraction: t).leftFootLift); t += 0.005 }
@@ -158,7 +158,7 @@ enum TeddyDougieTests {
         TestSupport.expect(before.rightFootShift < one.rightFootShift - 0.5 && before.rightFootLift > 0.5, "The foot is lifted and stepping out")
         // Counts 3 and 4: the left foot steps out, then the right slides in and taps.
         let three = TeddyDougie.pose(atLoopFraction: 0.5)
-        TestSupport.expect(three.leftFootShift <= -3.5 && three.leftFootLift < 0.05, "The left foot steps out on count 3")
+        TestSupport.expect(three.leftFootShift <= -TeddyDougie.stanceShift * 0.875 && three.leftFootLift < 0.05, "The left foot steps out on count 3")
         let four = TeddyDougie.pose(atLoopFraction: 0.75)
         TestSupport.expect(abs(four.leftFootShift - four.rightFootShift) < 0.1, "On count 4 the right foot is beside the left")
         TestSupport.expect(TeddyDougie.pose(atLoopFraction: 0.79).rightFootLift > 0.8, "The right foot taps")
@@ -386,7 +386,7 @@ enum TeddyDougieTests {
         TestSupport.expectEqual(TeddyRoutine.make(.dougie, screenSize: screen, home: home, margin: margin).duration, routine.duration)
     }
 
-    /// Run to the middle, walk towards the viewer (scale 1 to 2.2), dance, walk back (2.2 to 1).
+    /// Run to the middle, walk towards the viewer (scale 1 to danceScale), dance, walk back (danceScale to 1).
     private static func testRoutineWalksInDancesAndWalksBack() {
         let routine = TeddyDougie.routine(screenSize: screen, home: home, margin: margin)
         guard let window = routine.beatWindow else {
@@ -399,7 +399,7 @@ enum TeddyDougieTests {
         let runOut = Double(hypot(middle.x - landing.x, middle.y - landing.y) / TeddyRoutine.runPointsPerSecond)
         let approachStart = TeddyRoutine.jumpSeconds + runOut
 
-        // The approach starts at normal size and grows to 2.2 over about 0.8 s, walking in place.
+        // The approach starts at normal size and grows to danceScale over about 0.8 s, walking in place.
         TestSupport.expectApproximatelyEqual(window.lowerBound - approachStart, TeddyDougie.approachSeconds)
         TestSupport.expectEqual(routine.pose(at: approachStart - 0.01).action, .running)
         TestSupport.expectEqual(routine.pose(at: approachStart - 0.01).scale, 1)
@@ -419,11 +419,11 @@ enum TeddyDougieTests {
         }
         TestSupport.expect(liftedFeet > 20, "He walks in place while growing")
         let mid = routine.pose(at: approachStart + TeddyDougie.approachSeconds / 2).scale
-        TestSupport.expect(mid > 1.3 && mid < 1.9, "Halfway through the approach he is partly grown (\(mid))")
+        TestSupport.expect(mid > 1.2 && mid < TeddyDougie.danceScale - 0.3, "Halfway through the approach he is partly grown (\(mid))")
 
-        // The dance happens at 2.2 times the size.
-        TestSupport.expect(abs(routine.pose(at: window.lowerBound).scale - 2.2) < 0.001, "Dance starts at scale 2.2")
-        TestSupport.expectEqual(routine.pose(at: (window.lowerBound + window.upperBound) / 2).scale, 2.2)
+        // The dance happens at danceScale times the size.
+        TestSupport.expect(abs(routine.pose(at: window.lowerBound).scale - TeddyDougie.danceScale) < 0.001, "Dance starts at full dance size")
+        TestSupport.expectEqual(routine.pose(at: (window.lowerBound + window.upperBound) / 2).scale, TeddyDougie.danceScale)
         TestSupport.expectEqual(routine.pose(at: window.upperBound - 0.001).center, middle)
         for pose in [routine.pose(at: window.lowerBound + 0.001), routine.pose(at: (window.lowerBound + window.upperBound) / 2)] {
             guard case .posed = pose.action else {
@@ -433,14 +433,14 @@ enum TeddyDougieTests {
         }
 
         // Then he walks back to normal size and runs home.
-        TestSupport.expect(abs(routine.pose(at: window.upperBound + 0.001).scale - 2.2) < 0.01, "The walk back starts at 2.2")
+        TestSupport.expect(abs(routine.pose(at: window.upperBound + 0.001).scale - TeddyDougie.danceScale) < 0.01, "The walk back starts at full dance size")
         let walkEnd = window.upperBound + TeddyDougie.walkBackSeconds
         TestSupport.expectApproximatelyEqual(TeddyDougie.walkBackSeconds, 0.6)
         TestSupport.expect(abs(routine.pose(at: walkEnd - 0.001).scale - 1) < 0.01, "The walk back ends at scale 1")
         TestSupport.expectEqual(routine.pose(at: walkEnd + 0.01).action, .running)
         TestSupport.expectEqual(routine.pose(at: walkEnd + 0.01).scale, 1)
         TestSupport.expectApproximatelyEqual(routine.duration - window.upperBound, TeddyDougie.walkBackSeconds + runOut + TeddyRoutine.jumpSeconds)
-        TestSupport.expect(routine.pose(at: window.lowerBound - 0.05).scale < 2.2, "Still approaching just before the beat")
+        TestSupport.expect(routine.pose(at: window.lowerBound - 0.05).scale < TeddyDougie.danceScale, "Still approaching just before the beat")
         for trick in [TeddyTrick.wiggle, .goCrazy] {
             TestSupport.expect(
                 TeddyRoutine.make(trick, screenSize: screen, home: home, margin: margin).beatWindow == nil,
