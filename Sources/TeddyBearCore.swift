@@ -199,8 +199,20 @@ struct TeddyRoutine {
     }
 
     static func hold(at point: CGPoint, seconds: TimeInterval, action: @escaping (Double) -> TeddyPose.Action) -> Step {
+        hold(at: point, seconds: seconds, scale: { _ in 1 }, action: action)
+    }
+
+    /// Stays on the spot while the size changes with progress (`scale` maps 0...1 to a scale),
+    /// e.g. walking in place towards the viewer to look bigger, or back again.
+    static func hold(
+        at point: CGPoint,
+        seconds: TimeInterval,
+        scale: @escaping (Double) -> CGFloat,
+        action: @escaping (Double) -> TeddyPose.Action
+    ) -> Step {
         Step(duration: seconds) { fraction in
-            TeddyPose(center: point, action: action(min(max(fraction, 0), 1)))
+            let progress = min(max(fraction, 0), 1)
+            return TeddyPose(center: point, action: action(progress), scale: scale(progress))
         }
     }
 
