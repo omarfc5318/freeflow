@@ -769,6 +769,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private var pendingShortcutStartTask: Task<Void, Never>?
     private var pendingShortcutStartMode: RecordingTriggerMode?
     private var realtimeService: RealtimeTranscriptionService?
+    /// Live language check for the current dictation (Rio's outfit), nil when off.
+    private var languageProbe: LanguageProbeService?
     private var automaticTerminationDisabled = false
     private var activeAudioInterruption: ActiveAudioInterruption?
     private var pendingOverlayDismissToken: UUID?
@@ -2653,6 +2655,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
 
         startRealtimeStreamingIfEnabled()
+        startLanguageProbeIfNeeded()
 
         // Open the TCP+TLS connections to the configured hosts while the user speaks, so the
         // upload and cleanup requests after release skip DNS and the handshake. Credential-free
@@ -3145,6 +3148,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
             let activeRealtime = self.realtimeService
             self.realtimeService = nil
             self.audioRecorder.onPCM16Samples = nil
+            self.stopLanguageProbe()
             self.transcriptionTask?.cancel()
             guard self.isTranscribing else {
                 if let savedAudioFile {
@@ -3463,6 +3467,40 @@ final class AppState: ObservableObject, @unchecked Sendable {
         audioRecorder.onPCM16Samples = nil
         realtimeService?.cancel()
         realtimeService = nil
+        stopLanguageProbe()
+    }
+
+    /// While you speak, checks the language of short clips so Rio's pill outfit can change
+    /// mid-dictation. Only with Auto-detect: a language picked in Settings already decides.
+    private func startLanguageProbeIfNeeded() {
+        stopLanguageProbe()
+        let baseURL = resolvedTranscriptionBaseURL
+        let key = resolvedTranscriptionAPIKey
+        guard resolvedTranscriptionLanguage == nil, !key.isEmpty,
+              !LanguageProbeService.isPausedForRateLimit,
+              let endpoint = LanguageProbeCore.endpoint(baseURL: baseURL) else { return }
+        let config = LanguageProbeService.Configuration(
+            endpoint: endpoint,
+            apiKey: key,
+            model: LanguageProbeCore.probeModel(baseURL: baseURL, configuredModel: transcriptionModel)
+        )
+        let probe = LanguageProbeService(config: config) { [weak self] look in
+            guard let self, self.isRecording else { return }
+            self.lastSpokenLook = look
+            self.overlayManager.setSpokenLook(look)
+        }
+        languageProbe = probe
+        // Shares the tap with realtime streaming when that is on.
+        let previous = audioRecorder.onPCM16Samples
+        audioRecorder.onPCM16Samples = { [weak probe] data in
+            previous?(data)
+            probe?.append(data)
+        }
+    }
+
+    private func stopLanguageProbe() {
+        languageProbe?.stop()
+        languageProbe = nil
     }
 
     private func startContextCapture() {
