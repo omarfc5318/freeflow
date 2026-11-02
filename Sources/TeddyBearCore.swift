@@ -31,11 +31,11 @@ enum TeddyLearnedCard {
 /// Voice tricks for the bear. Only a dictation that is nothing but a trick phrase counts,
 /// so a sentence that happens to contain one is still typed normally.
 enum TeddyTrick: Equatable {
-    /// "Teddy go crazy": one lap around the screen.
+    /// "Rio go crazy": one lap around the screen.
     case goCrazy
-    /// "Teddy show me ur shi jelly": run to the middle, wiggle, thumbs up, run back.
+    /// "Rio show me ur shi jelly": run to the middle, wiggle, thumbs up, run back.
     case wiggle
-    /// "Teddy, hit the Dougie": run to the middle, dance the Dougie for four loops, run back.
+    /// "Rio hit the Dougie": run to the middle, dance the Dougie for four loops, run back.
     case dougie
 }
 
@@ -47,13 +47,35 @@ enum TeddyCommand {
             .replacingOccurrences(of: "\u{2019}", with: "")
             .components(separatedBy: CharacterSet.letters.inverted)
             .filter { !$0.isEmpty }
-        guard let name = words.first, ["teddy", "teddie", "tedi"].contains(name) else { return nil }
-        let rest = Array(words.dropFirst())
+        guard let rest = commandAfterName(words) else { return nil }
         if rest.count == 2, ["go", "goes"].contains(rest[0]), rest[1] == "crazy" {
             return .goCrazy
         }
         if isHitTheDougie(rest) { return .dougie }
         return isShowMeJelly(rest) ? .wiggle : nil
+    }
+
+    /// The bear's name is Rio. Speech-to-text may spell it "Ryo", "Reo" or "Rhio".
+    static let names: Set<String> = ["rio", "ryo", "reo", "rhio", "riyo", "ryoh", "rioh"]
+    /// Optional greeting before the name ("yo Rio ...") and sign-off at the end ("... bro").
+    static let greetings: Set<String> = ["yo", "yoo"]
+    static let signOffs: Set<String> = ["bro", "bruh", "brah"]
+
+    /// The words after the name, once an optional "yo" before it and "bro" at the end are
+    /// dropped; nil when the dictation doesn't start with the name.
+    private static func commandAfterName(_ words: [String]) -> [String]? {
+        var words = words
+        if let first = words.first, greetings.contains(first) {
+            words.removeFirst()
+        } else if let first = words.first, first.hasPrefix("yo"), names.contains(String(first.dropFirst(2))) {
+            // "Yo Rio" written as one word, e.g. "Yorio".
+            words[0] = String(first.dropFirst(2))
+        }
+        if let last = words.last, signOffs.contains(last) {
+            words.removeLast()
+        }
+        guard let name = words.first, names.contains(name) else { return nil }
+        return Array(words.dropFirst())
     }
 
     /// "hit the dougie", "do the dougie", "dougie". Speech-to-text also writes "duggie",

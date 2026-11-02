@@ -18,7 +18,7 @@ final class RecordingOverlayState: ObservableObject {
     @Published var outfit: TeddyOutfit = .hoodie
 }
 
-/// Voice tricks ("Teddy go crazy", "Teddy show me ur shi jelly"): while the bear is away the pill is empty, and
+/// Voice tricks ("Rio go crazy", "Rio show me ur shi jelly", "Rio hit the Dougie"): while the bear is away the pill is empty, and
 /// once it has jumped back it rests there until the pill closes.
 enum TeddyTrip {
     case none

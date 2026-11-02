@@ -25,9 +25,9 @@ enum TeddyDougieTests {
 
     private static func testPhraseVariants() {
         let phrases = [
-            "Teddy, hit the Dougie.", "teddy hit the dougie", "Teddy do the Dougie", "teddy, dougie",
-            "Teddy hit the Duggie", "Teddy hit the Dougy!", "Teddy, hit the doggie", "teddy hit the doggy",
-            "Teddy does the Dougie", "  TEDDY HIT THE DOUGIE  ", "Teddie hit the dougie",
+            "Rio, hit the Dougie.", "ryo hit the dougie", "Rio do the Dougie", "ryo, dougie",
+            "Rio hit the Duggie", "Rio hit the Dougy!", "Rio, hit the doggie", "ryo hit the doggy",
+            "Rio does the Dougie", "  RIO HIT THE DOUGIE  ", "Reo hit the dougie",
         ]
         for phrase in phrases {
             TestSupport.expectEqual(TeddyCommand.trick(in: phrase), .dougie)
@@ -36,9 +36,9 @@ enum TeddyDougieTests {
 
     private static func testNearMissesAreTypedNormally() {
         let phrases = [
-            "Teddy hit the dougie now", "I told Teddy to hit the dougie", "hit the dougie",
-            "Teddy hit the dog", "Teddy hit the", "Teddy the dougie", "Teddy hit dougie please",
-            "Teddy hit the big doggie", "Teddy dougie dougie", "Teddy", "Teddy hit the hit the dougie",
+            "Rio hit the dougie now", "I told Rio to hit the dougie", "hit the dougie",
+            "Rio hit the dog", "Rio hit the", "Rio the dougie", "Rio hit dougie please",
+            "Rio hit the big doggie", "Rio dougie dougie", "Rio", "Rio hit the hit the dougie",
         ]
         for phrase in phrases {
             TestSupport.expect(TeddyCommand.trick(in: phrase) != .dougie, "Typed normally: \"\(phrase)\"")

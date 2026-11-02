@@ -3796,13 +3796,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     private static func teddyStatusText(for trick: TeddyTrick) -> String {
         switch trick {
-        case .goCrazy: return "Teddy went crazy"
-        case .wiggle: return "Teddy did a wiggle"
-        case .dougie: return "Teddy hit the Dougie"
+        case .goCrazy: return "Rio went crazy"
+        case .wiggle: return "Rio did a wiggle"
+        case .dougie: return "Rio hit the Dougie"
         }
     }
 
-    /// "Teddy go crazy" / "Teddy show me ur shi jelly": nothing is typed or saved. The bear jumps
+    /// "Rio go crazy" / "Rio show me ur shi jelly" / "Rio hit the Dougie": nothing is typed or saved. The bear jumps
     /// out of the pill, does its trick and jumps back in; a new dictation stops it at once.
     private func finishWithTeddyTrick(_ trick: TeddyTrick, savedAudioFileName: String?) {
         guard isTranscribing else { return }

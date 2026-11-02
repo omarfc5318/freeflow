@@ -5,6 +5,7 @@ import Foundation
 enum TeddyBearTests {
     static func run() {
         testGoCrazyMatchesOnlyTheWholePhrase()
+        testRioNameGreetingAndSignOff()
         testWiggleMatchesOnlyTheWholePhrase()
         testTripStartsAndEndsInThePill()
         testTripLandsBelowThePillAndRunsTheLoop()
@@ -32,28 +33,48 @@ enum TeddyBearTests {
     }
 
     private static func testGoCrazyMatchesOnlyTheWholePhrase() {
-        for phrase in ["Teddy, go crazy!", "teddy go crazy.", "Teddie goes crazy", "  TEDDY GO CRAZY  "] {
+        for phrase in ["Rio, go crazy!", "ryo go crazy.", "Reo goes crazy", "  RIO GO CRAZY  "] {
             TestSupport.expectEqual(TeddyCommand.trick(in: phrase), .goCrazy)
         }
-        for phrase in ["Teddy go crazy now", "I told Teddy to go crazy", "go crazy teddy", "", "Teddy"] {
+        for phrase in ["Rio go crazy now", "I told Rio to go crazy", "go crazy ryo", "", "Rio"] {
+            TestSupport.expect(TeddyCommand.trick(in: phrase) == nil, "Typed normally: \"\(phrase)\"")
+        }
+    }
+
+    /// The bear answers to Rio (however it is spelled), with an optional "yo" before the
+    /// name and "bro" at the end. It no longer answers to Teddy.
+    private static func testRioNameGreetingAndSignOff() {
+        let spoken: [(String, TeddyTrick)] = [
+            ("Ryo go crazy", .goCrazy), ("Yo Rio, go crazy!", .goCrazy), ("Rio go crazy bro", .goCrazy),
+            ("Yo Ryo go crazy, bro.", .goCrazy), ("Yorio go crazy", .goCrazy), ("Reo hit the Dougie bruh", .dougie),
+            ("yo rio show me ur shi jelly bro", .wiggle), ("Rhio, hit the doggie", .dougie),
+        ]
+        for (phrase, trick) in spoken {
+            TestSupport.expectEqual(TeddyCommand.trick(in: phrase), trick)
+        }
+        let typed = [
+            "Teddy go crazy", "Teddy, hit the Dougie", "Teddy show me your shy jelly", "yo go crazy",
+            "bro Rio go crazy", "Rio go crazy bro bro", "yo yo Rio go crazy", "Rio bro", "yo Rio",
+        ]
+        for phrase in typed {
             TestSupport.expect(TeddyCommand.trick(in: phrase) == nil, "Typed normally: \"\(phrase)\"")
         }
     }
 
     private static func testWiggleMatchesOnlyTheWholePhrase() {
         let spoken = [
-            "teddy show me ur shi jelly",
-            "Teddy, show me your shy jelly.",
-            "Teddy show me your shit jelly!",
-            "Teddy, show me you’re she jelly",
-            "Teddie show me your jelly",
+            "ryo show me ur shi jelly",
+            "Rio, show me your shy jelly.",
+            "Rio show me your shit jelly!",
+            "Rio, show me you’re she jelly",
+            "Reo show me your jelly",
         ]
         for phrase in spoken {
             TestSupport.expectEqual(TeddyCommand.trick(in: phrase), .wiggle)
         }
         let typed = [
-            "Teddy, do a wiggle", "show me your shy jelly", "Teddy show me your shy jelly please",
-            "Teddy show me the jelly", "Teddy show me",
+            "Rio, do a wiggle", "show me your shy jelly", "Rio show me your shy jelly please",
+            "Rio show me the jelly", "Rio show me",
         ]
         for phrase in typed {
             TestSupport.expect(TeddyCommand.trick(in: phrase) == nil, "Typed normally: \"\(phrase)\"")
