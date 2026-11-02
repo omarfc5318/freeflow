@@ -23,6 +23,7 @@ struct FreeFlowTests {
         HandsFreeUndoContextTests.run()
         TeddyBearTests.run()
         TeddyMomentTests.run()
+        TeddyDougieTests.run()
         AppTextInsertionCoreTests.run()
         AppTextInsertionDispatchTests.run()
         await TranscriptionServiceTests.run()

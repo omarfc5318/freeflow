@@ -3798,6 +3798,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         switch trick {
         case .goCrazy: return "Teddy went crazy"
         case .wiggle: return "Teddy did a wiggle"
+        case .dougie: return "Teddy hit the Dougie"
         }
     }
 

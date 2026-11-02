@@ -137,6 +137,8 @@ final class TeddyTripController {
 
     private var panel: NSPanel?
     private var finishWorkItem: DispatchWorkItem?
+    private let beat = TeddyBeat()
+    private var beatWorkItems: [DispatchWorkItem] = []
 
     var isRunning: Bool { panel != nil }
 
@@ -178,9 +180,20 @@ final class TeddyTripController {
         }
         finishWorkItem = finish
         DispatchQueue.main.asyncAfter(deadline: .now() + routine.duration, execute: finish)
+
+        if let window = routine.beatWindow {
+            let begin = DispatchWorkItem { [weak self] in self?.beat.start() }
+            let end = DispatchWorkItem { [weak self] in self?.beat.stop() }
+            beatWorkItems = [begin, end]
+            DispatchQueue.main.asyncAfter(deadline: .now() + window.lowerBound, execute: begin)
+            DispatchQueue.main.asyncAfter(deadline: .now() + window.upperBound, execute: end)
+        }
     }
 
     func stop() {
+        beatWorkItems.forEach { $0.cancel() }
+        beatWorkItems = []
+        beat.stop()
         finishWorkItem?.cancel()
         finishWorkItem = nil
         panel?.orderOut(nil)
