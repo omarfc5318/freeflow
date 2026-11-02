@@ -235,18 +235,28 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
         sessionObservers.removeAll()
     }
 
-    private func teardownSessionLocked() {
+    /// Detaches the sample delegate (no further audio is recorded from this point) and releases
+    /// the session. `stopRunning()` is a slow hardware teardown; with `deferringStop` it is
+    /// returned to the caller instead of run, so the file can be finalized and handed on first.
+    @discardableResult
+    private func teardownSessionLocked(deferringStop: Bool = false) -> AVCaptureSession? {
         removeSessionObservers()
         isSessionInterrupted = false
 
         audioDataOutput?.setSampleBufferDelegate(nil, queue: nil)
+        var sessionToStop: AVCaptureSession?
         if let session = captureSession, session.isRunning {
-            session.stopRunning()
+            if deferringStop {
+                sessionToStop = session
+            } else {
+                session.stopRunning()
+            }
         }
 
         captureSession = nil
         currentInput = nil
         audioDataOutput = nil
+        return sessionToStop
     }
 
     private func reportRecordingFailure(_ error: Error, completion: ((URL?) -> Void)? = nil) {
@@ -699,7 +709,10 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
 
         sessionQueue.async {
             self.cancelWatchdog()
-            self.teardownSessionLocked()
+            // Audio capture ends when the delegate is detached; the file is complete once the
+            // queue drains. Hand the file on before the slow hardware stop, which then runs
+            // here (on the serial session queue, so a new recording still waits for it).
+            let sessionToStop = self.teardownSessionLocked(deferringStop: true)
             let outputURL = self.finishAudioFileLocked(discard: false)
             self._recording.withLock { $0 = false }
             self.liveLevelNormalizerLock.withLock { $0.reset() }
@@ -708,6 +721,7 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
                 self.audioLevel = 0.0
                 completion(outputURL)
             }
+            sessionToStop?.stopRunning()
         }
     }
 
