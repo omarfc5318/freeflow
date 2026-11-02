@@ -3730,7 +3730,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// "Teddy go crazy" / "Teddy, do a wiggle": nothing is typed or saved. The bear jumps
+    /// "Teddy go crazy" / "Teddy show me ur shi jelly": nothing is typed or saved. The bear jumps
     /// out of the pill, does its trick and jumps back in; a new dictation stops it at once.
     private func finishWithTeddyTrick(_ trick: TeddyTrick, savedAudioFileName: String?) {
         guard isTranscribing else { return }

@@ -6,13 +6,16 @@ import Foundation
 enum TeddyTrick: Equatable {
     /// "Teddy go crazy": one lap around the screen.
     case goCrazy
-    /// "Teddy, do a wiggle": run to the middle, wiggle, thumbs up, run back.
+    /// "Teddy show me ur shi jelly": run to the middle, wiggle, thumbs up, run back.
     case wiggle
 }
 
 enum TeddyCommand {
     static func trick(in transcript: String) -> TeddyTrick? {
+        // Apostrophes are dropped first so "you're" stays one word.
         let words = transcript.lowercased()
+            .replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: "\u{2019}", with: "")
             .components(separatedBy: CharacterSet.letters.inverted)
             .filter { !$0.isEmpty }
         guard let name = words.first, ["teddy", "teddie", "tedi"].contains(name) else { return nil }
@@ -20,17 +23,19 @@ enum TeddyCommand {
         if rest.count == 2, ["go", "goes"].contains(rest[0]), rest[1] == "crazy" {
             return .goCrazy
         }
-        let wiggles = ["wiggle", "wiggles"]
-        switch rest.count {
-        case 1 where wiggles.contains(rest[0]):
-            return .wiggle
-        case 2 where rest[0] == "do" && wiggles.contains(rest[1]):
-            return .wiggle
-        case 3 where rest[0] == "do" && ["a", "the", "your"].contains(rest[1]) && wiggles.contains(rest[2]):
-            return .wiggle
-        default:
-            return nil
-        }
+        return isShowMeJelly(rest) ? .wiggle : nil
+    }
+
+    /// "show me ur shi jelly". Speech-to-text spells it many ways ("your shy jelly",
+    /// "you're she jelly", "your shit jelly"), so any spelling of "ur" counts and the word
+    /// before "jelly" can be anything, or missing.
+    private static func isShowMeJelly(_ words: [String]) -> Bool {
+        let yours = ["ur", "your", "youre", "you", "yo", "ya", "yer"]
+        guard (4...5).contains(words.count),
+              words[0] == "show", words[1] == "me",
+              yours.contains(words[2]),
+              let last = words.last, ["jelly", "jellies"].contains(last) else { return false }
+        return true
     }
 
     static func isGoCrazy(_ transcript: String) -> Bool {

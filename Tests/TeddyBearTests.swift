@@ -23,10 +23,21 @@ enum TeddyBearTests {
     }
 
     private static func testWiggleMatchesOnlyTheWholePhrase() {
-        for phrase in ["Teddy, do a wiggle.", "teddy do the wiggle", "Teddy wiggle!", "Teddy, do wiggles", "Teddie do your wiggle"] {
+        let spoken = [
+            "teddy show me ur shi jelly",
+            "Teddy, show me your shy jelly.",
+            "Teddy show me your shit jelly!",
+            "Teddy, show me you’re she jelly",
+            "Teddie show me your jelly",
+        ]
+        for phrase in spoken {
             TestSupport.expectEqual(TeddyCommand.trick(in: phrase), .wiggle)
         }
-        for phrase in ["Do a wiggle", "Teddy, do a little wiggle", "Teddy can you do a wiggle", "wiggle teddy"] {
+        let typed = [
+            "Teddy, do a wiggle", "show me your shy jelly", "Teddy show me your shy jelly please",
+            "Teddy show me the jelly", "Teddy show me",
+        ]
+        for phrase in typed {
             TestSupport.expect(TeddyCommand.trick(in: phrase) == nil, "Typed normally: \"\(phrase)\"")
         }
     }
