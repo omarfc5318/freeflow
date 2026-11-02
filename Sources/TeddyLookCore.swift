@@ -58,6 +58,28 @@ struct TeddyBodyPose: Equatable {
     var showsSpeedLines = false
     var showsSparkle = false
 
+    // MARK: Dance detail (all default to "no change", so existing poses look the same)
+
+    /// Elbows: when set, the arm above is the upper arm and this is the forearm. Its `angle`
+    /// is the bend RELATIVE to the upper arm (forearm direction = upper arm angle + bend, same
+    /// convention: positive turns towards the viewer's right); `length` is the forearm length.
+    /// nil draws the arm as one straight piece, as before.
+    var leftForearm: Limb?
+    var rightForearm: Limb?
+    /// Raises (positive) or drops (negative) one shoulder, in grid points, independently of the body.
+    var leftShoulderLift: CGFloat = 0
+    var rightShoulderLift: CGFloat = 0
+    /// Fake torso turn, -1...1: positive turns the chest towards the viewer's right (the body
+    /// narrows and the tummy patch, collar and face features slide that way).
+    var twist: Double = 0
+    /// Moves a foot sideways along the ground (grid points, positive = viewer's right) and lifts
+    /// it (positive = up, e.g. a toe tap). Used with `feetPlanted`, where the leg is drawn from
+    /// the hip to the foot.
+    var leftFootShift: CGFloat = 0
+    var rightFootShift: CGFloat = 0
+    var leftFootLift: CGFloat = 0
+    var rightFootLift: CGFloat = 0
+
     static let standing = TeddyBodyPose()
 }
 
