@@ -89,23 +89,38 @@ struct TeddyMomentView: View {
 
 // MARK: - Full-body teddy (voice tricks)
 
-/// The same bear, full body: a chubby teddy on two feet with fat arms.
+/// The same bear, full body: a chubby teddy on two feet with fat arms. It is drawn at
+/// `height * scale` (so a grown bear stays sharp instead of being scaled up as a bitmap) inside
+/// a layout frame of `height`, and the canvas overflows that frame so raised arms and sparkles
+/// are never clipped.
 struct TeddyFigureView: View {
     let time: TimeInterval
     var action: TeddyPose.Action = .running
     var height: CGFloat = TeddyTripController.bearHeight
+    var scale: CGFloat = 1
     var outfit: TeddyOutfit = .hoodie
 
     static let gridSize = CGSize(width: 40, height: 50)
+    /// Grid points of room around the figure on every side.
+    static let overflow: CGFloat = 16
 
     var body: some View {
-        Canvas { graphics, size in
-            let scale = size.height / Self.gridSize.height
-            graphics.scaleBy(x: scale, y: scale)
-            TeddyArt.drawTeddy(in: &graphics, time: time, action: action, outfit: outfit)
-        }
-        .frame(width: height * Self.gridSize.width / Self.gridSize.height, height: height)
-        .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+        let drawHeight = height * scale
+        let unit = drawHeight / Self.gridSize.height
+        let room = Self.overflow * unit
+        let drawWidth = drawHeight * Self.gridSize.width / Self.gridSize.height
+        Color.clear
+            .frame(width: height * Self.gridSize.width / Self.gridSize.height, height: height)
+            .overlay {
+                Canvas { graphics, _ in
+                    graphics.translateBy(x: room, y: room)
+                    graphics.scaleBy(x: unit, y: unit)
+                    TeddyArt.drawTeddy(in: &graphics, time: time, action: action, outfit: outfit)
+                }
+                .frame(width: drawWidth + room * 2, height: drawHeight + room * 2)
+                .shadow(color: .black.opacity(0.3), radius: 3 * max(1, scale), y: 1)
+                .allowsHitTesting(false)
+            }
     }
 }
 
@@ -119,8 +134,9 @@ struct TeddyTripView: View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { context in
             let elapsed = context.date.timeIntervalSince(start)
             let pose = routine.pose(at: elapsed)
-            TeddyFigureView(time: elapsed, action: pose.action, outfit: outfit)
-                .scaleEffect(x: pose.facesRight ? pose.scale : -pose.scale, y: pose.scale)
+            // Drawn at its real size and only mirrored for facing, so a grown bear stays sharp.
+            TeddyFigureView(time: elapsed, action: pose.action, scale: pose.scale, outfit: outfit)
+                .scaleEffect(x: pose.facesRight ? 1 : -1, y: 1)
                 .position(pose.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

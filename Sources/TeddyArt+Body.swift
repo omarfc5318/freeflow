@@ -103,6 +103,18 @@ extension TeddyArt {
     static let rightHip = CGPoint(x: 24.8, y: 37.5)
     static let leftShoulder = CGPoint(x: 12.6, y: 28.5)
     static let rightShoulder = CGPoint(x: 27.4, y: 28.5)
+
+    /// Shoulder points for a pose: lifted or dropped, pulled in with the narrowed torso, and
+    /// the far one drawn further in when the chest turns.
+    static func shoulders(for pose: TeddyBodyPose) -> (left: CGPoint, right: CGPoint) {
+        let narrow = 1 - abs(pose.twist) * twistNarrowing
+        let farIn = CGFloat(abs(pose.twist)) * 1.0
+        var left = CGPoint(x: 20 + (leftShoulder.x - 20) * CGFloat(narrow), y: leftShoulder.y - pose.leftShoulderLift)
+        var right = CGPoint(x: 20 + (rightShoulder.x - 20) * CGFloat(narrow), y: rightShoulder.y - pose.rightShoulderLift)
+        // Shoulder of the side turning away goes inward; the near one comes a little forward.
+        if pose.twist > 0 { left.x += farIn; right.x += farIn * 0.3 } else if pose.twist < 0 { right.x -= farIn; left.x -= farIn * 0.3 }
+        return (left, right)
+    }
     /// Where the feet touch the ground; the whole bear leans about this point.
     static let groundPoint = CGPoint(x: 20, y: 46)
     /// Tilt of the upper body per grid point of hip shift (a full wiggle is 3.2 points).
@@ -131,9 +143,9 @@ extension TeddyArt {
         upper.rotate(by: .radians(-Double(pose.hipShift) * hipTiltPerPoint))
         upper.translateBy(x: -20, y: -32)
         if isBack {
-            drawBackTorso(in: &upper, outfit: outfit)
+            drawBackTorso(in: &upper, outfit: outfit, pose: pose)
         } else {
-            drawFrontTorso(in: &upper, outfit: outfit)
+            drawFrontTorso(in: &upper, outfit: outfit, pose: pose)
         }
 
         // The pill bear's head, scaled onto the body; it hardly follows the hips.
@@ -152,13 +164,14 @@ extension TeddyArt {
                 isBlinking: pose.face.isBlinking,
                 winks: pose.face.winks
             )
-            drawHead(in: &head, face: face, outfit: outfit)
+            drawHead(in: &head, face: face, outfit: outfit, faceShift: CGFloat(pose.twist) * 2.2)
         }
 
         // Arms last, so a paw reaching for the head passes in front of it.
+        let points = shoulders(for: pose)
         let tips = [
-            drawArm(in: &upper, shoulder: leftShoulder, limb: pose.leftArm, outfit: outfit, paw: .round),
-            drawArm(in: &upper, shoulder: rightShoulder, limb: pose.rightArm, outfit: outfit, paw: pose.rightPaw),
+            drawArm(in: &upper, shoulder: points.left, limb: pose.leftArm, forearm: pose.leftForearm, outfit: outfit, paw: .round),
+            drawArm(in: &upper, shoulder: points.right, limb: pose.rightArm, forearm: pose.rightForearm, outfit: outfit, paw: pose.rightPaw),
         ]
         if pose.showsSparkle {
             let anchor = pose.rightPaw == .thumbsUp ? CGPoint(x: tips[1].x + 5, y: tips[1].y - 6.5) : CGPoint(x: 33.5, y: 9)
@@ -178,42 +191,95 @@ extension TeddyArt {
     ) {
         let start = CGPoint(x: hip.x + pose.hipShift, y: hip.y)
         let base = pose.feetPlanted ? hip : start
-        let tip = CGPoint(x: base.x + CGFloat(sin(limb.angle)) * limb.length, y: base.y + CGFloat(cos(limb.angle)) * limb.length)
+        let shift = isLeft ? pose.leftFootShift : pose.rightFootShift
+        let lift = isLeft ? pose.leftFootLift : pose.rightFootLift
+        let tip = CGPoint(
+            x: base.x + CGFloat(sin(limb.angle)) * limb.length + shift,
+            y: base.y + CGFloat(cos(limb.angle)) * limb.length - lift
+        )
+        // A stepped-out or tapping foot bends the leg a little, knee bowing outwards.
         var path = Path()
         path.move(to: start)
-        path.addLine(to: tip)
+        let bend = min(2.2, abs(shift) * 0.2 + max(0, lift) * 0.35)
+        if bend > 0.05 {
+            let chord = CGPoint(x: tip.x - start.x, y: tip.y - start.y)
+            let chordLength = max(0.001, hypot(chord.x, chord.y))
+            var normal = CGPoint(x: chord.y / chordLength, y: -chord.x / chordLength)
+            if (normal.x < 0) != isLeft { normal = CGPoint(x: -normal.x, y: -normal.y) }
+            let control = CGPoint(x: (start.x + tip.x) / 2 + normal.x * bend * 2, y: (start.y + tip.y) / 2 + normal.y * bend * 2)
+            path.addQuadCurve(to: tip, control: control)
+        } else {
+            path.addLine(to: tip)
+        }
         stroke(&graphics, path, TeddyPalette.ink, width: 6.6 + outline * 2)
         stroke(&graphics, path, outfit == .suit ? TeddyPalette.suit : TeddyPalette.jeans, width: 6.6)
-        drawShoe(in: &graphics, at: tip, isLeft: isLeft, isBack: pose.side == .back, outfit: outfit)
+        let tilt = pose.side == .front ? min(0.55, Double(max(0, lift)) * 0.2) : 0
+        drawShoe(in: &graphics, at: tip, isLeft: isLeft, isBack: pose.side == .back, outfit: outfit, tilt: tilt)
     }
 
-    /// A fat sleeve the whole way from the shoulder, with the paw at the end. Returns the tip.
+    /// A fat sleeve from the shoulder with the paw at the end; with a `forearm` it bends at a
+    /// rounded elbow (the forearm angle is relative to the upper arm). Returns the paw position.
     @discardableResult
     static func drawArm(
         in graphics: inout GraphicsContext,
         shoulder: CGPoint,
         limb: TeddyBodyPose.Limb,
+        forearm: TeddyBodyPose.Limb? = nil,
         outfit: TeddyOutfit,
         paw: TeddyBodyPose.PawShape
     ) -> CGPoint {
         let direction = CGPoint(x: CGFloat(sin(limb.angle)), y: CGFloat(cos(limb.angle)))
-        let tip = CGPoint(x: shoulder.x + direction.x * limb.length, y: shoulder.y + direction.y * limb.length)
+        let elbow = CGPoint(x: shoulder.x + direction.x * limb.length, y: shoulder.y + direction.y * limb.length)
         let width: CGFloat = 6.2
-        var sleeve = Path()
-        sleeve.move(to: shoulder)
-        sleeve.addLine(to: tip)
-        stroke(&graphics, sleeve, TeddyPalette.ink, width: width + outline * 2)
-        stroke(&graphics, sleeve, outfit == .suit ? TeddyPalette.suit : TeddyPalette.hoodie, width: width)
-        if limb.length > 4.5 {
+        let sleeveColor = outfit == .suit ? TeddyPalette.suit : TeddyPalette.hoodie
+
+        var tip = elbow
+        var tipDirection = direction
+        var tipWidth = width
+        if let forearm {
+            let angle = limb.angle + forearm.angle
+            tipDirection = CGPoint(x: CGFloat(sin(angle)), y: CGFloat(cos(angle)))
+            tip = CGPoint(x: elbow.x + tipDirection.x * forearm.length, y: elbow.y + tipDirection.y * forearm.length)
+            tipWidth = 5.8
+            // One outline for the whole bent arm, then the sleeve colour on top, so the
+            // elbow is a round joint with no seam.
+            var upper = Path()
+            upper.move(to: shoulder)
+            upper.addLine(to: elbow)
+            var lower = Path()
+            lower.move(to: elbow)
+            lower.addLine(to: tip)
+            // A faint drop shadow so a bent arm lifts off the torso it crosses.
+            var shadow = Path()
+            shadow.addPath(upper)
+            shadow.addPath(lower)
+            var lowered = graphics
+            lowered.translateBy(x: 0.35, y: 0.9)
+            stroke(&lowered, shadow, TeddyPalette.ink.opacity(0.22), width: width + outline * 2)
+            stroke(&graphics, upper, TeddyPalette.ink, width: width + outline * 2)
+            stroke(&graphics, lower, TeddyPalette.ink, width: tipWidth + outline * 2)
+            fill(&graphics, circle(elbow, width / 2 + outline), TeddyPalette.ink)
+            stroke(&graphics, upper, sleeveColor, width: width)
+            stroke(&graphics, lower, sleeveColor, width: tipWidth)
+            fill(&graphics, circle(elbow, width / 2), sleeveColor)
+        } else {
+            var sleeve = Path()
+            sleeve.move(to: shoulder)
+            sleeve.addLine(to: tip)
+            stroke(&graphics, sleeve, TeddyPalette.ink, width: width + outline * 2)
+            stroke(&graphics, sleeve, sleeveColor, width: width)
+        }
+        let cuffLength = forearm?.length ?? limb.length
+        if cuffLength > 4.5 {
             var cuff = Path()
-            cuff.move(to: CGPoint(x: tip.x - direction.x * 3.7, y: tip.y - direction.y * 3.7))
-            cuff.addLine(to: CGPoint(x: tip.x - direction.x * 2.1, y: tip.y - direction.y * 2.1))
+            cuff.move(to: CGPoint(x: tip.x - tipDirection.x * 3.7, y: tip.y - tipDirection.y * 3.7))
+            cuff.addLine(to: CGPoint(x: tip.x - tipDirection.x * 2.1, y: tip.y - tipDirection.y * 2.1))
             let cuffColor = outfit == .suit ? TeddyPalette.shirt : TeddyPalette.hoodieDark
-            graphics.stroke(cuff, with: .color(cuffColor), style: StrokeStyle(lineWidth: width, lineCap: .butt))
+            graphics.stroke(cuff, with: .color(cuffColor), style: StrokeStyle(lineWidth: tipWidth, lineCap: .butt))
         }
         switch paw {
         case .round:
-            sticker(&graphics, circle(tip, width / 2 + 0.4), TeddyPalette.fur)
+            sticker(&graphics, circle(tip, tipWidth / 2 + 0.4), TeddyPalette.fur)
         case .thumbsUp:
             drawThumbsUpFist(in: &graphics, at: tip)
         }
