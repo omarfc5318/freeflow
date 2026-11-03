@@ -7,6 +7,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NetworkMonitor.shared.start()
+        appState.bindRioCompanionState()
         RioCompanionHub.shared.attach(appState)
         RioCompanionHub.shared.onStopPressed = { [weak self] in self?.appState.overlayManager.onStopButtonPressed?() }
 

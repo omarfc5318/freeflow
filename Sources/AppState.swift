@@ -609,6 +609,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     /// What the corner bear shows for the action key; the overlay only observes it.
     @Published var rioActionPhase: RioActionPhase = .idle
+    // Corner bear state, mirrored from RioVoice / RioCompanionCenter by bindRioCompanionState().
+    @Published var rioSpeechLevel: Double = 0
+    @Published var isRioSpeaking = false
+    @Published var rioTimerRemaining: TimeInterval?
+    @Published var rioTimerRinging = false
+    @Published var rioCelebrate = 0
+    @Published var isRioHelpVisible = false
+    private var rioCompanionStateSubscriptions: Set<AnyCancellable> = []
 
     @Published var preserveClipboard: Bool {
         didSet {
@@ -4057,7 +4065,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         Task { @MainActor [weak self] in
             guard let self else { return }
             let coordinator = self.rioActionCoordinator ?? RioActionsWiring.makeCoordinator(
-                companion: nil,
+                companion: RioCompanionHub.shared,
                 typeText: { [weak self] text in await self?.typeTextForRioAction(text) ?? false }
             )
             self.rioActionCoordinator = coordinator
@@ -4078,6 +4086,25 @@ final class AppState: ObservableObject, @unchecked Sendable {
         try? await Task.sleep(nanoseconds: 350_000_000)
         restoreClipboardIfNeeded(pendingRestore)
         return true
+    }
+
+    /// Mirrors Rio's voice, timer, celebration and help state onto AppState for the corner bear.
+    @MainActor func bindRioCompanionState() {
+        guard rioCompanionStateSubscriptions.isEmpty else { return }
+        let voice = RioVoice.shared
+        let center = RioCompanionCenter.shared
+        voice.$isSpeaking.removeDuplicates().sink { [weak self] in self?.isRioSpeaking = $0 }
+            .store(in: &rioCompanionStateSubscriptions)
+        voice.$level.sink { [weak self] in self?.rioSpeechLevel = $0 }
+            .store(in: &rioCompanionStateSubscriptions)
+        center.$timerRemaining.sink { [weak self] in self?.rioTimerRemaining = $0 }
+            .store(in: &rioCompanionStateSubscriptions)
+        center.$timerRinging.removeDuplicates().sink { [weak self] in self?.rioTimerRinging = $0 }
+            .store(in: &rioCompanionStateSubscriptions)
+        center.$celebrateCount.removeDuplicates().sink { [weak self] in self?.rioCelebrate = $0 }
+            .store(in: &rioCompanionStateSubscriptions)
+        center.$isHelpVisible.removeDuplicates().sink { [weak self] in self?.isRioHelpVisible = $0 }
+            .store(in: &rioCompanionStateSubscriptions)
     }
 
     @MainActor private func finishRioAction(_ outcome: RioActionOutcome, transcript: String) {

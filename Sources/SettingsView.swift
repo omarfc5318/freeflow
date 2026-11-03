@@ -724,6 +724,9 @@ struct GeneralSettingsView: View {
                 SettingsCard("Rio Actions", icon: "bolt.fill") {
                     rioActionsSection
                 }
+                SettingsCard("Rio in the Corner", icon: "pawprint.fill") {
+                    RioCompanionSettingsSection()
+                }
                 SettingsCard("Edit Mode", icon: "pencil") {
                     commandModeSection
                 }

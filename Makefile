@@ -54,7 +54,6 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioTextTools.swift \
 	Sources/RioActions/RioWebURLs.swift \
 	Sources/RecordingTimerPreference.swift \
-	Sources/RioActions/RioActionTypes.swift \
 	Sources/RioCompanion/RioCompanionMachine.swift \
 	Sources/RioCompanion/RioDockRunCore.swift \
 	Sources/RioCompanion/RioPersonalityCore.swift \
