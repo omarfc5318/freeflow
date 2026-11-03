@@ -35,6 +35,10 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/PostProcessingService.swift \
 	Sources/RecordingCaptureTiming.swift \
 	Sources/RecordingTimerPreference.swift \
+	Sources/RioActions/RioActionTypes.swift \
+	Sources/RioCompanion/RioCompanionMachine.swift \
+	Sources/RioCompanion/RioDockRunCore.swift \
+	Sources/RioCompanion/RioPersonalityCore.swift \
 	Sources/TranscriptionErrorPresentationCore.swift \
 	Sources/TextExpansionCore.swift \
 	Sources/TranscriptTextCore.swift \

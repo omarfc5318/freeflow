@@ -121,7 +121,13 @@ extension TeddyArt {
     static let hipTiltPerPoint: Double = 0.18 / 3.2
 
     /// Draws any `TeddyBodyPose`, front or back, in the given outfit.
-    static func drawBody(in graphics: inout GraphicsContext, time: TimeInterval, pose: TeddyBodyPose, outfit: TeddyOutfit) {
+    static func drawBody(
+        in graphics: inout GraphicsContext,
+        time: TimeInterval,
+        pose: TeddyBodyPose,
+        outfit: TeddyOutfit,
+        look: SpokenLook = .none
+    ) {
         // With planted feet the body leans and drops from the hips (like a person bending their
         // knees); otherwise the whole bear tips about the ground point.
         let pivot = pose.feetPlanted ? hipCenter : groundPoint
@@ -152,6 +158,8 @@ extension TeddyArt {
         upper.translateBy(x: -20, y: -32)
         if isBack {
             drawBackTorso(in: &upper, outfit: outfit, pose: pose)
+        } else if look != .none {
+            drawFrontRobe(in: &upper, look: look)
         } else {
             drawFrontTorso(in: &upper, outfit: outfit, pose: pose)
         }
@@ -170,17 +178,26 @@ extension TeddyArt {
             let face = TeddyFace(
                 mouthOpen: pose.face.mouthOpen,
                 isBlinking: pose.face.isBlinking,
-                winks: pose.face.winks
+                isThinking: pose.face.isThinking,
+                winks: pose.face.winks,
+                eyes: TeddyFace.Eyes(pose.face.eyes),
+                mouth: TeddyFace.Mouth(pose.face.mouth),
+                raisedBrows: pose.face.raisedBrows,
+                eyesClosed: pose.face.eyesClosed,
+                earLift: pose.face.earLift,
+                grumpy: pose.face.grumpy
             )
-            drawHead(in: &head, face: face, outfit: outfit, faceShift: CGFloat(pose.twist) * 2.2)
+            drawHead(in: &head, face: face, outfit: outfit, faceShift: CGFloat(pose.twist) * 2.2, look: look)
+            if pose.headProp == .nightcap { drawNightcap(in: &head) }
         }
 
         // Arms last, so a paw reaching for the head passes in front of it.
         let points = shoulders(for: pose)
         let tips = [
-            drawArm(in: &upper, shoulder: points.left, limb: pose.leftArm, forearm: pose.leftForearm, outfit: outfit, paw: .round),
-            drawArm(in: &upper, shoulder: points.right, limb: pose.rightArm, forearm: pose.rightForearm, outfit: outfit, paw: pose.rightPaw),
+            drawArm(in: &upper, shoulder: points.left, limb: pose.leftArm, forearm: pose.leftForearm, outfit: outfit, paw: .round, look: look),
+            drawArm(in: &upper, shoulder: points.right, limb: pose.rightArm, forearm: pose.rightForearm, outfit: outfit, paw: pose.rightPaw, look: look),
         ]
+        drawHeldProp(pose.heldProp, in: &upper, paw: tips[1], time: time)
         if pose.showsSparkle {
             let anchor = pose.rightPaw == .thumbsUp ? CGPoint(x: tips[1].x + 5, y: tips[1].y - 6.5) : CGPoint(x: 33.5, y: 9)
             drawSparkle(in: &upper, at: anchor, size: 2.4, time: time)
@@ -231,6 +248,7 @@ extension TeddyArt {
         path.addQuadCurve(to: tip, control: knee)
         stroke(&graphics, path, TeddyPalette.ink, width: 6.6 + outline * 2)
         stroke(&graphics, path, outfit == .suit ? TeddyPalette.suit : TeddyPalette.jeans, width: 6.6)
+        if outfit == .hoodie { drawJeansDetail(in: &graphics, along: path, isLeft: isLeft, isBack: pose.side == .back) }
         let tilt = pose.side == .front ? min(0.55, Double(max(0, lift)) * 0.2) : 0
         drawShoe(in: &graphics, at: tip, isLeft: isLeft, isBack: pose.side == .back, outfit: outfit, tilt: tilt)
     }
@@ -267,6 +285,7 @@ extension TeddyArt {
         }
         stroke(&graphics, path, TeddyPalette.ink, width: 6.6 + outline * 2)
         stroke(&graphics, path, outfit == .suit ? TeddyPalette.suit : TeddyPalette.jeans, width: 6.6)
+        if outfit == .hoodie { drawJeansDetail(in: &graphics, along: path, isLeft: isLeft, isBack: pose.side == .back) }
         let tilt = pose.side == .front ? min(0.55, Double(max(0, lift)) * 0.2) : 0
         drawShoe(in: &graphics, at: tip, isLeft: isLeft, isBack: pose.side == .back, outfit: outfit, tilt: tilt)
     }
@@ -280,12 +299,13 @@ extension TeddyArt {
         limb: TeddyBodyPose.Limb,
         forearm: TeddyBodyPose.Limb? = nil,
         outfit: TeddyOutfit,
-        paw: TeddyBodyPose.PawShape
+        paw: TeddyBodyPose.PawShape,
+        look: SpokenLook = .none
     ) -> CGPoint {
         let direction = CGPoint(x: CGFloat(sin(limb.angle)), y: CGFloat(cos(limb.angle)))
         let elbow = CGPoint(x: shoulder.x + direction.x * limb.length, y: shoulder.y + direction.y * limb.length)
         let width: CGFloat = 6.2
-        let sleeveColor = outfit == .suit ? TeddyPalette.suit : TeddyPalette.hoodie
+        let sleeveColor = sleeveColors(outfit: outfit, look: look).sleeve
 
         var tip = elbow
         var tipDirection = direction
@@ -328,7 +348,7 @@ extension TeddyArt {
             var cuff = Path()
             cuff.move(to: CGPoint(x: tip.x - tipDirection.x * 3.7, y: tip.y - tipDirection.y * 3.7))
             cuff.addLine(to: CGPoint(x: tip.x - tipDirection.x * 2.1, y: tip.y - tipDirection.y * 2.1))
-            let cuffColor = outfit == .suit ? TeddyPalette.shirt : TeddyPalette.hoodieDark
+            let cuffColor = sleeveColors(outfit: outfit, look: look).cuff
             graphics.stroke(cuff, with: .color(cuffColor), style: StrokeStyle(lineWidth: tipWidth, lineCap: .butt))
         }
         switch paw {
@@ -336,6 +356,8 @@ extension TeddyArt {
             sticker(&graphics, circle(tip, tipWidth / 2 + 0.4), TeddyPalette.fur)
         case .thumbsUp:
             drawThumbsUpFist(in: &graphics, at: tip)
+        case .fist:
+            drawClenchedFist(in: &graphics, at: tip, direction: tipDirection)
         }
         return tip
     }

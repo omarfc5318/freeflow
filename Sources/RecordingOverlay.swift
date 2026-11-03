@@ -141,6 +141,14 @@ final class RecordingOverlayManager {
         return screen.frame.maxY - screen.visibleFrame.maxY
     }
 
+    /// True when Rio shows as the corner bear instead of the drop-down pill.
+    private var usesCorner: Bool { RioStyle.current == .corner }
+
+    /// Runs `body` with the corner bear; always called on the main thread.
+    private func withCompanion(_ body: @MainActor (RioCompanionHub) -> Void) {
+        MainActor.assumeIsolated { body(RioCompanionHub.shared) }
+    }
+
     private var overlayAcceptsMouseEvents: Bool {
         (overlayState.phase == .recording && overlayState.recordingTriggerMode == .toggle)
             || overlayState.phase == .updateAvailable
@@ -148,6 +156,10 @@ final class RecordingOverlayManager {
 
     func showInitializing(mode: RecordingTriggerMode = .hold, isCommandMode: Bool = false) {
         DispatchQueue.main.async {
+            if self.usesCorner {
+                self.withCompanion { $0.voiceChanged(.starting); $0.setHandsFree(mode == .toggle) }
+                return
+            }
             self.lockedOverlayWidth = nil
             self.overlayState.teddyTrip = .none
             self.overlayState.recordingTriggerMode = mode
@@ -166,6 +178,10 @@ final class RecordingOverlayManager {
         showsRecordingTimer: Bool
     ) {
         DispatchQueue.main.async {
+            if self.usesCorner {
+                self.withCompanion { $0.voiceChanged(.recording); $0.setHandsFree(mode == .toggle) }
+                return
+            }
             self.lockedOverlayWidth = nil
             self.overlayState.teddyTrip = .none
             self.overlayState.recordingTriggerMode = mode
@@ -184,6 +200,10 @@ final class RecordingOverlayManager {
         showsRecordingTimer: Bool
     ) {
         DispatchQueue.main.async {
+            if self.usesCorner {
+                self.withCompanion { $0.voiceChanged(.recording); $0.setHandsFree(mode == .toggle) }
+                return
+            }
             self.lockedOverlayWidth = nil
             self.overlayState.recordingTriggerMode = mode
             self.overlayState.isCommandMode = isCommandMode
@@ -200,6 +220,10 @@ final class RecordingOverlayManager {
 
     func setRecordingTriggerMode(_ mode: RecordingTriggerMode, animated: Bool) {
         DispatchQueue.main.async {
+            if self.usesCorner {
+                self.withCompanion { $0.setHandsFree(mode == .toggle) }
+                return
+            }
             self.overlayState.recordingTriggerMode = mode
             self.updateOverlayLayout(animated: animated)
         }
@@ -207,18 +231,30 @@ final class RecordingOverlayManager {
 
     func updateAudioLevel(_ level: Float) {
         DispatchQueue.main.async {
+            if self.usesCorner {
+                self.withCompanion { $0.setLevel(level) }
+                return
+            }
             self.overlayState.audioLevel = level
         }
     }
 
     func showTranscribing() {
         DispatchQueue.main.async {
+            if self.usesCorner {
+                self.withCompanion { $0.voiceChanged(.transcribing) }
+                return
+            }
             self.setTranscribingPhase()
         }
     }
 
     func showFailureIndicator() {
         DispatchQueue.main.async {
+            if self.usesCorner {
+                self.withCompanion { $0.showFailure() }
+                return
+            }
             self.showFeedbackPanel()
         }
     }
@@ -241,6 +277,10 @@ final class RecordingOverlayManager {
             return String(message[..<cutoff]) + "…"
         }()
         DispatchQueue.main.async { [self] in
+            if usesCorner {
+                withCompanion { $0.showError(truncated) }
+                return
+            }
             let toastID = UUID()
             self.overlayState.errorMessage = truncated
             self.overlayState.toastID = toastID
@@ -268,6 +308,10 @@ final class RecordingOverlayManager {
     func showMoment(_ moment: TeddyMoment, interruptsTranscribing: Bool = false) {
         guard !moment.text.isEmpty else { return }
         DispatchQueue.main.async {
+            if self.usesCorner {
+                self.withCompanion { $0.showMoment(moment, interruptsTranscribing: interruptsTranscribing) }
+                return
+            }
             // A moment that closes a dictation replaces that dictation's own pill (still
             // recording or transcribing); AppState has already ruled out a newer recording.
             // The update notice is never covered by a learned word or a milestone.
@@ -291,12 +335,16 @@ final class RecordingOverlayManager {
 
     /// The outfit the bear wears in every pill state; set when a recording starts.
     func setOutfit(_ outfit: TeddyOutfit) {
-        DispatchQueue.main.async { self.overlayState.outfit = outfit }
+        DispatchQueue.main.async {
+            self.overlayState.outfit = outfit
+            self.withCompanion { $0.setOutfit(outfit) }
+        }
     }
 
     /// The traditional look the talking bear wears while you dictate; the pill only.
     func setSpokenLook(_ look: SpokenLook) {
         DispatchQueue.main.async {
+            self.withCompanion { $0.setLook(look) }
             guard self.overlayState.spokenLook != look else { return }
             self.overlayState.spokenLook = look
         }
@@ -314,6 +362,9 @@ final class RecordingOverlayManager {
 
     func dismiss() {
         DispatchQueue.main.async {
+            if self.usesCorner {
+                self.withCompanion { $0.voiceChanged(.none); $0.setHandsFree(false) }
+            }
             self.dismissAll()
         }
     }
@@ -540,6 +591,10 @@ final class RecordingOverlayManager {
     /// Main thread only. Where the pill's bear sits, measured from the top left of its
     /// screen, or nil when no pill is showing.
     func teddyHome() -> (screen: NSScreen, point: CGPoint)? {
+        if usesCorner {
+            guard MainActor.assumeIsolated({ RioCompanionHub.shared.isShown }) else { return nil }
+            return RioCompanionHub.trickHome()
+        }
         guard let panel = overlayWindow, panel.isVisible, let screen = targetScreen else { return nil }
         // The pill's content area is the bottom 38 pt; the wings centre it in the panel.
         let bearCenterAboveBottom = useWingedLayout ? panel.frame.height / 2 : min(19, panel.frame.height / 2)
@@ -552,6 +607,7 @@ final class RecordingOverlayManager {
 
     /// Main thread only.
     func setTeddyTrip(_ trip: TeddyTrip) {
+        if usesCorner { MainActor.assumeIsolated { RioCompanionHub.shared.trick(isAway: trip == .away) } }
         overlayState.teddyTrip = trip
     }
 

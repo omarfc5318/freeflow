@@ -111,7 +111,7 @@ extension TeddyArt {
         sticker(&graphics, circle(CGPoint(x: 31.2, y: 26.9), 2.8), TeddyPalette.fur, rim: outline * 0.9)
     }
 
-    private static func drawSweatDrop(in graphics: inout GraphicsContext, at center: CGPoint) {
+    static func drawSweatDrop(in graphics: inout GraphicsContext, at center: CGPoint) {
         var drop = Path()
         drop.move(to: CGPoint(x: center.x, y: center.y - 2.2))
         drop.addQuadCurve(to: CGPoint(x: center.x, y: center.y + 1.9), control: CGPoint(x: center.x - 2.1, y: center.y + 0.6))

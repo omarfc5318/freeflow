@@ -30,6 +30,7 @@ struct FreeFlowTests {
         TeddyDougieTests.run()
         TeddySongSyncTests.run()
         SpokenLookTests.run()
+        RioCompanionCoreTests.run()
         LanguageProbeTests.run()
         AppTextInsertionCoreTests.run()
         AppTextInsertionDispatchTests.run()
