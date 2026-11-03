@@ -70,6 +70,10 @@ ARCH ?= $(shell uname -m)
 ifeq ($(APP_NAME),FreeFlow Dev)
 ICON_SOURCE = Resources/AppIcon-Dev-Source.png
 ICON_ICNS = Resources/AppIcon-Dev.icns
+else ifeq ($(APP_NAME),Rio Dictate)
+# Rio Dictate: Rio's hooded head, rendered from TeddyArt.drawHead.
+ICON_SOURCE = Resources/RioIcon-Source.png
+ICON_ICNS = Resources/RioIcon.icns
 else
 ICON_SOURCE = Resources/AppIcon-Source.png
 ICON_ICNS = Resources/AppIcon.icns

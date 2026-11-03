@@ -26,6 +26,7 @@ enum CorrectionLearningCoreTests {
         testExtendingLastWord()
         testDissimilarity()
         testFixThenImmediateClearIsLearned()
+        testClearingFieldWithTextBeforeDictationDoesNotCrash()
         testHalfTypedWordThenFocusChangeIsNotLearned()
         testHalfTypedWordClearedByEnterIsNotLearned()
         testWordStableForTwoPollsThenClearedIsLearned()
@@ -197,6 +198,21 @@ enum CorrectionLearningCoreTests {
         TestSupport.expectEqual(learner.track(""), .finished)
         TestSupport.expect(learner.isSpanLost, "A cleared field loses the span")
         TestSupport.expectEqual(learner.finalCorrections(), fix("Jon", "John"))
+    }
+
+    /// Regression (crash 2026-11-03): a field shrinking by more than the span in one poll
+    /// (Send clears "Hi. Meet Jon.") built an inverted Range and trapped.
+    private static func testClearingFieldWithTextBeforeDictationDoesNotCrash() {
+        var learner = session("Meet Jon.", field: "Hi. Meet Jon.")!
+        TestSupport.expectEqual(learner.track("Hi. Meet John."), .watching)
+        TestSupport.expectEqual(learner.track("Hi. Meet John."), .watching)
+        TestSupport.expectEqual(learner.track(""), .finished)
+        TestSupport.expectEqual(learner.finalCorrections(), fix("Jon", "John"))
+
+        var deletedBefore = session("Meet Jon.", field: "Hello there. Meet Jon.")!
+        TestSupport.expectEqual(deletedBefore.track("Meet Jon."), .watching)
+        TestSupport.expectEqual(deletedBefore.track("Meet John."), .watching)
+        TestSupport.expectEqual(deletedBefore.corrections(), fix("Jon", "John"))
     }
 
     private static func testHalfTypedWordClearedByEnterIsNotLearned() {

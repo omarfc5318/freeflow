@@ -138,8 +138,11 @@ struct CorrectionLearningSession {
         let (prefix, suffix) = Self.commonAffixes(baseline, current)
         let changedStart = prefix
         let changedEnd = baseline.count - suffix
-        let moved = (span.lowerBound + delta)..<(span.upperBound + delta)
-        let grown = span.lowerBound..<(span.upperBound + delta)
+        // Built lazily: a field that shrank by more than the span (Send clearing text before the
+        // dictation) would make an eager `grown` an inverted Range, which traps. Each return
+        // path below only uses the range its own conditions keep valid.
+        var moved: Range<Int> { (span.lowerBound + delta)..<(span.upperBound + delta) }
+        var grown: Range<Int> { span.lowerBound..<(span.upperBound + delta) }
 
         // Typing glued onto the first or last dictated word ("Sara" → "Sarah") edits that word.
         if changedStart == changedEnd {

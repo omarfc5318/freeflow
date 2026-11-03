@@ -36,6 +36,9 @@ struct MenuBarLabel: View {
             if AppBuild.isDevBundle && !appState.isRecording && !appState.isTranscribing {
                 Image(nsImage: StampedMenuBarIcon.templateImage)
                     .renderingMode(.template)
+            } else if !appState.isRecording && !appState.isTranscribing {
+                Image(nsImage: RioMenuBarIcon.templateImage)
+                    .renderingMode(.template)
             } else {
                 Image(systemName: iconName)
             }
