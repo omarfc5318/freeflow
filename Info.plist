@@ -28,5 +28,9 @@
     <string>Rio Dictate uses speech recognition to turn your voice into text, and for on-device listening for "Rio" in conversation mode. Conversation mode listening never leaves your Mac.</string>
     <key>NSAccessibilityUsageDescription</key>
     <string>FreeFlow needs accessibility access to detect the text cursor position and paste transcribed text.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Rio Dictate reads your calendar when you ask what's next or to join a meeting, and adds events when you ask. Nothing leaves your Mac.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Rio Dictate reads your calendar when you ask what's next or to join a meeting, and adds events when you ask. Nothing leaves your Mac.</string>
 </dict>
 </plist>
