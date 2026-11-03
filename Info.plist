@@ -26,6 +26,10 @@
 	<string>FreeFlow needs accessibility access to detect the text cursor position and paste transcribed text.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Rio Dictate turns Bluetooth on or off when you ask it to.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Rio Dictate reads your calendar when you ask what's next or to join a meeting, and adds events when you ask. Nothing leaves your Mac.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Rio Dictate reads your calendar when you ask what's next or to join a meeting, and adds events when you ask. Nothing leaves your Mac.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>FreeFlow needs microphone access to transcribe your speech.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
