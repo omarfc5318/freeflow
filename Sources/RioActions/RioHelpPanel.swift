@@ -1,0 +1,173 @@
+import AppKit
+import SwiftUI
+
+private let rioEscapeKeyCode: UInt16 = 53
+
+/// The cheat sheet Rio holds up: a small non-activating panel next to the corner bear listing
+/// what he can do, grouped by category with phrases that work. It never steals focus. It closes
+/// on a click (on it or anywhere else), on Esc, or on its own after 20 seconds, and while it is
+/// open `RioCompanionCenter.isHelpVisible` is true so the bear holds up his sign.
+@MainActor final class RioHelpPanelController {
+    static let shared = RioHelpPanelController()
+
+    private var panel: HelpPanel?
+    private var autoCloseTimer: Timer?
+    private var monitors: [Any] = []
+    private let center = RioCompanionCenter.shared
+
+    var isVisible: Bool { panel != nil }
+
+    func show() {
+        if let panel {
+            restartAutoClose()
+            panel.orderFrontRegardless()
+            return
+        }
+        let panel = HelpPanel(
+            contentRect: NSRect(x: 0, y: 0, width: Self.panelWidth, height: 10),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = true
+        panel.level = .screenSaver
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.sharingType = RioCompanionPrivacy.sharingType
+        panel.onEscape = { [weak self] in self?.close() }
+        let hosting = NSHostingView(rootView: RioHelpView(categories: RioHelpCatalogue.categories) { [weak self] in
+            self?.close()
+        })
+        panel.contentView = hosting
+        let size = hosting.fittingSize
+        panel.setFrame(frame(for: size), display: true)
+        panel.orderFrontRegardless()
+        self.panel = panel
+        center.isHelpVisible = true
+        installMonitors()
+        restartAutoClose()
+    }
+
+    func close() {
+        autoCloseTimer?.invalidate()
+        autoCloseTimer = nil
+        removeMonitors()
+        panel?.orderOut(nil)
+        panel = nil
+        center.isHelpVisible = false
+    }
+
+    // MARK: Placement
+
+    private static let panelWidth: CGFloat = 520
+    private static let margin: CGFloat = 16
+
+    /// To the right of the bear in the bottom-left corner, kept on screen.
+    private func frame(for size: CGSize) -> CGRect {
+        guard let screen = NSScreen.screens.first else { return CGRect(origin: .zero, size: size) }
+        let visible = screen.visibleFrame
+        let bearClearance: CGFloat = 84
+        var origin = CGPoint(x: visible.minX + RioCompanionLayout.edgeInset + bearClearance, y: visible.minY + Self.margin)
+        origin.x = min(origin.x, visible.maxX - size.width - Self.margin)
+        origin.y = min(origin.y, visible.maxY - size.height - Self.margin)
+        return CGRect(origin: CGPoint(x: max(origin.x, visible.minX + Self.margin), y: max(origin.y, visible.minY)), size: size)
+    }
+
+    // MARK: Closing
+
+    private func restartAutoClose() {
+        autoCloseTimer?.invalidate()
+        let timer = Timer(timeInterval: RioHelpCatalogue.autoCloseSeconds, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.close() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        autoCloseTimer = timer
+    }
+
+    /// Esc anywhere and a click anywhere close it. The handlers only look at the key code and the
+    /// event type, never at what was typed.
+    private func installMonitors() {
+        removeMonitors()
+        let react: @Sendable (NSEvent) -> Void = { [weak self] event in
+            let isEscape = event.type == .keyDown && event.keyCode == rioEscapeKeyCode
+            let isClick = event.type == .leftMouseDown || event.type == .rightMouseDown
+            guard isEscape || isClick else { return }
+            MainActor.assumeIsolated { self?.close() }
+        }
+        let mask: NSEvent.EventTypeMask = [.keyDown, .leftMouseDown, .rightMouseDown]
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: react) { monitors.append(global) }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { event in
+            react(event)
+            return event
+        }) {
+            monitors.append(local)
+        }
+    }
+
+    private func removeMonitors() {
+        monitors.forEach { NSEvent.removeMonitor($0) }
+        monitors = []
+    }
+}
+
+/// Borderless panels refuse key status by default; this one accepts it so Esc reaches it even
+/// when the app behind it is frontmost.
+private final class HelpPanel: NSPanel {
+    var onEscape: (() -> Void)?
+    override var canBecomeKey: Bool { true }
+    override func cancelOperation(_ sender: Any?) { onEscape?() }
+}
+
+// MARK: - View
+
+struct RioHelpView: View {
+    let categories: [RioHelpCategory]
+    let onClose: () -> Void
+
+    private let columns = [GridItem(.flexible(), alignment: .topLeading), GridItem(.flexible(), alignment: .topLeading)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Things you can say to Rio")
+                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+                Spacer()
+                Text("Esc or click to close")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
+                ForEach(categories, id: \.title) { category in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label(category.title, systemImage: category.symbol)
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color(red: 0.62, green: 0.38, blue: 0.2))
+                        ForEach(category.examples.prefix(3), id: \.self) { example in
+                            Text("\u{201C}\(example)\u{201D}")
+                                .font(.system(size: 12, design: .rounded))
+                                .foregroundStyle(.primary.opacity(0.85))
+                                .lineLimit(1)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .frame(width: 520, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(Color(red: 0.62, green: 0.38, blue: 0.2).opacity(0.35), lineWidth: 1.5)
+                )
+        )
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onClose)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Things you can say to Rio")
+    }
+}

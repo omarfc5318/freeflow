@@ -22,6 +22,10 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioKnowledgePhrases.swift \
 	Sources/RioActions/RioSystemPhrases.swift \
 	Sources/RioActions/RioPersonality.swift \
+	Sources/RioActions/RioTimerCore.swift \
+	Sources/RioActions/RioUndoPlan.swift \
+	Sources/RioActions/RioHelpCatalogue.swift \
+	Sources/RioActions/RioVoiceCore.swift \
 	Sources/RioActions/TapGestureDetector.swift \
 	Sources/RioActions/WakePhraseExtractor.swift \
 	Sources/RioActions/WindowAppNameResolver.swift \
