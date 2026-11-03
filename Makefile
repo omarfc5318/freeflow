@@ -52,6 +52,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/TeddyMilestoneCore.swift \
 	Sources/UpdateManager.swift \
 	Sources/UsageStatsCore.swift \
+	Sources/VocabularyMergeCore.swift \
 	Sources/WhisperBoostCore.swift \
 	Sources/ShortcutCore/DictationShortcutSessionController.swift \
 	Sources/ShortcutCore/ShortcutMatcher.swift \

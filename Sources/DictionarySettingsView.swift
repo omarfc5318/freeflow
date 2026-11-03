@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 struct DictionarySettingsView: View {
     @EnvironmentObject var appState: AppState
     @State private var vocabularyInput = ""
+    /// The vocabulary the editor buffer was last synced from; lets a commit keep words learned meanwhile.
+    @State private var vocabularyBase = ""
     @FocusState private var vocabularyFocused: Bool
     @State private var newHeard = ""
     @State private var newReplacement = ""
@@ -23,11 +25,11 @@ struct DictionarySettingsView: View {
             }
             .padding(24)
         }
-        .onAppear { vocabularyInput = appState.customVocabulary }
+        .onAppear { syncVocabularyBuffer() }
         .onDisappear { commitVocabulary() }
         .onChange(of: appState.customVocabulary) { vocabulary in
             // Pick up words learned or imported while this tab is open, unless mid-edit.
-            if !vocabularyFocused { vocabularyInput = vocabulary }
+            if !vocabularyFocused { syncVocabularyBuffer(vocabulary) }
         }
     }
 
@@ -77,11 +79,20 @@ struct DictionarySettingsView: View {
         }
     }
 
+    private func syncVocabularyBuffer(_ vocabulary: String? = nil) {
+        let latest = vocabulary ?? appState.customVocabulary
+        vocabularyInput = latest
+        vocabularyBase = latest
+    }
+
     private func commitVocabulary() {
-        let trimmed = vocabularyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        if appState.customVocabulary != trimmed {
-            appState.customVocabulary = trimmed
+        let merged = VocabularyMergeCore.commit(
+            buffer: vocabularyInput, base: vocabularyBase, current: appState.customVocabulary
+        )
+        if appState.customVocabulary != merged {
+            appState.customVocabulary = merged
         }
+        syncVocabularyBuffer(merged)
     }
 
     private func importVocabulary() {
@@ -93,7 +104,7 @@ struct DictionarySettingsView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let added = try appState.importVocabulary(from: url)
-            vocabularyInput = appState.customVocabulary
+            syncVocabularyBuffer()
             fileMessage = added.isEmpty
                 ? "No new words found in \(url.lastPathComponent)."
                 : "Added \(added.count) word\(added.count == 1 ? "" : "s") from \(url.lastPathComponent)."
