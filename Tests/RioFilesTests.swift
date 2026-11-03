@@ -27,6 +27,17 @@ enum RioFilesTests {
         TestSupport.expect(RioFileRanker.isRiskyToOpen(path: "/x/mybinary", isDirectory: false, isExecutable: true), "bare executable")
         TestSupport.expect(!RioFileRanker.isRiskyToOpen(path: "/x/folder", isDirectory: true, isExecutable: true), "folders are fine")
         TestSupport.expect(!RioFileRanker.isRiskyToOpen(path: "/x/README", isDirectory: false, isExecutable: false), "plain file without extension")
+        // Allowlist, not denylist: anything that isn't a known document type is only shown in Finder.
+        for path in ["/x/profile.mobileconfig", "/x/link.webloc", "/x/srv.inetloc", "/x/s.terminal", "/x/run.py",
+                     "/x/a.rb", "/x/thing.osax", "/x/k.kext", "/x/p.prefPane", "/x/unknown.xyz", "/x/Shortcut.shortcut"] {
+            TestSupport.expect(RioFileRanker.isRiskyToOpen(path: path, isDirectory: false, isExecutable: false), "\(path) is not an allow-listed document")
+        }
+        TestSupport.expect(RioFileRanker.isRiskyToOpen(path: "/x/Setup.app", isDirectory: true, isExecutable: true), "app bundle (a directory)")
+        TestSupport.expect(RioFileRanker.isRiskyToOpen(path: "/x/Flow.workflow", isDirectory: true, isExecutable: false), "workflow bundle")
+        TestSupport.expect(!RioFileRanker.isRiskyToOpen(path: "/x/Old Essay.pages", isDirectory: true, isExecutable: false), "package-format iWork document")
+        for path in ["/x/MAT108 HW6.pdf", "/x/photo.HEIC", "/x/Essay.docx", "/x/Budget.numbers", "/x/notes.md", "/x/deck.pptx"] {
+            TestSupport.expect(!RioFileRanker.isRiskyToOpen(path: path, isDirectory: false, isExecutable: false), "\(path) is a document")
+        }
     }
 
     private static func q(_ spoken: String) -> RioFileQuery { RioFileQuery.parse(spoken) }

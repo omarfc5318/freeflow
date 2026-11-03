@@ -77,10 +77,11 @@ enum RioMeetingLinksTests {
     }
 
     private static func event(_ id: String, _ title: String, _ start: Date, _ end: Date, link: String? = nil,
-                              allDay: Bool = false, declined: Bool = false) -> RioCalendarEventInfo {
+                              allDay: Bool = false, declined: Bool = false, unaccepted: Bool = false) -> RioCalendarEventInfo {
         RioCalendarEventInfo(
             identifier: id, title: title, start: start, end: end, isAllDay: allDay,
-            location: nil, notes: nil, url: link.flatMap(URL.init(string:)), isDeclined: declined
+            location: nil, notes: nil, url: link.flatMap(URL.init(string:)), isDeclined: declined,
+            isUnacceptedInvite: unaccepted
         )
     }
 
@@ -90,6 +91,12 @@ enum RioMeetingLinksTests {
         let later = event("2", "Call with Ali", d(15), d(16), link: "https://meet.google.com/aaa-bbbb-ccc")
         let lunch = event("3", "Lunch", d(12), d(13))
 
+        // An invite the owner never accepted (calendar spam with a Zoom link) is never auto-joined.
+        let spam = event("9", "You won a prize", d(9, 45), d(10, 45), link: "https://zoom.us/j/666", unaccepted: true)
+        TestSupport.expectEqual(
+            RioMeetingPicker.pick(events: [spam, later], now: now),
+            .join(later, url("https://meet.google.com/aaa-bbbb-ccc"))
+        )
         // A meeting in progress is joinable.
         TestSupport.expectEqual(RioMeetingPicker.pick(events: [later, current], now: now), .join(current, url(zoom)))
         // Otherwise the next one with a link, skipping link-less events, all-day events and declined ones.

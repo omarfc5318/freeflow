@@ -34,18 +34,25 @@ enum RioFileRanker {
 
     // MARK: Safety
 
-    private static let programExtensions: Set<String> = [
-        "app", "command", "sh", "zsh", "bash", "csh", "tool", "workflow", "action", "scpt", "scptd", "applescript",
-        "jar", "pkg", "mpkg", "dmg", "exe", "bat", "cmd", "msi", "terminal",
+    /// The only file types Rio opens directly: documents that open in a viewer or editor. Anything
+    /// else (apps, scripts, installers, configuration profiles, web/server location files, bundles,
+    /// unknown types) is only revealed in Finder, so a voice command can never run code.
+    static let openableDocumentExtensions: Set<String> = [
+        "pdf", "doc", "docx", "pages", "rtf", "odt", "ppt", "pptx", "key", "odp", "xls", "xlsx", "csv",
+        "numbers", "ods", "png", "jpg", "jpeg", "heic", "gif", "webp", "tiff", "tif", "bmp", "svg",
+        "txt", "md", "markdown", "tex", "mp3", "m4a", "wav", "aac", "mp4", "mov", "m4v", "epub",
     ]
 
-    /// Files that would run code or install something when opened. Rio shows these in Finder
-    /// instead of opening them. `isExecutable` is the file's execute bit (only trusted for
-    /// files with no extension, like a bare unix binary).
+    /// True when Rio should reveal the item in Finder instead of opening it. Plain folders (no
+    /// extension) open in Finder; a directory with an extension is a bundle (.app, .workflow…) and
+    /// is risky. Files open only when their extension is allow-listed; an extensionless file opens
+    /// only when it isn't executable (a plain README, not a unix binary).
     static func isRiskyToOpen(path: String, isDirectory: Bool, isExecutable: Bool) -> Bool {
         let ext = (path as NSString).pathExtension.lowercased()
-        if programExtensions.contains(ext) { return true }
-        return ext.isEmpty && !isDirectory && isExecutable
+        // Package-format iWork documents (.pages/.numbers/.key folders) are documents too.
+        if isDirectory { return !ext.isEmpty && !openableDocumentExtensions.contains(ext) }
+        if ext.isEmpty { return isExecutable }
+        return !openableDocumentExtensions.contains(ext)
     }
 
     // MARK: Name matching

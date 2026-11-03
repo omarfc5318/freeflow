@@ -59,6 +59,9 @@ struct RioCalendarEventInfo: Equatable {
     let notes: String?
     let url: URL?
     let isDeclined: Bool
+    /// Someone else's invite that the owner hasn't accepted (pending/unknown RSVP). Shown in the
+    /// agenda, but never auto-joined: calendar spam often carries a meeting link.
+    var isUnacceptedInvite: Bool = false
 }
 
 enum RioMeetingPick: Equatable {
@@ -74,7 +77,7 @@ enum RioMeetingPicker {
     static func pick(events: [RioCalendarEventInfo], now: Date) -> RioMeetingPick {
         let horizon = now.addingTimeInterval(24 * 3600)
         let candidates = events
-            .filter { !$0.isAllDay && !$0.isDeclined && $0.end > now && $0.start < horizon }
+            .filter { !$0.isAllDay && !$0.isDeclined && !$0.isUnacceptedInvite && $0.end > now && $0.start < horizon }
             .sorted { ($0.start, $0.identifier) < ($1.start, $1.identifier) }
         for event in candidates {
             if let link = RioMeetingLinks.joinURL(url: event.url, location: event.location, notes: event.notes) {

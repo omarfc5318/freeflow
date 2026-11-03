@@ -52,6 +52,14 @@ final class RioCalendarService {
     private static func info(from event: EKEvent) -> RioCalendarEventInfo? {
         guard let identifier = event.eventIdentifier, let start = event.startDate, let end = event.endDate else { return nil }
         let declinedByMe = event.attendees?.contains { $0.isCurrentUser && $0.participantStatus == .declined } ?? false
+        // Events the owner organised (or with no attendees) are theirs. Otherwise they must have
+        // accepted (or tentatively accepted); a pending invite, or one where they aren't a listed
+        // attendee, is never auto-joined.
+        let organisedByMe = event.organizer?.isCurrentUser ?? true
+        let myStatus = event.attendees?.first(where: \.isCurrentUser)?.participantStatus
+        let hasAttendees = !(event.attendees?.isEmpty ?? true)
+        let accepted = myStatus == .accepted || myStatus == .tentative
+        let unacceptedInvite = !organisedByMe && hasAttendees && !accepted
         return RioCalendarEventInfo(
             identifier: identifier,
             title: event.title ?? "",
@@ -61,7 +69,8 @@ final class RioCalendarService {
             location: event.location,
             notes: event.notes,
             url: event.url,
-            isDeclined: declinedByMe || event.status == .canceled
+            isDeclined: declinedByMe || event.status == .canceled,
+            isUnacceptedInvite: unacceptedInvite
         )
     }
 
