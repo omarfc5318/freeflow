@@ -8,6 +8,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NetworkMonitor.shared.start()
         appState.bindRioCompanionState()
+        // "Rio, undo" can delete the calendar events Rio adds.
+        RioCalendarService.onEventCreated = { RioUndoJournal.shared.noteCreated(.calendarEvent(identifier: $0)) }
+        // Clipboard history (memory only, concealed/password copies skipped) starts with the app.
+        RioClipboardHistory.shared.start()
         RioCompanionHub.shared.attach(appState)
         RioCompanionHub.shared.onStopPressed = { [weak self] in self?.appState.overlayManager.onStopButtonPressed?() }
 

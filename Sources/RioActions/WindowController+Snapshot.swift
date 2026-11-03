@@ -24,13 +24,13 @@ extension WindowController {
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(appElement, Self.snapshotTimeout)
         guard let window = snapshotWindow(of: appElement),
-              let position = RioAX.point(window, kAXPositionAttribute),
-              let size = RioAX.size(window, kAXSizeAttribute) else { return nil }
+              let position = RioWindowSnapshotAX.point(window, kAXPositionAttribute),
+              let size = RioWindowSnapshotAX.size(window, kAXSizeAttribute) else { return nil }
         return RioWindowSnapshot(
             appName: app.localizedName ?? command.appName ?? "that app",
             window: window,
             frame: CGRect(origin: position, size: size),
-            wasMinimized: RioAX.bool(window, kAXMinimizedAttribute) ?? false
+            wasMinimized: RioWindowSnapshotAX.bool(window, kAXMinimizedAttribute) ?? false
         )
     }
 
@@ -40,21 +40,21 @@ extension WindowController {
             return .failed(message: "Rio needs Accessibility permission to move windows")
         }
         AXUIElementSetMessagingTimeout(snapshot.window, Self.snapshotTimeout)
-        guard RioAX.point(snapshot.window, kAXPositionAttribute) != nil else {
+        guard RioWindowSnapshotAX.point(snapshot.window, kAXPositionAttribute) != nil else {
             return .failed(message: "That \(snapshot.appName) window is gone")
         }
         if snapshot.wasMinimized {
             _ = AXUIElementSetAttributeValue(snapshot.window, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
             return .done(summary: "Put the \(snapshot.appName) window back")
         }
-        if RioAX.bool(snapshot.window, kAXMinimizedAttribute) == true {
+        if RioWindowSnapshotAX.bool(snapshot.window, kAXMinimizedAttribute) == true {
             _ = AXUIElementSetAttributeValue(snapshot.window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
         }
         // Same order as moving: position, size, position again, because apps clamp a resize
         // against the screen the window starts on.
-        let placed = RioAX.setPoint(snapshot.frame.origin, snapshot.window)
-        _ = RioAX.setSize(snapshot.frame.size, snapshot.window)
-        _ = RioAX.setPoint(snapshot.frame.origin, snapshot.window)
+        let placed = RioWindowSnapshotAX.setPoint(snapshot.frame.origin, snapshot.window)
+        _ = RioWindowSnapshotAX.setSize(snapshot.frame.size, snapshot.window)
+        _ = RioWindowSnapshotAX.setPoint(snapshot.frame.origin, snapshot.window)
         _ = AXUIElementPerformAction(snapshot.window, kAXRaiseAction as CFString)
         return placed
             ? .done(summary: "Put the \(snapshot.appName) window back")
@@ -77,23 +77,23 @@ extension WindowController {
 
     private func snapshotWindow(of app: AXUIElement) -> AXUIElement? {
         for attribute in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
-            if let window = RioAX.element(app, attribute) { return window }
+            if let window = RioWindowSnapshotAX.element(app, attribute) { return window }
         }
-        guard let value = RioAX.copy(app, kAXWindowsAttribute), CFGetTypeID(value) == CFArrayGetTypeID() else {
+        guard let value = RioWindowSnapshotAX.copy(app, kAXWindowsAttribute), CFGetTypeID(value) == CFArrayGetTypeID() else {
             return nil
         }
         let windows = unsafeBitCast(value, to: CFArray.self)
         for index in 0..<CFArrayGetCount(windows) {
             guard let raw = CFArrayGetValueAtIndex(windows, index) else { continue }
             let element = unsafeBitCast(raw, to: AXUIElement.self)
-            if RioAX.bool(element, kAXMinimizedAttribute) != true { return element }
+            if RioWindowSnapshotAX.bool(element, kAXMinimizedAttribute) != true { return element }
         }
         return nil
     }
 }
 
 /// Minimal Accessibility attribute helpers for the snapshot code.
-private enum RioAX {
+private enum RioWindowSnapshotAX {
     static func copy(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }

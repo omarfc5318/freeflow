@@ -191,7 +191,8 @@ struct RioActionParser {
 
     // MARK: Clause splitting
 
-    private static let greedyStart = #"^(?:type|write|search|google|look\s+up|youtube\s+search|you\s?tube\s+search)\b"#
+    // Message bodies keep "and" and trailing words too: "text Ali saying I'm late and I'll call".
+    private static let greedyStart = #"^(?:type|write|search|google|look\s+up|youtube\s+search|you\s?tube\s+search|reply|tell\s+(?:them|him|her)|text|message|send\s+(?:a\s+)?(?:text|message))\b"#
 
     static func startsGreedyCommand(_ clause: String) -> Bool {
         RioText.matches(greedyStart, clause)

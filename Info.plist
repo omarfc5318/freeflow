@@ -24,14 +24,22 @@
 	<true/>
 	<key>NSAccessibilityUsageDescription</key>
 	<string>FreeFlow needs accessibility access to detect the text cursor position and paste transcribed text.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Rio Dictate controls Messages, Notes, Mail, Finder and System Events only when you ask, for example to send a text you confirmed, switch dark mode or empty the Trash.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Rio Dictate turns Bluetooth on or off when you ask it to.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Rio Dictate reads your calendar when you ask what's next or to join a meeting, and adds events when you ask. Nothing leaves your Mac.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Rio Dictate reads your calendar when you ask what's next or to join a meeting, and adds events when you ask. Nothing leaves your Mac.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Rio Dictate looks up the person you name (for example "text Ali") in your Contacts on this Mac to find their number. Contacts are never uploaded or stored.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>FreeFlow needs microphone access to transcribe your speech.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Rio Dictate adds reminders when you ask, for example "remind me to call Mom at 3".</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Rio Dictate adds reminders when you ask, for example "remind me to call Mom at 3".</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Rio Dictate uses speech recognition to turn your voice into text, and for on-device listening for "Rio" in conversation mode. Conversation mode listening never leaves your Mac.</string>
 </dict>

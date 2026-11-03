@@ -733,6 +733,9 @@ struct GeneralSettingsView: View {
                 SettingsCard("Rio's Voice", icon: "speaker.wave.2.fill") {
                     RioVoiceSettingsSection()
                 }
+                SettingsCard("Smart Actions", icon: "brain.head.profile") {
+                    RioSmartSettingsSection()
+                }
                 SettingsCard("Edit Mode", icon: "pencil") {
                     commandModeSection
                 }
