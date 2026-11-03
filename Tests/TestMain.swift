@@ -40,6 +40,8 @@ struct FreeFlowTests {
         AppTextInsertionCoreTests.run()
         AppTextInsertionDispatchTests.run()
         RioActionParserTests.run()
+        RioSystemPhraseTests.run()
+        RioSystemCoreTests.run()
         AppNameMatcherTests.run()
         RioActionArgumentsTests.run()
         await TranscriptionServiceTests.run()

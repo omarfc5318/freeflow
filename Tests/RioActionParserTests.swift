@@ -69,7 +69,7 @@ enum RioActionParserTests {
             ("open terminal", a(o("Terminal"))),
             ("open Zorblax", a(o("Zorblax"))),
             ("open the door", unk("open the door")),
-            ("open a new tab", unk("open a new tab")),
+            ("open a new tab", a(.browser(.newTab))),
             ("Start a timer", unk("Start a timer")),
             ("Start recording", unk("Start recording")),
 
@@ -100,7 +100,7 @@ enum RioActionParserTests {
             ("Quit chrome.", a(q(gc))),
             ("Rio, close Messages", a(q("Messages"))),
             ("shut down chrome", a(q(gc))),
-            ("close this window", unk("close this window")),
+            ("close this window", a(.pressKeys(KeyCombo(key: "w", command: true, shift: false, option: false, control: false)))),
             ("close everything", unk("close everything")),
             ("quit all apps", unk("quit all apps")),
             ("shut down the computer", unk("shut down the computer")),

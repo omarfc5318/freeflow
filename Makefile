@@ -21,6 +21,11 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioVoicePhrases.swift \
 	Sources/RioActions/RioKnowledgePhrases.swift \
 	Sources/RioActions/RioSystemPhrases.swift \
+	Sources/RioActions/RioSystemPhrases+Keyboard.swift \
+	Sources/RioActions/RioKeyCombos.swift \
+	Sources/RioActions/RioKeyCodes.swift \
+	Sources/RioActions/RioBrowserKeys.swift \
+	Sources/RioActions/RioSystemFormat.swift \
 	Sources/RioActions/RioPersonality.swift \
 	Sources/RioActions/TapGestureDetector.swift \
 	Sources/RioActions/WakePhraseExtractor.swift \
