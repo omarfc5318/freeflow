@@ -736,6 +736,9 @@ struct GeneralSettingsView: View {
                 SettingsCard("Smart Actions", icon: "brain.head.profile") {
                     RioSmartSettingsSection()
                 }
+                SettingsCard("Screen & Clicking", icon: "cursorarrow.rays") {
+                    RioScreenSettingsSection()
+                }
                 SettingsCard("Edit Mode", icon: "pencil") {
                     commandModeSection
                 }

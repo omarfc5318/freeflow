@@ -86,6 +86,8 @@ struct RioActionParser {
         if text.hasSuffix(".") { text.removeLast() }
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
+        // "type hello into the search box" fills a field (builder J), not dictation at the cursor.
+        if RioText.matches(#"\s(?:in|into)\s+(?:the\s+)?.+\s(?:box|field|bar|input)$"#, text.lowercased()) { return nil }
         // "write a poem about the sea" is a request for the smart resolver, not dictation.
         if verb == "write", RioText.matches(#"^(?:a|an|me|us|up|to|my|something|it|him|her|them|the|some)\b"#, text) {
             return nil

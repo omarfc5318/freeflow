@@ -24,7 +24,7 @@ final class RioSmartActionHandler: RioActionHandling {
         case .createReminder(let title, let due):
             return await RioReminderStore.shared.create(title: title, due: due)
         case .selectionTask(let task):
-            return await run(task)
+            return await run(task, executor: executor)
         case .readAloud(let target):
             switch target {
             case .selection: return await RioContextReader.readSelection()
@@ -38,12 +38,18 @@ final class RioSmartActionHandler: RioActionHandling {
 
     // MARK: Selection tasks
 
-    private func run(_ task: SelectionTask) async -> RioActionResult {
+    private func run(_ task: SelectionTask, executor: RioActionExecuting) async -> RioActionResult {
         guard RioSmartSettings.isEnabled else { return .failed(message: RioSmartMessages.disabled) }
         guard NetworkMonitor.shared.isOnline else { return .failed(message: RioSmartMessages.offline) }
         guard RioAX.isTrusted else { return .failed(message: RioContextReader.needsAccessibility) }
         guard let app = RioAX.frontmostApp(), let selected = await RioAX.selectedText(in: app) else {
-            return .failed(message: "I don't see any selected text. Select something first.")
+            // "explain this" / "summarize this" with nothing selected means the window in front.
+            switch task {
+            case .explain: return await executor.execute(.describeScreen(question: "Explain what's in this window."))
+            case .summarize: return await executor.execute(.describeScreen(question: "Summarize this window."))
+            case .translate, .improve:
+                return .failed(message: "I don't see any selected text. Select something first.")
+            }
         }
         let output: String
         do {

@@ -19,6 +19,18 @@ enum RioScreenPhrasesTests {
         testPicks()
         testNotStealing()
         testThroughRealParser()
+        testTypeIntoFieldThroughRealParser()
+    }
+
+    /// The lead let B's "type …" step aside for "type X into the Y box", so J's fill phrasing wins.
+    private static func testTypeIntoFieldThroughRealParser() {
+        let parser = RioActionParser(installedApps: [])
+        TestSupport.expectEqual(
+            parser.parse("type hello into the search box"),
+            .actions([.fillField(label: "search box", text: "hello")])
+        )
+        TestSupport.expectEqual(parser.parse("type hello world"), .actions([.typeText("hello world")]))
+        TestSupport.expectEqual(parser.parse("type meet me in the lobby"), .actions([.typeText("meet me in the lobby")]))
     }
 
     private static func testDescribe() {
