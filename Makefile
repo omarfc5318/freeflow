@@ -55,6 +55,8 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/UsageStatsCore.swift \
 	Sources/VocabularyMergeCore.swift \
 	Sources/WhisperBoostCore.swift \
+	Sources/RioActions/RioActionCoordinator.swift \
+	Sources/RioActions/RioActionTypes.swift \
 	Sources/ShortcutCore/DictationShortcutSessionController.swift \
 	Sources/ShortcutCore/ShortcutMatcher.swift \
 	Sources/ShortcutCore/ShortcutModels.swift

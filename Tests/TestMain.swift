@@ -22,6 +22,8 @@ struct FreeFlowTests {
         VocabularyMergeCoreTests.run()
         MishearingTallyCoreTests.run()
         FixLastShortcutTests.run()
+        RioActionKeyTests.run()
+        await RioActionCoordinatorTests.run()
         FeatureCoreTests.run()
         TranscriptionRequestCoreTests.run()
         HandsFreeUndoContextTests.run()

@@ -22,6 +22,8 @@ struct ShortcutInputState: Equatable {
     var fixLastIsActive = false
     /// A bare-modifier Fix Last press became part of a chord and must not fire on release.
     var fixLastTainted = false
+    /// A Rio action modifier was seen during the current hold (emitted once per hold).
+    var holdActionModifierEngaged = false
 
     var currentModifiers: ShortcutModifiers {
         ShortcutBinding.modifiers(for: pressedModifierKeyCodes)
@@ -45,6 +47,7 @@ struct ShortcutInputState: Equatable {
             pressedModifierKeyCodes: pressedModifierKeyCodes,
             currentModifiers: currentModifiers,
             permittedAdditionalExactMatchModifiers: configuration.permittedAdditionalExactMatchModifiers
+                .union(configuration.holdActionModifiers)
         ) {
             return true
         }
@@ -200,7 +203,10 @@ enum ShortcutMatcher {
         let previousUndoLast = state.undoLastIsActive
         let previousFixLast = state.fixLastIsActive
 
-        state.holdIsActive = bindingIsActive(configuration.hold, state: state, configuration: configuration)
+        state.holdIsActive = bindingIsActive(
+            configuration.hold, state: state, configuration: configuration,
+            extraPermittedModifiers: configuration.holdActionModifiers
+        )
         state.toggleIsActive = bindingIsActive(configuration.toggle, state: state, configuration: configuration)
         state.copyAgainIsActive = bindingIsActive(configuration.copyAgain, state: state, configuration: configuration)
         state.undoLastIsActive = bindingIsActive(configuration.undoLast, state: state, configuration: configuration)
@@ -222,7 +228,26 @@ enum ShortcutMatcher {
         if fixLastFired(previous: previousFixLast, state: &state, binding: configuration.fixLast) {
             events.insert(.fixLastTriggered, at: 0)
         }
+        if let engagement = updateActionEngagement(in: &state, configuration: configuration) {
+            events.append(engagement)
+        }
         return events
+    }
+
+    /// Fn + Control, in either order: once per hold, the first moment the hold is active and a
+    /// Rio action modifier is down. Cleared when the hold ends, so the next hold starts clean.
+    private static func updateActionEngagement(
+        in state: inout ShortcutInputState,
+        configuration: ShortcutConfiguration
+    ) -> ShortcutEvent? {
+        guard state.holdIsActive else {
+            state.holdActionModifierEngaged = false
+            return nil
+        }
+        guard !state.holdActionModifierEngaged, !configuration.holdActionModifiers.isEmpty else { return nil }
+        guard !state.currentModifiers.isDisjoint(with: configuration.holdActionModifiers) else { return nil }
+        state.holdActionModifierEngaged = true
+        return .holdActionModifierEngaged
     }
 
     /// Key shortcuts fire when pressed. A bare modifier (a lone Right Command tap) fires on
@@ -283,7 +308,8 @@ enum ShortcutMatcher {
     private static func bindingIsActive(
         _ binding: ShortcutBinding,
         state: ShortcutInputState,
-        configuration: ShortcutConfiguration
+        configuration: ShortcutConfiguration,
+        extraPermittedModifiers: ShortcutModifiers = []
     ) -> Bool {
         guard !binding.isDisabled else { return false }
         let activeModifiers = state.currentModifiers
@@ -291,6 +317,7 @@ enum ShortcutMatcher {
             pressedModifierKeyCodes: state.pressedModifierKeyCodes,
             currentModifiers: activeModifiers,
             permittedAdditionalExactMatchModifiers: configuration.permittedAdditionalExactMatchModifiers
+                .union(extraPermittedModifiers)
         ) else {
             return false
         }

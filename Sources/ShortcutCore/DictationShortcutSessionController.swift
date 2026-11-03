@@ -13,7 +13,8 @@ final class DictationShortcutSessionController {
     func handle(event: ShortcutEvent, isTranscribing: Bool) -> DictationShortcutAction? {
         // Paste Again is handled before this controller runs; if it ever
         // reaches here, treat as a no-op so dictation state is unaffected.
-        if event == .copyAgainTriggered || event == .undoLastTriggered || event == .fixLastTriggered { return nil }
+        if event == .copyAgainTriggered || event == .undoLastTriggered || event == .fixLastTriggered
+            || event == .holdActionModifierEngaged { return nil }
 
         if activeMode == nil {
             guard !isTranscribing else { return nil }
@@ -28,7 +29,7 @@ final class DictationShortcutSessionController {
                 return .start(.hold)
             case .holdDeactivated, .toggleDeactivated:
                 return nil
-            case .copyAgainTriggered, .undoLastTriggered, .fixLastTriggered:
+            case .copyAgainTriggered, .undoLastTriggered, .fixLastTriggered, .holdActionModifierEngaged:
                 return nil
             }
         }
@@ -47,7 +48,7 @@ final class DictationShortcutSessionController {
                 return .stop
             case .holdActivated, .toggleDeactivated:
                 return nil
-            case .copyAgainTriggered, .undoLastTriggered, .fixLastTriggered:
+            case .copyAgainTriggered, .undoLastTriggered, .fixLastTriggered, .holdActionModifierEngaged:
                 return nil
             }
 
@@ -62,7 +63,7 @@ final class DictationShortcutSessionController {
                 return .stop
             case .holdActivated, .holdDeactivated:
                 return nil
-            case .copyAgainTriggered, .undoLastTriggered, .fixLastTriggered:
+            case .copyAgainTriggered, .undoLastTriggered, .fixLastTriggered, .holdActionModifierEngaged:
                 return nil
             }
         }

@@ -78,6 +78,9 @@ enum ShortcutEvent: Equatable {
     case copyAgainTriggered
     case undoLastTriggered
     case fixLastTriggered
+    /// A Rio action modifier (Control) went down while the hold shortcut was active, or was
+    /// already down when it activated. Emitted once per hold; the hold itself keeps running.
+    case holdActionModifierEngaged
 }
 
 struct ShortcutConfiguration: Equatable {
@@ -87,6 +90,9 @@ struct ShortcutConfiguration: Equatable {
     let undoLast: ShortcutBinding
     let fixLast: ShortcutBinding
     let permittedAdditionalExactMatchModifiers: ShortcutModifiers
+    /// Modifiers that turn a hold into a Rio action session (Fn + Control). Pressing one never
+    /// cancels the hold, even for an exact-modifier hold binding. Applies to the hold only.
+    let holdActionModifiers: ShortcutModifiers
 
     init(
         hold: ShortcutBinding,
@@ -94,7 +100,8 @@ struct ShortcutConfiguration: Equatable {
         copyAgain: ShortcutBinding = .disabled,
         undoLast: ShortcutBinding = .disabled,
         fixLast: ShortcutBinding = .disabled,
-        permittedAdditionalExactMatchModifiers: ShortcutModifiers = []
+        permittedAdditionalExactMatchModifiers: ShortcutModifiers = [],
+        holdActionModifiers: ShortcutModifiers = []
     ) {
         self.hold = hold
         self.toggle = toggle
@@ -102,6 +109,17 @@ struct ShortcutConfiguration: Equatable {
         self.undoLast = undoLast
         self.fixLast = fixLast
         self.permittedAdditionalExactMatchModifiers = permittedAdditionalExactMatchModifiers
+        self.holdActionModifiers = holdActionModifiers
+    }
+
+    /// Control is the Rio action modifier, unless the hold shortcut already uses Control
+    /// (then Fn + Control would be ambiguous, so Rio Actions step aside).
+    static func rioActionModifiers(enabled: Bool, hold: ShortcutBinding) -> ShortcutModifiers {
+        guard enabled, !hold.isDisabled else { return [] }
+        if hold.modifiers.contains(.control) { return [] }
+        if hold.kind == .modifierKey, ShortcutBinding.logicalModifier(forKeyCode: hold.keyCode) == .control { return [] }
+        if let exact = hold.exactModifierKeyCodes, !exact.isDisjoint(with: [59, 62]) { return [] }
+        return [.control]
     }
 
     static let disabled = ShortcutConfiguration(hold: .disabled, toggle: .disabled, copyAgain: .disabled)

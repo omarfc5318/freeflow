@@ -4,6 +4,8 @@ enum PipelineHistoryItemIntent: String, Codable {
     case dictation
     case commandAutomatic = "command:automatic"
     case commandManual = "command:manual"
+    /// A Rio action run from the Fn + Control key; the transcript and the outcome line only.
+    case rioAction = "rio:action"
 }
 
 struct PipelineHistoryItem: Identifiable, Codable {

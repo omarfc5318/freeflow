@@ -258,6 +258,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let contextScreenshotMaxDimensionStorageKey = "context_screenshot_max_dimension"
     private let shortcutStartDelayStorageKey = "shortcut_start_delay"
     private let preserveClipboardStorageKey = "preserve_clipboard"
+    private let rioActionsEnabledStorageKey = "rio_actions_enabled"
     private let preserveExactWordingStorageKey = "preserve_exact_wording"
     private let keepDictationInClipboardHistoryStorageKey = "keep_dictation_in_clipboard_history"
     private let learnFromCorrectionsStorageKey = "learn_from_corrections"
@@ -597,6 +598,18 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Fn + Control runs a spoken command instead of dictating. Fn alone is still dictation.
+    @Published var rioActionsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(rioActionsEnabled, forKey: rioActionsEnabledStorageKey)
+            guard oldValue != rioActionsEnabled else { return }
+            restartHotkeyMonitoring()
+        }
+    }
+
+    /// What the corner bear shows for the action key; the overlay only observes it.
+    @Published var rioActionPhase: RioActionPhase = .idle
+
     @Published var preserveClipboard: Bool {
         didSet {
             UserDefaults.standard.set(preserveClipboard, forKey: preserveClipboardStorageKey)
@@ -783,6 +796,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private var currentSessionIntent: SessionIntent = .dictation
     private var pendingSelectionSnapshot: AppSelectionSnapshot?
     private var pendingManualCommandInvocation = false
+    /// Control was pressed during the current Fn hold: this session is a Rio action, not dictation.
+    private var rioActionSessionRequested = false
+    private var rioActionPhaseToken = UUID()
+    private var rioActionCoordinator: RioActionCoordinator?
     private var pendingShortcutStartTask: Task<Void, Never>?
     private var pendingShortcutStartMode: RecordingTriggerMode?
     private var realtimeService: RealtimeTranscriptionService?
@@ -876,6 +893,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let commandModeManualModifier = CommandModeManualModifier(
             rawValue: UserDefaults.standard.string(forKey: commandModeManualModifierStorageKey) ?? ""
         ) ?? .option
+        let rioActionsEnabled = UserDefaults.standard.object(forKey: rioActionsEnabledStorageKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: rioActionsEnabledStorageKey)
         let preserveClipboard = UserDefaults.standard.object(forKey: preserveClipboardStorageKey) == nil
             ? true
             : UserDefaults.standard.bool(forKey: preserveClipboardStorageKey)
@@ -970,6 +990,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.outputLanguage = outputLanguage
         self.shortcutStartDelay = shortcutStartDelay
         self.originalFieldInsertionEnabled = OriginalFieldInsertionPreference.load(from: .standard)
+        self.rioActionsEnabled = rioActionsEnabled
         self.preserveClipboard = preserveClipboard
         self.preserveExactWording = preserveExactWording
         self.keepDictationInClipboardHistory = keepDictationInClipboardHistory
@@ -1774,6 +1795,18 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// True when Fn + Control can run Rio Actions (the hold shortcut itself doesn't use Control).
+    var rioActionKeyIsAvailable: Bool {
+        !ShortcutConfiguration.rioActionModifiers(enabled: true, hold: holdShortcut).isEmpty
+    }
+
+    /// Shown in Settings when Edit Mode would also claim Control; the action key wins.
+    var rioActionsEditModeCollisionMessage: String? {
+        guard rioActionsEnabled, isCommandModeEnabled, commandModeStyle == .manual,
+              commandModeManualModifier == .control else { return nil }
+        return "Edit Mode's extra modifier is Ctrl. Fn + Ctrl now runs Rio Actions; pick another Edit Mode modifier to transform selected text with your hold shortcut."
+    }
+
     var shortcutStartDelayMilliseconds: Int {
         Int((shortcutStartDelay * 1000).rounded())
     }
@@ -2024,7 +2057,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
             copyAgain: copyAgainShortcut,
             undoLast: undoLastShortcut,
             fixLast: fixLastShortcut,
-            permittedAdditionalExactMatchModifiers: permittedAdditionalExactMatchModifiers
+            permittedAdditionalExactMatchModifiers: permittedAdditionalExactMatchModifiers,
+            holdActionModifiers: ShortcutConfiguration.rioActionModifiers(enabled: rioActionsEnabled, hold: holdShortcut)
         )
     }
 
@@ -2057,6 +2091,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
             return
         }
 
+        if event == .holdActionModifierEngaged {
+            beginRioActionSessionIfHolding()
+            return
+        }
+
         guard let action = shortcutSessionController.handle(event: event, isTranscribing: isTranscribing) else {
             return
         }
@@ -2064,10 +2103,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
         switch action {
         case .start(let mode):
             os_log(.info, log: recordingLog, "Shortcut start fired for mode %{public}@", mode.rawValue)
+            // A new session starts as dictation; the action key's own event (which follows
+            // this one when Control was already down) turns it into a Rio action.
+            rioActionSessionRequested = false
             scheduleShortcutStart(mode: mode)
         case .stop:
             cancelPendingShortcutStart()
             guard isRecording else {
+                clearRioActionSession()
                 shortcutSessionController.reset()
                 activeRecordingTriggerMode = nil
                 activeTextInsertionTarget = nil
@@ -2075,6 +2118,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
             }
             stopAndTranscribe()
         case .switchedToToggle:
+            clearRioActionSession()
             if isRecording {
                 activeRecordingTriggerMode = .toggle
                 overlayManager.setRecordingTriggerMode(.toggle, animated: true)
@@ -2247,6 +2291,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         contextCaptureTask = nil
         capturedContext = nil
         shortcutSessionController.reset()
+        clearRioActionSession()
         activeRecordingTriggerMode = nil
         activeTextInsertionTarget = nil
         currentSessionIntent = .dictation
@@ -2316,6 +2361,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
         selectionSnapshot: AppSelectionSnapshot,
         manualCommandRequested: Bool
     ) -> SessionIntent? {
+        // The action key wins over Edit Mode, even if Edit Mode's modifier is also Control.
+        if isRioActionKeyHeld(triggerMode: triggerMode) {
+            return .dictation
+        }
         guard isCommandModeEnabled else {
             return .dictation
         }
@@ -3105,7 +3154,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
         activeOriginalFieldInsertionEnabled = false
         activeRecordingTriggerMode = nil
         activeTextInsertionTarget = nil
-        let sessionIntent = currentSessionIntent
+        let isRioActionSession = rioActionSessionRequested
+        rioActionSessionRequested = false
+        // An action session is never a command-mode or dictation run: nothing is typed or pasted.
+        let sessionIntent = isRioActionSession ? SessionIntent.dictation : currentSessionIntent
         currentSessionIntent = .dictation
         let textRules = dictationTextRules(customSystemPrompt: customSystemPrompt, category: activeStyleCategory)
         activeStyleCategory = .other
@@ -3149,6 +3201,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         errorMessage = nil
         playAlertSound(named: "Pop")
         if skipsTranscription {
+            if isRioActionSession { setRioActionPhase(.idle) }
             tearDownRealtimeService()
             inFlightContextTask?.cancel()
             contextCaptureTask = nil
@@ -3223,6 +3276,15 @@ final class AppState: ObservableObject, @unchecked Sendable {
                     let rawTranscript = try await transcript
                     // Nil when the realtime stream supplied the transcript (no prompt involved).
                     let vocabularyStatus = transcriptionService.vocabularyReport?.statusSuffix ?? ""
+                    if isRioActionSession {
+                        try Task.checkCancellation()
+                        await MainActor.run { [weak self] in
+                            self?.finishRioActionSession(
+                                transcript: rawTranscript, savedAudioFileName: savedAudioFile?.fileName
+                            )
+                        }
+                        return
+                    }
                     let parsedTranscript = Self.parseTranscriptCommands(
                         from: rawTranscript,
                         pressEnterCommandEnabled: self.isPressEnterVoiceCommandEnabled
@@ -3912,6 +3974,146 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private func applySpokenLook(_ look: SpokenLook) {
         lastSpokenLook = look
         overlayManager.setSpokenLook(SpokenLook.forLanguage(transcriptionLanguage) ?? look)
+    }
+
+    // MARK: Rio actions (Fn + Control)
+
+    /// True while the action key is (or was just) held for a hold session.
+    private func isRioActionKeyHeld(triggerMode: RecordingTriggerMode) -> Bool {
+        guard triggerMode == .hold else { return false }
+        let actionModifiers = activeShortcutConfiguration.holdActionModifiers
+        guard !actionModifiers.isEmpty else { return false }
+        return rioActionSessionRequested
+            || !hotkeyManager.currentPressedModifiers.isDisjoint(with: actionModifiers)
+    }
+
+    private func beginRioActionSessionIfHolding() {
+        guard rioActionsEnabled, shortcutSessionController.activeMode == .hold else { return }
+        rioActionSessionRequested = true
+        setRioActionPhase(.listening)
+    }
+
+    /// Drops a pending action request (session cancelled or never started).
+    private func clearRioActionSession() {
+        rioActionSessionRequested = false
+        if rioActionPhase == .listening { setRioActionPhase(.idle) }
+    }
+
+    /// Publishes the phase; results fall back to `.idle` after a moment, and `.listening` can
+    /// never stay stuck if the session ended without a transcription.
+    private func setRioActionPhase(_ phase: RioActionPhase) {
+        let token = UUID()
+        rioActionPhaseToken = token
+        rioActionPhase = phase
+        let delay: TimeInterval
+        switch phase {
+        case .idle, .working: return
+        case .listening: delay = Self.rioActionListeningSafetySeconds
+        case .succeeded, .failed: delay = Self.rioActionResultSeconds
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.rioActionPhaseToken == token else { return }
+            if phase == .listening, self.isRecording || self.isTranscribing { return }
+            self.rioActionPhase = .idle
+        }
+    }
+
+    private static let rioActionResultSeconds: TimeInterval = 2.5
+    private static let rioActionListeningSafetySeconds: TimeInterval = 30
+
+    /// The transcript of an action session: a Teddy trick (name optional) or a command.
+    /// Nothing is typed, pasted, saved as the last transcript or fed to the correction learner.
+    private func finishRioActionSession(transcript: String, savedAudioFileName: String?) {
+        guard isTranscribing else { return }
+        let spokenCommand = RioActionTranscript.stripName(from: transcript)
+        if !spokenCommand.isEmpty, let trick = TeddyCommand.trick(in: "Rio \(spokenCommand)") {
+            setRioActionPhase(.idle)
+            finishWithTeddyTrick(trick, savedAudioFileName: savedAudioFileName)
+            return
+        }
+
+        transcriptionTask = nil
+        transcribingAudioFileName = nil
+        isTranscribing = false
+        endCriticalDictationActivity()
+        if let savedAudioFileName {
+            Self.deleteAudioFile(savedAudioFileName)
+        }
+        audioRecorder.cleanup()
+        refreshAvailableMicrophonesIfNeeded()
+        debugStatusMessage = "Done"
+        guard !spokenCommand.isEmpty else {
+            setRioActionPhase(.idle)
+            statusText = "Ready"
+            clearPendingOverlayDismissToken()
+            overlayManager.dismiss()
+            return
+        }
+        statusText = "Working..."
+        setRioActionPhase(.working("Working on it"))
+        clearPendingOverlayDismissToken()
+        overlayManager.dismiss()
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let coordinator = self.rioActionCoordinator ?? RioActionsWiring.makeCoordinator()
+            self.rioActionCoordinator = coordinator
+            let outcome = await coordinator.run(transcript) { [weak self] line in
+                self?.statusText = line
+                self?.rioActionPhase = .working(line)
+            }
+            self.finishRioAction(outcome, transcript: transcript)
+        }
+    }
+
+    private func finishRioAction(_ outcome: RioActionOutcome, transcript: String) {
+        let summary: String
+        switch outcome {
+        case .nothing, .cancelled:
+            setRioActionPhase(.idle)
+            statusText = "Ready"
+            recordRioActionHistory(transcript: transcript, outcome: outcome == .cancelled ? "Cancelled" : "Nothing to do")
+            return
+        case .succeeded(let text):
+            summary = text
+            setRioActionPhase(.succeeded(text))
+        case .failed(let message):
+            summary = message
+            setRioActionPhase(.failed(message))
+            playAlertSound(named: "Basso")
+        case .unknown:
+            summary = RioActionText.unknownMessage
+            setRioActionPhase(.failed(summary))
+            showClosingMoment(.didntCatchThat)
+        }
+        statusText = summary
+        scheduleReadyStatusReset(after: 3, matching: [summary])
+        recordRioActionHistory(transcript: transcript, outcome: summary)
+    }
+
+    /// History keeps what the run log already keeps for dictation: the transcript, plus the
+    /// outcome line. No audio, context or screenshot is stored for an action.
+    private func recordRioActionHistory(transcript: String, outcome: String) {
+        let entry = PipelineHistoryItem(
+            intent: .rioAction,
+            timestamp: Date(),
+            rawTranscript: transcript.trimmingCharacters(in: .whitespacesAndNewlines),
+            postProcessedTranscript: outcome,
+            postProcessingPrompt: nil,
+            contextSummary: "",
+            contextScreenshotDataURL: nil,
+            contextScreenshotStatus: "not captured",
+            postProcessingStatus: "Rio action",
+            debugStatus: "Rio action",
+            customVocabulary: customVocabulary
+        )
+        do {
+            let removed = try pipelineHistoryStore.append(entry, maxCount: maxPipelineHistoryCount)
+            for name in removed { Self.deleteAudioFile(name) }
+            pipelineHistory = pipelineHistoryStore.loadAllHistory()
+        } catch {
+            errorMessage = "Unable to save run history entry: \(error.localizedDescription)"
+        }
     }
 
     /// "Rio go crazy" / "Rio show me ur shi jelly" / "Rio hit the Dougie": nothing is typed or saved. The bear jumps

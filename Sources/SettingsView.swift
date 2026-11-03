@@ -721,6 +721,9 @@ struct GeneralSettingsView: View {
                 SettingsCard("Recording Overlay", icon: "rectangle.dashed") {
                     overlaySection
                 }
+                SettingsCard("Rio Actions", icon: "bolt.fill") {
+                    rioActionsSection
+                }
                 SettingsCard("Edit Mode", icon: "pencil") {
                     commandModeSection
                 }
@@ -1217,6 +1220,35 @@ struct GeneralSettingsView: View {
                 return nil
             }
             return (name: screen.localizedName, tag: Int(id))
+        }
+    }
+
+    private var rioActionsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle("Enable Rio Actions", isOn: $appState.rioActionsEnabled)
+
+            HStack {
+                Text("Action key")
+                Spacer()
+                Text(appState.rioActionKeyIsAvailable ? "Fn + Control" : "Unavailable")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("Hold Fn and Control together, say what you want (\"open Chrome\", \"Rio, volume down\"), and let go. Saying \"Rio\" is optional. Nothing is ever typed. Fn alone is still dictation.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if !appState.rioActionKeyIsAvailable {
+                Text("Your Hold to Talk shortcut already uses Control, so the action key is off. Pick a hold shortcut without Control to use Rio Actions.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            if let collision = appState.rioActionsEditModeCollisionMessage {
+                Text(collision)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 
