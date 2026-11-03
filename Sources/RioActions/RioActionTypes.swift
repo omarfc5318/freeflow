@@ -124,3 +124,37 @@ struct InstalledApp: Equatable, Hashable {
     let bundleIdentifier: String?
     let url: URL
 }
+
+// MARK: Rio companion (the corner bear)
+
+/// What the corner bear shows for Rio Actions. AppState publishes it as `rioActionPhase`;
+/// the companion view only observes it.
+enum RioActionPhase: Equatable {
+    /// Asleep in the corner (or nothing to show).
+    case idle
+    /// Action key is down or conversation mode heard "Rio": awake and alert, listening.
+    case listening
+    /// Transcribing / resolving / running: "Opening Google Chrome".
+    case working(String)
+    case succeeded(String)
+    case failed(String)
+}
+
+/// The corner bear's Dock run. HARD RULE (owner, 2026-11-03): the bear must never add delay.
+/// The executor starts launching the app in the background (not activated) BEFORE calling
+/// this, the bear's sprint plus punch is capped at `maxRunDuration`, and `punch` activates the
+/// app. If the bear is hidden, disabled, mid-trick, the Dock is hidden or on a side, or the app
+/// has no Dock icon, return false at once without calling `punch`; the executor then activates
+/// the app normally.
+@MainActor protocol RioCompanionDirecting: AnyObject {
+    func runAndPunchDockIcon(
+        appURL: URL,
+        bundleIdentifier: String?,
+        punch: @escaping @MainActor () -> Void
+    ) async -> Bool
+}
+
+enum RioCompanionTiming {
+    /// Sprint from the corner plus the punch, end to end.
+    static let maxRunDuration: TimeInterval = 0.4
+}

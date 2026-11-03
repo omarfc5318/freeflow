@@ -34,7 +34,9 @@ struct RioActionParser {
 enum InstalledAppCatalog { static func scan() -> [InstalledApp] }   // /Applications, /System/Applications(+Utilities), ~/Applications
 enum AppNameMatcher { static func bestMatch(for spoken: String, in apps: [InstalledApp]) -> InstalledApp? }
 @MainActor final class RioActionExecutor {
-    init(windowController: WindowControlling, typeText: @escaping @MainActor (String) async -> Bool)
+    init(windowController: WindowControlling,
+         companion: RioCompanionDirecting?,
+         typeText: @escaping @MainActor (String) async -> Bool)
     func execute(_ action: RioAction) async -> RioActionResult
 }
 
@@ -59,7 +61,7 @@ files.
 ## Wave 1 (parallel, one git worktree each)
 
 ### Builder A: action key and pipeline (`feat/rio-actions-a`)
-Owns: `Sources/ShortcutCore/*`, `Sources/AppState.swift`, `Sources/RecordingOverlay.swift`,
+Owns: `Sources/ShortcutCore/*`, `Sources/AppState.swift`,
 `Sources/SettingsView.swift`, `Sources/MenuBarView.swift`, new
 `Sources/RioActions/RioActionCoordinator.swift`, related tests.
 - New session intent for Fn+Control. Today the hold binding is Fn with exact modifier
@@ -77,9 +79,11 @@ Owns: `Sources/ShortcutCore/*`, `Sources/AppState.swift`, `Sources/RecordingOver
   protocol you declare in the coordinator file with `func resolve(_ text: String) async throws
   -> [RioAction]`, nil in wave 1, so unknown → shrug "I don't know how to do that yet"); `.empty`
   → nothing.
-- Pill feedback: reuse the bear pill. Show a short status ("Opening Google Chrome",
-  "Volume 40%") and the shrug moment on failure/unknown, with the result message. Look at how
-  `finishWithTeddyTrick` and moments work.
+- Feedback: do NOT edit overlay/art files (builder F owns them). Publish
+  `@Published var rioActionPhase: RioActionPhase` on AppState: `.listening` the instant
+  Fn+Control is detected, `.working("Opening Google Chrome")` while running,
+  `.succeeded`/`.failed(message)` after, back to `.idle` ~2.5 s later. While F's work isn't
+  merged, nothing visual is required beyond the existing status text.
 - History: record action sessions with a distinguishable intent and the result summary (no
   new user-content logging beyond what history already stores).
 - Settings: a "Rio Actions" section with an Enable toggle (default ON), the key shown as
@@ -118,7 +122,12 @@ Owns: `RioActionParser.swift`, `InstalledAppCatalog.swift`, `AppNameMatcher.swif
   settings/system preferences→System Settings, messages/imessage→Messages, terminal, finder,
   facetime, word/excel/powerpoint→Microsoft …), normalised exact, prefix, token and edit-distance
   matching with a strict threshold (no "Mail" for "Maps"). Deterministic tie-breaks.
-- Executor: NSWorkspace open (re-scan once if not found), activate/hide via
+- Executor, opening apps (owner's HARD RULE: the bear never adds delay): start the launch at
+  once with `NSWorkspace.openApplication` and `activates = false`, THEN call
+  `companion?.runAndPunchDockIcon(…)` with a `punch` closure that activates the app. If it
+  returns false or the companion is nil, activate immediately. Same for `.switchToApp` of a
+  running app (punch = activate). Never wait on the bear before starting the launch.
+- Executor, other: NSWorkspace open (re-scan once if not found), activate/hide via
   NSRunningApplication, quit via `terminate()` (never force). Open URLs in the default browser.
   Volume via `NSAppleScript("set volume output volume N")` (in-process Standard Additions, no
   Automation prompt), media and volume keys via NX_SYSDEFINED CGEvents, lock screen via the
@@ -165,14 +174,59 @@ math), `ThreeFingerTapMonitor.swift`, `TapGestureDetector.swift` (pure),
   from `start()`. Info.plist already has NSSpeechRecognitionUsageDescription. Update its
   wording to mention Rio.
 
+### Builder F: the corner bear companion (`feat/rio-actions-f`)
+Owner's words: "a small teddy bear in that hoodie and jeans, sleeping in the corner of my
+screen until he is awakened. The dictation can awaken him. Instead of the pill popping up,
+let it just be him speaking from the left corner on a mic. For any actions as soon as I click
+the action button, he immediately wakes up. If [an action opens an app on my Dock] he will run
+to that [Dock icon] as fast as he can. As soon as he punches it, that app will open.
+Otherwise just open the app regularly." And: "I shouldn't be waiting so long for him to run
+… it shouldn't be more than [the natural delay for an app to open], so he should be running
+pretty fast."
+Owns: `Sources/RecordingOverlay.swift`, `Sources/TeddyBearViews.swift`, `Sources/TeddyArt*.swift`,
+`Sources/TeddyBearCore.swift`, `Sources/TeddyRagdollCore.swift`, new
+`Sources/RioCompanion/*.swift` and their tests. Must not edit AppState (read its published state
+only: `isRecording`, `isTranscribing`, the audio level the pill uses, moments, spoken looks,
+tricks, and the new `rioActionPhase`. If `rioActionPhase` doesn't exist in your worktree yet,
+add a `STUB_F_` extension providing it as a constant `.idle`).
+- Art: the same brown bear in the purple hoodie, small (about 64 pt tall at rest), now with
+  **blue jeans** (denim legs, cuff turn-ups, stitching) for the hoodie outfit. Keep the suit
+  outfit and spoken looks (shemagh/thobe, safa/kurta) working on him. New poses: **asleep**
+  (curled/slumped against the corner, slow breathing, drifting "z z Z"), **waking** (stretch,
+  blink, ~0.3 s), **talking into a mic** (sitting up, holding the mic, mouth driven by the
+  audio level, as the pill bear does today), **thinking** (dots), **alert/listening** for the
+  action key (ears up, wide eyes, instantly, no slow wake), **sprint** (fast run cycle, speed
+  lines) and **punch** (jump + fist into the icon, small impact burst).
+- Placement: bottom-left corner of the screen with the menu bar (`NSScreen.screens[0]`),
+  inset from the edges, above windows, click-through (`ignoresMouseEvents`), on all Spaces
+  including full-screen apps, never takes focus, and doesn't sit on top of the Dock if the Dock
+  is on the left. Low CPU when asleep (≤ 10 fps idle animation or a timer-driven redraw, no
+  continuous 60 fps).
+- Behaviour: dictation (Fn) wakes him into the talking pose. This REPLACES the drop-down pill
+  for normal dictation, and the transcript status/moments (shrug, undo, sent, milestone,
+  learned) play on him in the corner. The action key wakes him instantly into alert. After
+  ~20 s idle he goes back to sleep. Teddy tricks ("Rio go crazy", jelly, Dougie) start and end
+  at his corner. Keep a Settings option "Rio style: Corner bear (default) / Classic pill" so
+  the old pill is one toggle away; put it in a new `RioCompanionSettingsSection` view (the
+  lead embeds it in Settings at merge).
+- Dock run (implements `RioCompanionDirecting`; read the HARD RULE in the contract): find the
+  app's Dock icon through the Accessibility tree of the Dock process (`com.apple.dock` → AXList
+  → AXDockItem; match by the item's URL attribute or title against the app). Only for a Dock at
+  the bottom, not auto-hidden. Sprint along the bottom edge to the icon's x, jump and punch:
+  the whole sprint + punch ≤ `RioCompanionTiming.maxRunDuration` (0.4 s) no matter the
+  distance (scale the speed), call `punch` on impact, then jog back to the corner and fall
+  asleep. If anything is unavailable, return false immediately.
+- Pure, tested cores: the state machine (sleep/wake/talk/alert/run/punch/return transitions
+  and timeouts), the sprint timing (always ≤ 0.4 s, impact time), and the Dock-item matching.
+
 ## Wave 2 (after the lead merges wave 1)
 
 ### Builder D: conversation mode integration (`feat/rio-actions-d`)
 AppState toggle `isConversationModeOn`; three-finger tap toggles it; a menu bar item too;
 "stop listening" turns it off; auto-off after 15 min without a command (setting); a soft
 sound on/off; while on, the menu bar teddy shows a listening variant
-(`RioMenuBarIcon.listeningTemplateImage`: teddy plus a small dot/waves) and the pill shows a
-small "Listening…" bear between commands; pause the listener during Fn/Fn+Ctrl sessions and
+(`RioMenuBarIcon.listeningTemplateImage`: teddy plus a small dot/waves) and the corner bear shows an
+awake "listening" pose (ears up, small sound waves) between commands instead of sleeping; pause the listener during Fn/Fn+Ctrl sessions and
 resume after. Each heard command → `RioActionCoordinator` (same feedback as the action key).
 Settings: gesture toggle, auto-off minutes, and an explanation that the mic stays on and
 nothing leaves the Mac until it hears "Rio".
