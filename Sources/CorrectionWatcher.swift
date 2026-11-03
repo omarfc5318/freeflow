@@ -14,7 +14,7 @@ final class CorrectionWatcher {
     static let watchDuration: TimeInterval = 90
     /// A field value must stay unchanged this long before it counts, so half-typed words are skipped.
     static let settleDelay: TimeInterval = 1.0
-    static let pollInterval: TimeInterval = 0.5
+    static let pollInterval: TimeInterval = 0.15
     /// Large documents are skipped to keep polling cheap.
     static let maxFieldLength = 50_000
 
@@ -118,6 +118,9 @@ final class CorrectionWatcher {
             self.session = session
             return outcome == .watching
         }
+        // An unchanged poll counts toward the intact state's stability (see finalCorrections).
+        _ = session.track(value)
+        self.session = session
         if !isPendingSettled, now.timeIntervalSince(pendingSince) >= Self.settleDelay {
             session.markSettled()
             self.session = session

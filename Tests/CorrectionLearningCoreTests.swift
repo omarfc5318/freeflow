@@ -27,6 +27,9 @@ enum CorrectionLearningCoreTests {
         testDissimilarity()
         testFixThenImmediateClearIsLearned()
         testHalfTypedWordThenFocusChangeIsNotLearned()
+        testHalfTypedWordClearedByEnterIsNotLearned()
+        testWordStableForTwoPollsThenClearedIsLearned()
+        testSettledCorrectionSurvivesUnstableClear()
         testSettledStateIsUsedWhenWatchingTimesOut()
         testLooseCapForStrongVocabulary()
         testLooseCapStillRejectsRewrites()
@@ -190,9 +193,34 @@ enum CorrectionLearningCoreTests {
     private static func testFixThenImmediateClearIsLearned() {
         var learner = session("Meet Jon.", field: "Meet Jon.")!
         TestSupport.expectEqual(learner.track("Meet John."), .watching)
+        TestSupport.expectEqual(learner.track("Meet John."), .watching)
         TestSupport.expectEqual(learner.track(""), .finished)
         TestSupport.expect(learner.isSpanLost, "A cleared field loses the span")
         TestSupport.expectEqual(learner.finalCorrections(), fix("Jon", "John"))
+    }
+
+    private static func testHalfTypedWordClearedByEnterIsNotLearned() {
+        var learner = session("Ask Grok.", field: "Ask Grok.")!
+        _ = learner.track("Ask Gro.")
+        TestSupport.expectEqual(learner.track(""), .finished)
+        TestSupport.expectEqual(learner.finalCorrections(), [])
+    }
+
+    private static func testWordStableForTwoPollsThenClearedIsLearned() {
+        var learner = session("Ask Grok.", field: "Ask Grok.")!
+        _ = learner.track("Ask Groq.")
+        _ = learner.track("Ask Groq.")
+        TestSupport.expectEqual(learner.track(""), .finished)
+        TestSupport.expectEqual(learner.finalCorrections(), fix("Grok", "Groq"))
+    }
+
+    private static func testSettledCorrectionSurvivesUnstableClear() {
+        var learner = session("Ask Grok about Jon.", field: "Ask Grok about Jon.")!
+        _ = learner.track("Ask Groq about Jon.")
+        learner.markSettled()
+        _ = learner.track("Ask Groq about John.")
+        TestSupport.expectEqual(learner.track(""), .finished)
+        TestSupport.expectEqual(learner.finalCorrections(), fix("Grok", "Groq"))
     }
 
     private static func testHalfTypedWordThenFocusChangeIsNotLearned() {

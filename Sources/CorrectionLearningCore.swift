@@ -41,6 +41,10 @@ struct CorrectionLearningSession {
     private var settledSpan: Range<Int>
     /// True once an edit destroyed the dictated span (field sent, cleared or merged).
     private(set) var isSpanLost = false
+    /// Consecutive polls the current intact state has been seen unchanged (1 = seen once).
+    private var intactPollCount = 1
+    /// Polls an intact state must survive before a field-clear (Send) may learn from it.
+    static let minStablePolls = 2
     private let dictatedWords: [Word]
     private let isKnownWord: (String) -> Bool
 
@@ -81,7 +85,10 @@ struct CorrectionLearningSession {
     /// On `.finished` the state stays at the last value where the span was still intact.
     mutating func track(_ fieldValue: String) -> Outcome {
         let current = Array(fieldValue.utf16)
-        guard current != baseline else { return .watching }
+        guard current != baseline else {
+            if !isSpanLost { intactPollCount += 1 }
+            return .watching
+        }
         let delta = current.count - baseline.count
 
         guard let newSpan = trackedSpan(in: current, delta: delta), !newSpan.isEmpty else {
@@ -90,6 +97,7 @@ struct CorrectionLearningSession {
         }
         baseline = current
         span = newSpan
+        intactPollCount = 1
         return .watching
     }
 
@@ -105,10 +113,15 @@ struct CorrectionLearningSession {
     }
 
     /// What to learn when watching ends: the last intact state if the span was destroyed (that
-    /// is the text the user corrected and sent), otherwise the last settled state, so a word
-    /// still being typed at timeout or focus change is never learned.
+    /// is the text the user corrected and sent) and that state was seen on at least
+    /// `minStablePolls` consecutive polls; otherwise the last settled state, so a word still
+    /// being typed at send, timeout or focus change ("Gro" for "Groq") is never learned.
     func finalCorrections() -> [LearnedCorrection] {
-        isSpanLost ? corrections() : corrections(baseline: settledBaseline, span: settledSpan)
+        let settled = corrections(baseline: settledBaseline, span: settledSpan)
+        guard isSpanLost else { return settled }
+        // Corrections also present in the settled state are stable by definition, so falling
+        // back to the settled state keeps exactly those.
+        return intactPollCount >= Self.minStablePolls ? corrections() : settled
     }
 
     private func corrections(baseline: [UInt16], span: Range<Int>) -> [LearnedCorrection] {
