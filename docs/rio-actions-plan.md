@@ -219,35 +219,194 @@ add a `STUB_F_` extension providing it as a constant `.idle`).
 - Pure, tested cores: the state machine (sleep/wake/talk/alert/run/punch/return transitions
   and timeouts), the sprint timing (always ≤ 0.4 s, impact time), and the Dock-item matching.
 
-## Wave 2 (after the lead merges wave 1)
+## Wave 2 (contract v2; builds on the merged wave 1 at branch `feat/rio-actions`)
 
-### Builder D: conversation mode integration (`feat/rio-actions-d`)
-AppState toggle `isConversationModeOn`; three-finger tap toggles it; a menu bar item too;
-"stop listening" turns it off; auto-off after 15 min without a command (setting); a soft
-sound on/off; while on, the menu bar teddy shows a listening variant
-(`RioMenuBarIcon.listeningTemplateImage`: teddy plus a small dot/waves) and the corner bear shows an
-awake "listening" pose (ears up, small sound waves) between commands instead of sleeping; pause the listener during Fn/Fn+Ctrl sessions and
-resume after. Each heard command → `RioActionCoordinator` (same feedback as the action key).
-Settings: gesture toggle, auto-off minutes, and an explanation that the mic stays on and
-nothing leaves the Mac until it hears "Rio".
+Wave 1 is merged and wired. Read `Sources/RioActions/RioActionTypes.swift` (contract v2 adds
+the new `RioAction` cases) and `Sources/RioActions/RioActionHandlers.swift` (extension points).
+The lead has already wired everything; each builder **replaces the STUB files it owns** and
+adds new files. Never edit a file another builder owns. Lead-owned files you must not edit:
+`RioActionTypes.swift`, `RioActionHandlers.swift`, `RioActionsWiring.swift`,
+`RioActionCoordinator.swift`, `RioActionExecutor.swift`, `RioActionParser*.swift` (B's), and
+everything under `Sources/RioCompanion/` (F's). If you need a change there, say so in your report.
 
-### Builder E: smart AI actions (`feat/rio-actions-e`)
-`SmartActionResolver: RioSmartResolving` uses the configured LLM (same API key, base URL and
-transport as post-processing, `LLMAPITransport`) with a strict JSON schema / tool list that maps
-ONLY to the closed `RioAction` set; unknown → `[]`. Validate every field; drop anything
-malformed. Then the executors:
-- `sendMessage`: resolve the contact (Contacts framework name match, ask permission on first
-  use) and ALWAYS confirm in a Rio panel showing the recipient and the exact text, with Send
-  (Return) and Cancel (Esc; 20 s timeout = cancel). Send through Messages via NSAppleScript.
-  Needs entitlement `com.apple.security.automation.apple-events` and
-  NSAppleEventsUsageDescription and NSContactsUsageDescription in Info.plist.
-- `createReminder`: EventKit (`requestFullAccessToReminders` on macOS 14+, legacy on 13), with
-  NSRemindersFullAccessUsageDescription and NSRemindersUsageDescription.
-- `selectionTask`: read the selection with the existing selection snapshot; summarize, explain
-  and translate show the answer in a small Rio result panel with Copy; improve replaces the
-  selection the same way Edit Mode does.
-- Settings toggle "Smart actions" (default ON) with the disclosure that unrecognised commands
-  and, for selection tasks, the selected text are sent to the configured LLM provider.
+How the pieces connect (already wired):
+- Parser: after the built-in controls and before window/app verbs, `RioExtraPhrases.parse`
+  tries `RioContextPhrases` (E), `RioVoicePhrases` (G), `RioKnowledgePhrases` (H), then
+  `RioSystemPhrases` (I). Each is pure (no AppKit), is in `TEST_PRODUCTION_SOURCES`, and must
+  only claim phrasings that are clearly its own. "open Chrome", "open YouTube" and "close
+  Spotify" must still reach B's app/site logic. Add a test proving your phrases don't steal
+  B's: the existing ~330 `RioActionParserTests` cases must stay green.
+- Executor: any action B doesn't handle is offered to the handlers in order: Voice (G),
+  Knowledge (H), System (I), Smart (E). Each returns nil when the action isn't its own.
+  `executor` is passed in so a handler can run other actions.
+- Coordinator: if `action.requiresConfirmation`, it awaits `RioConfirmationCenter.shared.confirm`
+  (E) and treats false as cancelled. `RioUndoJournal.shared` (G) gets `willExecute` and
+  `didExecute` for every action. Unknown text goes to `RioSmartResolverFactory.make()` (E).
+- After every action, AppState calls `RioVoice.shared.speak(RioPersonality.spokenLine(for:
+  outcome, hour:))` (G). The corner bear mirrors `RioVoice.shared.isSpeaking/level` and
+  `RioCompanionCenter.shared.{timerRemaining, timerRinging, celebrateCount, isHelpVisible}`
+  (G owns those objects). It also observes `RioConversationMode.shared` (D).
+- The result text (`.done(summary:)` / `.failed(message:)`) is what the bear shows on his speech
+  card and what Rio says, so keep it short, friendly and specific.
+
+### Builder D: conversation mode, mic awareness, offline action key (`feat/rio-actions-d`)
+Owns: `RioConversationMode.swift`, `MicUsageMonitor.swift`, new `RioOfflineTranscriber.swift`,
+and the conversation-mode and offline parts of `Sources/AppState.swift` and `SettingsView.swift`
+(+ `MenuBarView.swift`). D is the ONLY wave-2 builder allowed to edit AppState, SettingsView and
+MenuBarView.
+- `RioConversationMode` (ObservableObject, keep the stub's published API): on/off driven by
+  `ThreeFingerTapMonitor` (C) and a menu bar item "Conversation Mode". Each heard command
+  (`WakeWordListener`, C) goes through the same `RioActionCoordinator` path as the action key,
+  with the same `rioActionPhase` feedback. It turns off on `.stopListening` ("Rio, stop
+  listening"), on a second three-finger tap, from the menu item, and after **5 minutes** without
+  a command. Play a soft sound on/off and have Rio say "I'm listening" / "Going to sleep"
+  through `RioVoice.shared.speak`.
+- While on, the listener pauses during Fn and Fn+Control sessions and resumes after.
+- **Pause during calls (#16):** `MicUsageMonitor.isOtherAppUsingMicrophone()` uses CoreAudio:
+  on macOS 14+, `kAudioHardwarePropertyProcessObjectList` plus
+  `kAudioProcessPropertyIsRunningInput` for processes other than Rio. On older systems, return
+  false. While another app is using the mic, conversation mode is paused (`isPaused`) and
+  resumes when it stops. Poll cheaply, about every 2 s, only while conversation mode is on.
+- **Offline action key (#4):** if `NetworkMonitor` says offline when an Fn+Control session ends,
+  transcribe the recorded file on-device (`SFSpeechURLRecognitionRequest`,
+  `requiresOnDeviceRecognition`) and run it through the coordinator, so built-in commands keep
+  working offline. Fn dictation offline is unchanged.
+- Settings: Conversation Mode card with the three-finger-tap toggle, an explanation (the mic
+  stays on, nothing leaves the Mac until it hears "Rio", it pauses during calls, auto-off after
+  5 min), and a "Start conversation mode" button.
+- Tests: pure state machine for on/off/pause/auto-off/stop-listening; the mic-usage decision
+  logic, with the CoreAudio query behind a protocol.
+
+### Builder E: smart AI, context replies, reading, confirmations (`feat/rio-actions-e`)
+Owns: `RioSmartResolverFactory.swift`, `RioSmartActionHandler.swift`, `RioContextPhrases.swift`,
+`RioConfirmationCenter.swift`, and new `RioSmart*.swift` / `RioContext*.swift` / `RioMessaging*.swift` files.
+- Resolver: uses the configured LLM (same key, base URL, model and `LLMAPITransport` as
+  post-processing; look at how PostProcessingService builds requests) with a strict JSON output
+  schema covering EVERY `RioAction` case except `typeText`, `stopListening`, `pressKeys` and
+  `emptyTrash`. Questions ("what's the capital of…", "how many ounces in a cup") → `.answer(text)`,
+  kept short enough to speak, at most 2 sentences. Validate every field; drop malformed or unknown
+  items; dates are ISO-8601 resolved against the current date and time zone, which you put in the
+  prompt. **Offline (#4):** check `NetworkMonitor` first and fail fast with "I'm offline right
+  now. I can still open apps, control music and windows." On timeout or error: "I couldn't reach
+  my brain just now."
+- Handler: `.answer` → `.done(summary: text)`. `.sendMessage` resolves the contact via the
+  Contacts framework, then sends through Messages with NSAppleScript, passing the recipient and
+  body as AppleScript parameters through `NSAppleEventDescriptor` and never splicing them into
+  source. `.replyInConversation` types into the focused compose field of the frontmost messaging
+  app (Messages, WhatsApp, Slack, Discord, Telegram, Mail…) and presses Return. Refuse if the
+  focused element isn't a text field. `.createReminder` uses EventKit. `.selectionTask` reads the
+  selection via Accessibility (or a copy fallback that restores the clipboard): summarize, explain
+  and translate → `.done(summary:)` (spoken and shown); improve → replace the selection.
+  `.readAloud`: `.selection` (above), `.lastMessage` (newest incoming message text in the
+  frontmost messaging app via Accessibility; best effort per app, and say so when unsupported),
+  `.page` (front browser page text: Safari/Chrome via Accessibility web area, trimmed to about
+  1,500 characters) → `.done(summary: text)` so Rio reads it out.
+- Context phrases (pure): "reply (saying|with|that) X", "tell them X", "read (me) my last
+  message", "read this (page|article)", "read (the|my) selection", "summarize/explain/translate
+  this (to X)", "text|message <name> (saying) X" → `.sendMessage`.
+- `RioConfirmationCenter`: a small non-activating Rio panel near the corner bear with the
+  recipient and the exact text (or "Empty the Trash?"), Send/Confirm (Return) and Cancel (Esc),
+  20 s timeout = cancel. Never auto-confirms.
+- Info.plist: NSContactsUsageDescription, NSAppleEventsUsageDescription,
+  NSRemindersUsageDescription and NSRemindersFullAccessUsageDescription. Entitlements:
+  `com.apple.security.automation.apple-events`.
+- Settings: E may not edit SettingsView. Expose a `RioSmartSettingsSection` view (Smart actions
+  toggle, default ON, with the disclosure that unrecognised commands, and for selection, reading
+  and reply tasks the relevant text, go to the configured LLM provider). The lead embeds it.
+- Tests: resolver JSON → actions (valid, malformed, hostile: never anything outside the set),
+  context phrases, and AppleScript parameter building (no user text in source).
+
+### Builder G: voice, personality, timers, undo, help (`feat/rio-actions-g`)
+Owns: `RioVoice.swift`, `RioPersonality.swift`, `RioCompanionCenter.swift` (keep the published
+API), `RioUndoJournal.swift`, `RioVoiceActionHandler.swift`, `RioVoicePhrases.swift`, and new
+`RioTimer*.swift` / `RioHelp*.swift` / `RioVoice*.swift` files.
+- **Voice:** AVSpeechSynthesizer, on-device and free. Pick the nicest installed English voice
+  (premium or enhanced if present), with a slightly higher pitch and quick rate so he sounds like
+  a small bear. Drive `level` from the synthesizer's word and phoneme callbacks (or the output
+  buffer via `write(_:toBufferCallback:)` and an RMS meter) so the mouth moves. **Silent rule
+  (#5): never speak while `MicUsageMonitor.isOtherAppUsingMicrophone()` is true** (a call is
+  happening); show the line on the bear's card only. Also stay silent while Rio itself is
+  recording. A Settings toggle "Rio talks back" (default ON) lives in `RioVoiceSettingsSection`,
+  which the lead embeds.
+- **Personality (pure, tested):** `spokenLine(for:hour:)` varies phrasing deterministically from
+  a seed (no repeated line twice in a row; inject the seed in tests). Openers like "On it!",
+  "Done!", "Ta-da" for successes, gentle humour for failures ("Hmm, I couldn't find that one.
+  Want to try again?"), time-of-day greetings on the first command of the morning, and
+  occasional bear puns (rare). Keep lines short. Never speak long summaries twice: for
+  `.answer` and `.readAloud` results, speak the text itself. Bump
+  `RioCompanionCenter.celebrateCount` on milestone moments (e.g. the 100th action).
+- **Timers:** `.startTimer` (also parse "10 minute timer", "set a timer for 2 and a half
+  minutes", "timer 30 seconds called pasta"), `.cancelTimer`, `.timerStatus` ("how much time is
+  left"). One timer at a time, shown by the bear holding the clock via
+  `RioCompanionCenter.timerRemaining`. At zero: ring (`timerRinging`), a gentle sound, Rio says
+  "Your pasta timer is done!", and a notification. Stop ringing after 30 s or on any key or
+  "Rio, stop".
+- **Undo:** `RioUndoJournal` records an inverse for undoable actions: openApp → quit it only if
+  it wasn't running before; quitApp → reopen; hideApp → unhide; volume/brightness → previous
+  level; window → previous frame (read the frame before; add a
+  `WindowController+Snapshot.swift` extension); startTimer → cancel; createEvent/createReminder
+  → delete what was created (E's and H's handlers report the created identifier through a small
+  API you define in your own file; coordinate via your report). Non-undoable actions (messages,
+  screenshots, typing) reply "I can't undo that one". `.undoLast` ("Rio, undo", "undo that",
+  "put it back", "never mind") runs the inverse through `executor`.
+- **Help:** `.showHelp` ("what can you do", "help", "what can I say") shows a small non-activating
+  cheat-sheet panel next to the corner bear (`isHelpVisible` true, so he holds up his sign),
+  grouped by category with real example phrases, closes on click/Esc or after 20 s, and Rio says
+  a one-line summary.
+- Tests: personality lines, timer phrase parsing and countdown math (injected clock), the undo
+  inverse table, and the help catalogue (every category non-empty).
+
+### Builder H: files, Spotlight, calendar, clipboard (`feat/rio-actions-h`)
+Owns: `RioKnowledgeActionHandler.swift`, `RioKnowledgePhrases.swift`, and new `RioFiles*.swift`
+/ `RioCalendar*.swift` / `RioClipboard*.swift` files.
+- **Files:** `.openFile` / `.revealFile` via `NSMetadataQuery` (Spotlight) over the home folder:
+  name match first, then content, ranked by last-used date; skip ~/Library and hidden files.
+  Open with the default app or reveal in Finder. Phrases: "open my resume", "open the MAT108
+  homework PDF", "find my tax return", "show me the Hala deck in Finder", "open my downloads
+  folder" (well-known folders map directly). Must never steal "open Chrome".
+- **Calendar (EventKit):** `.calendarAgenda(.today/.tomorrow/.next)` gives a spoken summary
+  ("You've got 3 things today. Next: Call with Ali at 3 PM."); `.joinNextMeeting` finds the
+  next/current event's Zoom/Meet/Teams/FaceTime URL in its URL, location or notes and opens it;
+  `.createEvent` adds to the default calendar. Phrases: "what's next", "what's on my calendar
+  (today|tomorrow)", "join my (next) meeting", "add lunch with Sarah Friday at 1" (parse common
+  relative dates and times deterministically; leave anything vaguer to the smart resolver).
+  Calendar permission on first use (`requestFullAccessToEvents` on 14+). Info.plist:
+  NSCalendarsUsageDescription and NSCalendarsFullAccessUsageDescription.
+- **Clipboard (#11):** `RioClipboardHistory` keeps the last 20 TEXT items IN MEMORY ONLY, never
+  persisted. It polls `NSPasteboard.changeCount` every 0.75 s and skips concealed/transient
+  types (`org.nspasteboard.ConcealedType`, `TransientType`, password managers). Commands:
+  "what's on my clipboard" (`.readCurrent`), "paste the link I copied (earlier)"
+  (`.pasteRecent("link")`, matching link/email/phone/address/number by type, otherwise by
+  words), "show my clipboard history". Pasting puts the item on the pasteboard and sends ⌘V.
+- Tests: phrase parsing (including the not-stealing tests), date and time parsing with a fixed
+  "now", meeting-link extraction, clipboard matching and the concealed-type filter.
+
+### Builder I: keyboard, browser and system control (`feat/rio-actions-i`)
+Owns: `RioSystemActionHandler.swift`, `RioSystemPhrases.swift`, and new `RioKeyboard*.swift` /
+`RioSystem*.swift` files.
+- **Keys (#9):** `.pressKeys(KeyCombo)` posts CGEvents for allow-listed keys only
+  (`KeyCombo.allowedKeys`). Phrases: "press command T", "press escape", "hit enter", "command
+  shift 4", "select all", "copy", "paste", "undo that typing"… Never conflict with G's "undo".
+  Only "undo typing" / "press command Z" map to keys.
+- **Browser (#9):** `.browser(...)` maps to the standard shortcuts in the frontmost app (⌘T, ⌘W,
+  ⇧⌘T, ⌃Tab, ⌃⇧Tab, ⌘[, ⌘], ⌘R, ⌘F; scrolling via scroll-wheel CGEvents or Space/⇧Space;
+  top/bottom via ⌘↑/⌘↓). Phrases: "new tab", "close this tab", "reopen the tab", "next/previous
+  tab", "go back", "go forward", "refresh", "scroll down/up", "scroll to the top/bottom", "find
+  on page".
+- **System (#10):** Wi-Fi on/off via `/usr/sbin/networksetup -setairportpower <device> on|off`
+  (device discovered with `-listallhardwareports`, fixed args only). Bluetooth via IOBluetooth's
+  `IOBluetoothPreferenceSetControllerPowerState`, loaded with dlsym and failing gracefully. Dark
+  mode via NSAppleScript to System Events (`tell appearance preferences to set dark mode to
+  true/false`; fixed source). Night Shift via the CBBlueLightClient private class, dlopen and
+  graceful failure. Brightness up/down/set via DisplayServices private symbols with dlsym and a
+  graceful failure ("I can't change brightness on this display"). Battery: IOKit power sources
+  ("You're at 64%, charging, about 1 hour to full"). Empty Trash: Finder via NSAppleScript, with
+  fixed source; the coordinator already asks for confirmation. Phrases: "turn off wifi",
+  "bluetooth on", "dark mode on", "turn on night shift", "brightness up / to 50", "how much
+  battery do I have", "empty the trash".
+- Tests: phrase parsing (including the not-stealing tests), key-combo parsing against the
+  allow list (hostile input like "press command q twice then rm" → nothing), and argument
+  builders.
 
 ## Rules for every builder
 - Read `AGENTS.md` first and follow it. No new dependencies, no SPM/Xcode project. Swift 6.2
@@ -265,7 +424,8 @@ malformed. Then the executors:
   affected APIs, the user's instruction). State them briefly and retry. The user's instruction
   is: "Deploy multiple agents to build this and then you can have a separate agent test it,
   make sure it is accurate, and do an audit of errors and stuff before you give me the final
-  product."
+  product." Wave 2 adds: "Do all that right now before the build goes out and test everything
+  thoroughly."
 - Finish with: files added/changed, test count added, `make check` result, anything
   stubbed, any contract change you need, and anything you could not verify.
 
