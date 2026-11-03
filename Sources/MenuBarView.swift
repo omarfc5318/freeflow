@@ -3,6 +3,7 @@ import SwiftUI
 struct MenuBarView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject private var updateManager = UpdateManager.shared
+    @ObservedObject private var conversationMode = RioConversationMode.shared
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
@@ -117,6 +118,10 @@ struct MenuBarView: View {
                 appState.toggleRecording()
             }
             .disabled(appState.isTranscribing)
+
+            Button(conversationMode.isOn ? "Stop Conversation Mode" : "Conversation Mode") {
+                conversationMode.toggleFromMenu()
+            }
 
             if let hotkeyError = appState.hotkeyMonitoringErrorMessage {
                 Divider()

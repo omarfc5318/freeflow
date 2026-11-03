@@ -37,6 +37,8 @@ struct FreeFlowTests {
         WindowGeometryTests.run()
         TapGestureDetectorTests.run()
         WakePhraseExtractorTests.run()
+        RioConversationCoreTests.run()
+        MicUsageCoreTests.run()
         AppTextInsertionCoreTests.run()
         AppTextInsertionDispatchTests.run()
         RioActionParserTests.run()

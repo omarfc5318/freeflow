@@ -724,6 +724,9 @@ struct GeneralSettingsView: View {
                 SettingsCard("Rio Actions", icon: "bolt.fill") {
                     rioActionsSection
                 }
+                SettingsCard("Conversation Mode", icon: "waveform") {
+                    conversationModeSection
+                }
                 SettingsCard("Rio in the Corner", icon: "pawprint.fill") {
                     RioCompanionSettingsSection()
                 }
@@ -1253,6 +1256,10 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.orange)
             }
         }
+    }
+
+    private var conversationModeSection: some View {
+        ConversationModeSettings(appState: appState)
     }
 
     private var commandModeSection: some View {
@@ -2957,5 +2964,43 @@ struct VoiceMacroEditorView: View {
                 expandsInline = m.expandsInline
             }
         }
+    }
+}
+
+
+/// The Conversation Mode card: the three-finger-tap switch, what the mode does, and a button to
+/// start or stop it right now.
+private struct ConversationModeSettings: View {
+    @ObservedObject var appState: AppState
+    @ObservedObject private var mode = RioConversationMode.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle("Three-finger tap toggles conversation mode", isOn: $appState.conversationTapEnabled)
+
+            Text("Tap the trackpad with three fingers and Rio keeps the microphone on, so you can keep giving commands without touching the keyboard or mouse. Start each one with \"Rio\" (\"Rio, open Chrome\"). Everything is recognised on this Mac and nothing leaves it until Rio hears its name. It pauses while another app is using the microphone, such as a call, and turns itself off after 5 minutes without a command or when you say \"Rio, stop listening\".")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Button(mode.isOn ? "Stop conversation mode" : "Start conversation mode") {
+                    if mode.isOn { mode.stop(.settings) } else { mode.start() }
+                }
+                Text(statusLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let message = mode.statusMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private var statusLine: String {
+        if !mode.isOn { return "Off" }
+        return mode.isPaused ? "On, paused" : "Listening for \"Rio\""
     }
 }
