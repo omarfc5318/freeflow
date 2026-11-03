@@ -3367,8 +3367,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
                                 shouldPressEnter: shouldPressEnterAfterPaste,
                                 useOriginalField: useOriginalFieldInsertion
                             )
-                            // A message sent with Enter leaves nothing to correct.
-                            if self.learnFromCorrectionsEnabled && !shouldPressEnterAfterPaste {
+                            // A message sent with Enter leaves nothing to correct, and Edit Mode
+                            // output is a rewrite of the user's own text, not a dictation to learn from.
+                            if self.learnFromCorrectionsEnabled && !shouldPressEnterAfterPaste && !sessionIntent.isCommandMode {
                                 self.correctionWatcher.start(transcript: trimmedFinalTranscript)
                             }
                             self.recordUsage(spokenText: trimmedRawTranscript, seconds: recordedSeconds)

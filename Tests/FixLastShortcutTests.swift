@@ -22,6 +22,7 @@ enum FixLastShortcutTests {
         testBackendResetDoesNotFire()
         testNeverConsumesModifierEvents()
         testKeyBindingFiresOnPress()
+        testMouseDownDuringPressBlocksTap()
     }
 
     private static func play(
@@ -137,5 +138,16 @@ enum FixLastShortcutTests {
             .keyChanged(keyCode: 3, isDown: true, isRepeat: false)
         ], configuration: custom)
         TestSupport.expectEqual(result.events, [.fixLastTriggered])
+    }
+
+    private static func testMouseDownDuringPressBlocksTap() {
+        TestSupport.expect(
+            ModifierTapMouseGuard.mouseDownedDuringPress(secondsSincePress: 0.4, secondsSinceLastMouseDown: 0.1),
+            "A click after the modifier went down is a Cmd-click"
+        )
+        TestSupport.expect(
+            !ModifierTapMouseGuard.mouseDownedDuringPress(secondsSincePress: 0.4, secondsSinceLastMouseDown: 30),
+            "An older click does not block a clean tap"
+        )
     }
 }

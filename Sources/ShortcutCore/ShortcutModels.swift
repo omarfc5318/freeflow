@@ -571,3 +571,14 @@ struct ShortcutBinding: Codable, Hashable, Identifiable, Equatable {
         (.function, "Fn 🌐", [(63, "Fn 🌐")])
     ]
 }
+
+/// A lone modifier tap (Fix Last on Right Command) must not fire when the key was used for
+/// Cmd-click. The event tap does not see mouse events, so the caller compares ages instead.
+enum ModifierTapMouseGuard {
+    /// True when a mouse button went down after the modifier was pressed.
+    /// - `secondsSincePress`: how long ago the modifier went down.
+    /// - `secondsSinceLastMouseDown`: how long ago the most recent mouse-button press was.
+    static func mouseDownedDuringPress(secondsSincePress: TimeInterval, secondsSinceLastMouseDown: TimeInterval) -> Bool {
+        secondsSinceLastMouseDown < secondsSincePress
+    }
+}

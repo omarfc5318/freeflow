@@ -29,6 +29,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/LLMAPITransport.swift \
 	Sources/LLMCooldownManager.swift \
 	Sources/ManualCorrectionCore.swift \
+	Sources/MishearingTallyCore.swift \
 	Sources/ModelConfiguration.swift \
 	Sources/OriginalFieldInsertionPreference.swift \
 	Sources/PostProcessingService.swift \
@@ -52,6 +53,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/TeddyMilestoneCore.swift \
 	Sources/UpdateManager.swift \
 	Sources/UsageStatsCore.swift \
+	Sources/VocabularyMergeCore.swift \
 	Sources/WhisperBoostCore.swift \
 	Sources/ShortcutCore/DictationShortcutSessionController.swift \
 	Sources/ShortcutCore/ShortcutMatcher.swift \
