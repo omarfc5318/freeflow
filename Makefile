@@ -63,6 +63,14 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioActionParser+Controls.swift \
 	Sources/RioActions/RioActionParser+Windows.swift \
 	Sources/RioActions/RioTextTools.swift \
+	Sources/RioActions/RioCalendarPhrases.swift \
+	Sources/RioActions/RioCalendarSummary.swift \
+	Sources/RioActions/RioClipboardCore.swift \
+	Sources/RioActions/RioDateTimeParser.swift \
+	Sources/RioActions/RioFilesPhrases.swift \
+	Sources/RioActions/RioFilesQuery.swift \
+	Sources/RioActions/RioFilesRanking.swift \
+	Sources/RioActions/RioMeetingLinks.swift \
 	Sources/RioActions/RioWebURLs.swift \
 	Sources/RecordingTimerPreference.swift \
 	Sources/RioCompanion/RioCompanionMachine.swift \
