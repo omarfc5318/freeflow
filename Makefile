@@ -15,6 +15,11 @@ TEST_RUNNER = $(BUILD_DIR)/FreeFlowTests
 TEST_CONTEXT_HARNESS = $(BUILD_DIR)/ContextCaptureHarness.swift
 TEST_DISPATCH_HARNESS = $(BUILD_DIR)/AppTextInsertionDispatchHarness.swift
 TEST_PRODUCTION_SOURCES = \
+	Sources/RioActions/RioActionTypes.swift \
+	Sources/RioActions/TapGestureDetector.swift \
+	Sources/RioActions/WakePhraseExtractor.swift \
+	Sources/RioActions/WindowAppNameResolver.swift \
+	Sources/RioActions/WindowGeometry.swift \
 	Sources/APIConfigurationDraft.swift \
 	Sources/AppContextService.swift \
 	Sources/AppName.swift \
@@ -119,7 +124,7 @@ endif
 	@plutil -replace CFBundleIdentifier -string "$(BUNDLE_ID)" "$(CONTENTS)/Info.plist"
 	@cp $(ICON_ICNS) "$(RESOURCES)/AppIcon.icns"
 	@plutil -replace NSMicrophoneUsageDescription -string "$(APP_NAME) needs microphone access to transcribe your speech." "$(CONTENTS)/Info.plist"
-	@plutil -replace NSSpeechRecognitionUsageDescription -string "$(APP_NAME) needs speech recognition to convert your voice to text." "$(CONTENTS)/Info.plist"
+	@plutil -replace NSSpeechRecognitionUsageDescription -string "$(APP_NAME) uses speech recognition to turn your voice into text, and for on-device listening for \"Rio\" in conversation mode. Conversation mode listening never leaves your Mac." "$(CONTENTS)/Info.plist"
 	@plutil -replace NSAccessibilityUsageDescription -string "$(APP_NAME) needs accessibility access to detect the text cursor position and paste transcribed text." "$(CONTENTS)/Info.plist"
 	@codesign --force --options runtime --sign "$(CODESIGN_IDENTITY)" --entitlements FreeFlow.entitlements "$(APP_BUNDLE)"
 	@echo "Built $(APP_BUNDLE)"

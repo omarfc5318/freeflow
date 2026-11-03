@@ -25,7 +25,7 @@
     <key>NSMicrophoneUsageDescription</key>
     <string>FreeFlow needs microphone access to transcribe your speech.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>FreeFlow needs speech recognition to convert your voice to text.</string>
+    <string>Rio Dictate uses speech recognition to turn your voice into text, and for on-device listening for "Rio" in conversation mode. Conversation mode listening never leaves your Mac.</string>
     <key>NSAccessibilityUsageDescription</key>
     <string>FreeFlow needs accessibility access to detect the text cursor position and paste transcribed text.</string>
 </dict>
