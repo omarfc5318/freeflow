@@ -24,6 +24,24 @@ struct TeddyBodyPose: Equatable {
     enum PawShape: Equatable {
         case round
         case thumbsUp
+        /// A clenched fist for a punch (curled fingers, no thumb up).
+        case fist
+    }
+
+    /// Something held in the right paw.
+    enum Prop: Equatable {
+        case none
+        case microphone
+        case coffeeMug
+        /// A round alarm clock showing `text` ("4:59"); `shaking` while it rings.
+        case alarmClock(text: String, shaking: Bool)
+        /// A sign on a stick with a question mark.
+        case helpSign
+    }
+
+    enum HeadProp: Equatable {
+        case none
+        case nightcap
     }
 
     struct Limb: Equatable {
@@ -37,6 +55,19 @@ struct TeddyBodyPose: Equatable {
         var isBlinking = false
         /// Closes the viewer's-left eye.
         var winks = false
+        // Corner-bear expressions; all default to "no change".
+        enum Eyes: Equatable { case normal, wide, happy }
+        enum Mouth: Equatable { case natural, grin, oh, flat }
+        var eyes: Eyes = .normal
+        var mouth: Mouth = .natural
+        /// Angry brows and a frown.
+        var grumpy = false
+        var raisedBrows = false
+        var isThinking = false
+        /// Both eyes shut, as when asleep.
+        var eyesClosed = false
+        /// Lifts the ears (positive is up, in head grid points).
+        var earLift: CGFloat = 0
     }
 
     var side: Side = .front
@@ -57,6 +88,9 @@ struct TeddyBodyPose: Equatable {
     var face = Face()
     var showsSpeedLines = false
     var showsSparkle = false
+    /// Held in the right paw (the corner bear's microphone).
+    var heldProp: Prop = .none
+    var headProp: HeadProp = .none
 
     // MARK: Dance detail (all default to "no change", so existing poses look the same)
 

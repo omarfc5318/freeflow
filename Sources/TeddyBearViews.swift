@@ -193,6 +193,7 @@ final class TeddyTripController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
+        panel.sharingType = RioCompanionPrivacy.sharingType
         panel.contentView = NSHostingView(rootView: TeddyTripView(start: Date(), routine: routine, outfit: outfit))
         panel.orderFrontRegardless()
         self.panel = panel

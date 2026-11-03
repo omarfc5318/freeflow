@@ -25,6 +25,33 @@ struct TeddyFace: Equatable {
     var raisedBrows = false
     /// Small round glasses (edit mode).
     var glasses = false
+    /// Both eyes shut in a gentle curve (asleep).
+    var eyesClosed = false
+    /// Lifts both ears (positive is up, in grid points): ears pricked.
+    var earLift: CGFloat = 0
+    /// Angry brows and a frown.
+    var grumpy = false
+}
+
+extension TeddyFace.Eyes {
+    init(_ style: TeddyBodyPose.Face.Eyes) {
+        switch style {
+        case .normal: self = .normal
+        case .wide: self = .wide
+        case .happy: self = .happy
+        }
+    }
+}
+
+extension TeddyFace.Mouth {
+    init(_ style: TeddyBodyPose.Face.Mouth) {
+        switch style {
+        case .natural: self = .natural
+        case .grin: self = .grin
+        case .oh: self = .oh
+        case .flat: self = .flat
+        }
+    }
 }
 
 // The head is shared by the pill bear and the full-body teddy, so the face matches everywhere.
@@ -54,9 +81,9 @@ extension TeddyArt {
         case .hoodie:
             sticker(&graphics, Path(ellipseIn: CGRect(x: 2.9, y: 5.5, width: 26.2, height: 25.5)), TeddyPalette.hoodie, rim: 1.2)
             drawFurDisc(in: &graphics)
-            drawEars(in: &graphics, innerEars: true, clipsInsideHood: true)
+            drawEars(in: &graphics, innerEars: true, clipsInsideHood: true, lift: face.earLift)
         case .suit:
-            drawEars(in: &graphics, innerEars: true, clipsInsideHood: false)
+            drawEars(in: &graphics, innerEars: true, clipsInsideHood: false, lift: face.earLift)
             drawFurDisc(in: &graphics)
         }
         if faceShift == 0 {
@@ -124,14 +151,15 @@ extension TeddyArt {
 
     /// Ears behind the head. With the hood up they are clipped to the part outside the hood
     /// opening, so they poke out around it.
-    static func drawEars(in graphics: inout GraphicsContext, innerEars: Bool, clipsInsideHood: Bool) {
+    static func drawEars(in graphics: inout GraphicsContext, innerEars: Bool, clipsInsideHood: Bool, lift: CGFloat = 0) {
         var ears = graphics
         if clipsInsideHood {
             var mask = Path(CGRect(x: -20, y: -20, width: 90, height: 90))
             mask.addPath(circle(headCenter, 11.7))
             ears.clip(to: mask, style: FillStyle(eoFill: true))
         }
-        for center in earCenters {
+        for base in earCenters {
+            let center = CGPoint(x: base.x + (base.x < 16 ? -lift * 0.25 : lift * 0.25), y: base.y - lift)
             fill(&ears, circle(center, 5 + outline), TeddyPalette.ink)
             fill(&ears, circle(center, 5), TeddyPalette.fur)
             if innerEars {
@@ -153,6 +181,7 @@ extension TeddyArt {
 
         for x in eyeXs { drawEye(in: &graphics, x: x, face: face, gaze: gaze) }
         if face.raisedBrows { drawBrows(in: &graphics) }
+        if face.grumpy { drawGrumpyBrows(in: &graphics) }
 
         // Nose, with a little shine.
         fill(&graphics, Path(ellipseIn: CGRect(x: 13.9, y: 19.3, width: 4.2, height: 2.8)), TeddyPalette.ink)
@@ -163,6 +192,14 @@ extension TeddyArt {
 
     private static func drawEye(in graphics: inout GraphicsContext, x: CGFloat, face: TeddyFace, gaze: CGSize) {
         let ink = TeddyPalette.ink
+        if face.eyesClosed {
+            // Asleep: a soft downward curve with a tiny lash tick.
+            var lid = Path()
+            lid.move(to: CGPoint(x: x - 1.9, y: 14.8))
+            lid.addQuadCurve(to: CGPoint(x: x + 1.9, y: 14.8), control: CGPoint(x: x, y: 17.0))
+            stroke(&graphics, lid, ink, width: 1.2)
+            return
+        }
         switch face.eyes {
         case .happy:
             var arc = Path()
@@ -183,7 +220,7 @@ extension TeddyArt {
                 stroke(&graphics, lid, ink, width: 1.2)
                 return
             }
-            let height: CGFloat = face.isBlinking ? 0.5 : 3.3
+            let height: CGFloat = face.isBlinking ? 0.5 : (face.grumpy ? 2.2 : 3.3)
             let eye = CGRect(x: x - 1.65 + gaze.width, y: 15 - height / 2 + gaze.height, width: 3.3, height: height)
             fill(&graphics, Path(ellipseIn: eye), ink)
             if !face.isBlinking {
@@ -201,8 +238,25 @@ extension TeddyArt {
         }
     }
 
+    /// Slanted brows, inner ends low, over narrowed eyes.
+    private static func drawGrumpyBrows(in graphics: inout GraphicsContext) {
+        for (x, inward) in [(eyeXs[0], 1.0), (eyeXs[1], -1.0)] as [(CGFloat, CGFloat)] {
+            var brow = Path()
+            brow.move(to: CGPoint(x: x - inward * 2.2, y: 11.4))
+            brow.addLine(to: CGPoint(x: x + inward * 2.0, y: 13.3))
+            stroke(&graphics, brow, TeddyPalette.ink, width: 1.5)
+        }
+    }
+
     private static func drawMouth(in graphics: inout GraphicsContext, _ face: TeddyFace) {
         let ink = TeddyPalette.ink
+        if face.grumpy {
+            var frown = Path()
+            frown.move(to: CGPoint(x: 14.0, y: 24.4))
+            frown.addQuadCurve(to: CGPoint(x: 18.0, y: 24.4), control: CGPoint(x: 16, y: 22.6))
+            stroke(&graphics, frown, ink, width: 0.9)
+            return
+        }
         switch face.mouth {
         case .grin:
             var grin = Path()

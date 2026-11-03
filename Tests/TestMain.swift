@@ -32,6 +32,7 @@ struct FreeFlowTests {
         TeddyDougieTests.run()
         TeddySongSyncTests.run()
         SpokenLookTests.run()
+        RioCompanionCoreTests.run()
         LanguageProbeTests.run()
         WindowGeometryTests.run()
         TapGestureDetectorTests.run()
