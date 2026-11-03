@@ -520,6 +520,15 @@ attachments + Mail + Downloads + Spotlight, filtered by person and time), #39 cl
 on the Mac only, off by default, with a visible recording badge on the bear; "what did they just
 say", "action items").
 
+## Wave 5 (after wave 4)
+
+Owner picks: #44 voice-edit the last dictation ("Rio, make that more formal / shorter / add a
+thank-you / fix the grammar", rewritten in place without selecting), #48 scheduled commands
+("every weekday at 8:50 open Zoom and my MAT108 notes", "at 5 PM remind me to call Ali and open
+WhatsApp"), #49 triggers (external monitor plugged in, AirPods connected, joined a Wi-Fi network →
+run commands), #52 ("definitely") the corner bear follows the owner to whichever screen they're
+actually working on.
+
 ## Rules for every builder
 - Read `AGENTS.md` first and follow it. No new dependencies, no SPM/Xcode project. Swift 6.2
   toolchain, deployment target macOS 13, `-warnings-as-errors`. Use `#available` for newer APIs.
