@@ -55,13 +55,16 @@ extension AppState {
     }
 
     /// Saves corrections learned from the user's edits and confirms them in the menu bar.
-    func learnVocabulary(from corrections: [LearnedCorrection]) {
+    /// Returns the terms that were new to the vocabulary.
+    @discardableResult
+    func learnVocabulary(from corrections: [LearnedCorrection]) -> [String] {
         let added = addVocabularyTerms(corrections.map(\.corrected))
-        guard !added.isEmpty else { return }
+        guard !added.isEmpty else { return [] }
         let status = "Added \(added.map { "“\($0)”" }.joined(separator: ", ")) to vocabulary"
         statusText = status
         scheduleReadyStatusReset(after: 3, matching: [status])
         Task { @MainActor in VocabularyNotificationManager.shared.flashCheckmark() }
         showTeddyMoment(.learned(TeddyLearnedCard.label(for: added)))
+        return added
     }
 }
