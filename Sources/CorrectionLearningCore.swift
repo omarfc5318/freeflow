@@ -31,9 +31,16 @@ struct CorrectionLearningSession {
     static let maxSpanWords = 400
     /// Normalized edit distance above which a replacement reads as a rewrite, not a fix.
     static let maxDissimilarity = 0.5
+    /// Looser cap for strong vocabulary evidence (names, jargon): speech models mishear these badly.
+    static let maxStrongDissimilarity = 0.75
 
     private(set) var baseline: [UInt16]
     private(set) var span: Range<Int>
+    /// The last state the caller declared stable (see `markSettled`); never a half-typed word.
+    private var settledBaseline: [UInt16]
+    private var settledSpan: Range<Int>
+    /// True once an edit destroyed the dictated span (field sent, cleared or merged).
+    private(set) var isSpanLost = false
     private let dictatedWords: [Word]
     private let isKnownWord: (String) -> Bool
 
@@ -53,26 +60,58 @@ struct CorrectionLearningSession {
         }) else { return nil }
         self.baseline = value
         self.span = (end - needle.count)..<end
+        self.settledBaseline = value
+        self.settledSpan = (end - needle.count)..<end
         self.dictatedWords = Self.words(in: value[span])
         self.isKnownWord = isKnownWord
         guard dictatedWords.count <= Self.maxSpanWords else { return nil }
     }
 
-    /// Moves the tracked span to follow a settled field value. Call only with values that
-    /// have stopped changing, so the final comparison never sees a half-typed word.
+    /// Moves the tracked span to follow a settled field value and marks it settled. Call only
+    /// with values that have stopped changing, so the comparison never sees a half-typed word.
     mutating func observe(_ fieldValue: String) -> Outcome {
+        let outcome = track(fieldValue)
+        if outcome == .watching { markSettled() }
+        return outcome
+    }
+
+    /// Follows the dictated span through a field value that may still be changing. Call on every
+    /// polled change: incremental tracking is more accurate than diffing distant states, and it
+    /// keeps the corrected text when the field is cleared right after (fix, then Send).
+    /// On `.finished` the state stays at the last value where the span was still intact.
+    mutating func track(_ fieldValue: String) -> Outcome {
         let current = Array(fieldValue.utf16)
         guard current != baseline else { return .watching }
         let delta = current.count - baseline.count
 
-        guard let newSpan = trackedSpan(in: current, delta: delta), !newSpan.isEmpty else { return .finished }
+        guard let newSpan = trackedSpan(in: current, delta: delta), !newSpan.isEmpty else {
+            isSpanLost = true
+            return .finished
+        }
         baseline = current
         span = newSpan
         return .watching
     }
 
+    /// Declares the tracked state stable (the value stopped changing).
+    mutating func markSettled() {
+        settledBaseline = baseline
+        settledSpan = span
+    }
+
     /// Net replacements between the original dictation and the span's current words.
     func corrections() -> [LearnedCorrection] {
+        corrections(baseline: baseline, span: span)
+    }
+
+    /// What to learn when watching ends: the last intact state if the span was destroyed (that
+    /// is the text the user corrected and sent), otherwise the last settled state, so a word
+    /// still being typed at timeout or focus change is never learned.
+    func finalCorrections() -> [LearnedCorrection] {
+        isSpanLost ? corrections() : corrections(baseline: settledBaseline, span: settledSpan)
+    }
+
+    private func corrections(baseline: [UInt16], span: Range<Int>) -> [LearnedCorrection] {
         let finalWords = Self.words(in: baseline[span])
         guard finalWords.count <= Self.maxSpanWords else { return [] }
         return Self.replacements(from: dictatedWords, to: finalWords).compactMap { candidate in
@@ -123,7 +162,8 @@ struct CorrectionLearningSession {
               corrected.contains(where: { $0.isLetter }),
               corrected != correction.original,
               !Self.looksLikePersonalData(corrected) else { return false }
-        guard Self.dissimilarity(correction.original, corrected) <= Self.maxDissimilarity else { return false }
+        let distance = Self.dissimilarity(correction.original, corrected)
+        guard distance <= Self.maxStrongDissimilarity else { return false }
 
         // "so" → "So" or "paris" → "Paris" is sentence or proper-noun casing, not vocabulary.
         let isFirstLetterCaseFix = correction.original.lowercased() == corrected.lowercased()
@@ -131,14 +171,23 @@ struct CorrectionLearningSession {
         if isFirstLetterCaseFix { return false }
 
         let correctedWords = corrected.split(separator: " ").map(String.init)
+        var hasStrongShape = false
         for (index, word) in correctedWords.enumerated() {
-            if Self.hasDistinctiveShape(word) { return true }
+            if Self.hasDistinctiveShape(word) { hasStrongShape = true }
             // A capital mid-sentence marks a name; at a sentence start it proves nothing.
             let isSentenceInitial = index == 0 && startsSentence
-            if !isSentenceInitial, word.first?.isUppercase == true { return true }
+            if !isSentenceInitial, word.first?.isUppercase == true { hasStrongShape = true }
         }
         // Words the spell checker knows ("their" → "There") are grammar, not vocabulary.
-        return !correctedWords.allSatisfy { isKnownWord($0.lowercased()) }
+        let hasUnknownWord = !correctedWords.allSatisfy { isKnownWord($0.lowercased()) }
+        guard hasStrongShape || hasUnknownWord else { return false }
+        if distance <= Self.maxDissimilarity { return true }
+
+        // Past the general cap only strong evidence passes, and never a swap between two
+        // sets of ordinary dictionary words ("I went" → "We left" is a rewrite).
+        let originalWords = correction.original.split(separator: " ").map(String.init)
+        let swapsKnownWords = !hasUnknownWord && originalWords.allSatisfy { isKnownWord($0.lowercased()) }
+        return !swapsKnownWords
     }
 
     /// Inner capitals, digits or symbols: "iOS", "GPT4", "C++", "Next.js".

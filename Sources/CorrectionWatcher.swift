@@ -26,6 +26,8 @@ final class CorrectionWatcher {
     private var session: CorrectionLearningSession?
     private var pendingValue: String?
     private var pendingSince = Date()
+    private var isPendingSettled = true
+    private static var accessibilityEnabledPIDs = Set<pid_t>()
 
     init(onLearned: @escaping ([LearnedCorrection]) -> Void) {
         self.onLearned = onLearned
@@ -36,12 +38,15 @@ final class CorrectionWatcher {
         guard AXIsProcessTrusted(), !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         self.transcript = transcript
         startedAt = Date()
+        if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier {
+            Self.enableAccessibility(processIdentifier: pid)
+        }
         schedule(generation)
     }
 
     /// Learns from the last settled edit, then drops all captured field text.
     func stop() {
-        let corrections = session?.corrections() ?? []
+        let corrections = session?.finalCorrections() ?? []
         cancel()
         if !corrections.isEmpty { onLearned(corrections) }
     }
@@ -53,6 +58,7 @@ final class CorrectionWatcher {
         element = nil
         session = nil
         pendingValue = nil
+        isPendingSettled = true
     }
 
     private func schedule(_ token: UUID) {
@@ -88,6 +94,7 @@ final class CorrectionWatcher {
         if session != nil {
             element = focused
             pendingValue = nil
+            isPendingSettled = true
         }
     }
 
@@ -99,19 +106,38 @@ final class CorrectionWatcher {
         guard Self.isReadableTextControl(element),
               let value = Self.textValue(of: element),
               value.utf16.count <= Self.maxFieldLength else { return false }
+        guard var session else { return false }
         let now = Date()
         if value != pendingValue {
+            // Track every change so a fix made just before Send is seen; learning from it still
+            // waits for the value to settle unless the span is destroyed (see finalCorrections).
             pendingValue = value
             pendingSince = now
-            return true
+            isPendingSettled = false
+            let outcome = session.track(value)
+            self.session = session
+            return outcome == .watching
         }
-        guard now.timeIntervalSince(pendingSince) >= Self.settleDelay, var session else { return true }
-        let outcome = session.observe(value)
-        self.session = session
-        return outcome == .watching
+        if !isPendingSettled, now.timeIntervalSince(pendingSince) >= Self.settleDelay {
+            session.markSettled()
+            self.session = session
+            isPendingSettled = true
+        }
+        return true
     }
 
     // MARK: Accessibility
+
+    /// Electron/Chromium apps build their accessibility tree only after an assistive client sets
+    /// `AXManualAccessibility` on the app element (unlike AXEnhancedUserInterface, it has no
+    /// window-animation side effects). Once per pid; errors are ignored, and the tree appears
+    /// shortly after, so the repeated locate polls pick the field up.
+    static func enableAccessibility(processIdentifier pid: pid_t) {
+        guard accessibilityEnabledPIDs.insert(pid).inserted else { return }
+        _ = AXUIElementSetAttributeValue(
+            AXUIElementCreateApplication(pid), "AXManualAccessibility" as CFString, kCFBooleanTrue
+        )
+    }
 
     private static func isKnownWord(_ word: String) -> Bool {
         NSSpellChecker.shared.checkSpelling(of: word, startingAt: 0).location == NSNotFound

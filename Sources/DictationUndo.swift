@@ -45,6 +45,8 @@ enum DictationUndo {
     /// Main thread only. Returns nil until the pasted text is in the focused field and ends at
     /// the cursor; fields that can't be read through Accessibility never qualify.
     static func locate(text: String, processIdentifier: pid_t) -> Insertion? {
+        // Electron apps expose no field until asked (cached per pid; the tree builds asynchronously).
+        CorrectionWatcher.enableAccessibility(processIdentifier: processIdentifier)
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == processIdentifier,
               let (element, value) = readableFocusedField(),
               let range = UndoDictationCore.rangeEndingAtCursor(

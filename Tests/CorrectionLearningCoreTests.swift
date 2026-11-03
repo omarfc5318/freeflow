@@ -5,7 +5,8 @@ enum CorrectionLearningCoreTests {
     private static let knownWords: Set<String> = [
         "meet", "with", "at", "noon", "the", "team", "is", "deploying", "to", "there", "their",
         "send", "sent", "it", "glad", "happy", "so", "we", "ship", "today", "paris", "react",
-        "john", "bob", "said", "hi", "and", "email", "call", "me"
+        "john", "bob", "said", "hi", "and", "email", "call", "me", "hello", "i", "went", "left", "home",
+        "yesterday", "dough", "he"
     ]
 
     static func run() {
@@ -24,6 +25,11 @@ enum CorrectionLearningCoreTests {
         testAllowsOnlyWhitespaceBeforeCaret()
         testExtendingLastWord()
         testDissimilarity()
+        testFixThenImmediateClearIsLearned()
+        testHalfTypedWordThenFocusChangeIsNotLearned()
+        testSettledStateIsUsedWhenWatchingTimesOut()
+        testLooseCapForStrongVocabulary()
+        testLooseCapStillRejectsRewrites()
     }
 
     private static func session(_ transcript: String, field: String, caret: Int? = nil) -> CorrectionLearningSession? {
@@ -177,5 +183,65 @@ enum CorrectionLearningCoreTests {
         TestSupport.expectApproximatelyEqual(CorrectionLearningSession.dissimilarity("Jon", "John"), 0.25)
         TestSupport.expectApproximatelyEqual(CorrectionLearningSession.dissimilarity("abc", "abc"), 0)
         TestSupport.expect(CorrectionLearningSession.dissimilarity("happy", "glad") > 0.5, "Unrelated words differ")
+    }
+
+    // MARK: Fix-then-send and half-typed words
+
+    private static func testFixThenImmediateClearIsLearned() {
+        var learner = session("Meet Jon.", field: "Meet Jon.")!
+        TestSupport.expectEqual(learner.track("Meet John."), .watching)
+        TestSupport.expectEqual(learner.track(""), .finished)
+        TestSupport.expect(learner.isSpanLost, "A cleared field loses the span")
+        TestSupport.expectEqual(learner.finalCorrections(), fix("Jon", "John"))
+    }
+
+    private static func testHalfTypedWordThenFocusChangeIsNotLearned() {
+        var learner = session("Meet Jon.", field: "Meet Jon.")!
+        TestSupport.expectEqual(learner.track("Meet Jhon."), .watching)
+        TestSupport.expectEqual(learner.finalCorrections(), [])
+    }
+
+    private static func testSettledStateIsUsedWhenWatchingTimesOut() {
+        var learner = session("Meet Jon and Sara", field: "Meet Jon and Sara")!
+        _ = learner.track("Meet John and Sara")
+        learner.markSettled()
+        _ = learner.track("Meet John and Sar")
+        TestSupport.expectEqual(learner.finalCorrections(), fix("Jon", "John"))
+    }
+
+    // MARK: Loosened filter
+
+    private static func testLooseCapForStrongVocabulary() {
+        TestSupport.expectEqual(
+            learned("ship it to Hello today", field: "ship it to Hello today", edits: ["ship it to Hala today"]),
+            fix("Hello", "Hala")
+        )
+        TestSupport.expectEqual(
+            learned("we ship to super base", field: "we ship to super base", edits: ["we ship to Supabase"]),
+            fix("super base", "Supabase")
+        )
+        TestSupport.expectEqual(
+            learned("said hi to Dough he", field: "said hi to Dough he", edits: ["said hi to Dougie"]),
+            fix("Dough he", "Dougie")
+        )
+        TestSupport.expectEqual(
+            learned("we ship the app for ios", field: "we ship the app for ios", edits: ["we ship the app for iOS"]),
+            fix("ios", "iOS")
+        )
+    }
+
+    private static func testLooseCapStillRejectsRewrites() {
+        TestSupport.expectEqual(
+            learned("send it to their team", field: "send it to their team", edits: ["send it to there team"]),
+            []
+        )
+        TestSupport.expectEqual(
+            learned("yesterday I went home", field: "yesterday I went home", edits: ["yesterday We left home"]),
+            []
+        )
+        TestSupport.expectEqual(
+            learned("so we ship to paris", field: "so we ship to paris", edits: ["so we ship to Paris"]),
+            []
+        )
     }
 }
