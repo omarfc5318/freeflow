@@ -244,6 +244,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let savedCopyAgainCustomShortcutStorageKey = "saved_copy_again_custom_shortcut"
     private let undoLastShortcutStorageKey = "undo_last_shortcut"
     private let savedUndoLastCustomShortcutStorageKey = "saved_undo_last_custom_shortcut"
+    private let fixLastShortcutStorageKey = "fix_last_shortcut"
+    private let savedFixLastCustomShortcutStorageKey = "saved_fix_last_custom_shortcut"
     private let customVocabularyStorageKey = "custom_vocabulary"
     private let transcriptionLanguageStorageKey = "transcription_language"
     private let selectedMicrophoneStorageKey = "selected_microphone_id"
@@ -431,6 +433,19 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @Published private(set) var savedUndoLastCustomShortcut: ShortcutBinding? {
         didSet {
             persistOptionalShortcut(savedUndoLastCustomShortcut, key: savedUndoLastCustomShortcutStorageKey)
+        }
+    }
+
+    @Published var fixLastShortcut: ShortcutBinding {
+        didSet {
+            persistShortcut(fixLastShortcut, key: fixLastShortcutStorageKey)
+            restartHotkeyMonitoring()
+        }
+    }
+
+    @Published private(set) var savedFixLastCustomShortcut: ShortcutBinding? {
+        didSet {
+            persistOptionalShortcut(savedFixLastCustomShortcut, key: savedFixLastCustomShortcutStorageKey)
         }
     }
 
@@ -705,6 +720,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @Published var isTranscribing = false
     @Published var retryingItemIDs: Set<UUID> = []
     @Published var lastTranscript: String = ""
+    /// The text last pasted by a dictation. Unlike undo state it is never cleared, so Fix Last Dictation can use it.
+    @Published var lastDictatedText = ""
     @Published var errorMessage: String?
     @Published var statusText: String = "Ready"
     @Published var hasAccessibility = false
@@ -822,6 +839,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
             forKey: savedUndoLastCustomShortcutStorageKey,
             fallback: undoLastShortcut.isCustom ? undoLastShortcut : nil
         )
+        let fixLastShortcut = Self.loadShortcut(forKey: fixLastShortcutStorageKey).binding ?? .defaultFixLast
+        let savedFixLastCustomShortcut = Self.loadSavedCustomShortcut(
+            forKey: savedFixLastCustomShortcutStorageKey,
+            fallback: fixLastShortcut.isCustom ? fixLastShortcut : nil
+        )
         let customVocabulary = UserDefaults.standard.string(forKey: customVocabularyStorageKey) ?? ""
         let transcriptionLanguage = Self.normalizeTranscriptionLanguage(
             UserDefaults.standard.string(forKey: transcriptionLanguageStorageKey) ?? ""
@@ -930,6 +952,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.savedCopyAgainCustomShortcut = savedCopyAgainCustomShortcut.binding
         self.undoLastShortcut = undoLastShortcut
         self.savedUndoLastCustomShortcut = savedUndoLastCustomShortcut.binding
+        self.fixLastShortcut = fixLastShortcut
+        self.savedFixLastCustomShortcut = savedFixLastCustomShortcut.binding
         self.isCommandModeEnabled = isCommandModeEnabled
         self.commandModeStyle = commandModeStyle
         self.commandModeManualModifier = commandModeManualModifier
@@ -1720,6 +1744,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     var usesFnShortcut: Bool {
         holdShortcut.usesFnKey || toggleShortcut.usesFnKey || copyAgainShortcut.usesFnKey || undoLastShortcut.usesFnKey
+            || fixLastShortcut.usesFnKey
     }
 
     var hasEnabledHoldShortcut: Bool {
@@ -1761,6 +1786,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
             return savedCopyAgainCustomShortcut
         case .undoLast:
             return savedUndoLastCustomShortcut
+        case .fixLast:
+            return savedFixLastCustomShortcut
         }
     }
 
@@ -1814,7 +1841,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
         if role != .undoLast, binding.conflicts(with: undoLastShortcut) {
             return "This shortcut is already used by Undo Last Dictation."
         }
-        if role == .copyAgain || role == .undoLast {
+        if role != .fixLast, binding.conflicts(with: fixLastShortcut) {
+            return "This shortcut is already used by Fix Last Dictation."
+        }
+        if role == .copyAgain || role == .undoLast || role == .fixLast {
             if binding.conflicts(with: holdShortcut) {
                 return "\(role.title) cannot share a shortcut with Hold to Talk."
             }
@@ -1848,6 +1878,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 savedUndoLastCustomShortcut = binding
             }
             undoLastShortcut = binding
+        case .fixLast:
+            if binding.isCustom {
+                savedFixLastCustomShortcut = binding
+            }
+            fixLastShortcut = binding
         }
 
         return nil
@@ -1875,6 +1910,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
         if !undoLastShortcut.isDisabled && undoLastShortcut.modifiers.contains(manualModifier) {
             return "That modifier is already part of the Undo Last Dictation shortcut."
+        }
+        if !fixLastShortcut.isDisabled && fixLastShortcut.modifiers.contains(manualModifier) {
+            return "That modifier is already part of the Fix Last Dictation shortcut."
         }
         // Modifier-only bindings carry identity in keyCode, not modifiers.
         if !holdBinding.isDisabled,
@@ -1983,6 +2021,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
             toggle: toggleShortcut,
             copyAgain: copyAgainShortcut,
             undoLast: undoLastShortcut,
+            fixLast: fixLastShortcut,
             permittedAdditionalExactMatchModifiers: permittedAdditionalExactMatchModifiers
         )
     }
@@ -2009,6 +2048,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
         if event == .undoLastTriggered {
             undoLastDictation()
+            return
+        }
+        if event == .fixLastTriggered {
+            fixLastDictation()
             return
         }
 
@@ -3308,6 +3351,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                                 }
                             }
 
+                            if !sessionIntent.isCommandMode { self.lastDictatedText = trimmedFinalTranscript }
                             // Edit Mode replaces a selection and Enter sends the text: neither can be undone here.
                             self.recordInsertionForUndo(
                                 sessionIntent.isCommandMode || shouldPressEnterAfterPaste ? nil : trimmedFinalTranscript,

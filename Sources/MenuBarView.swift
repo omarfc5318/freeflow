@@ -138,6 +138,13 @@ struct MenuBarView: View {
 
             Divider()
 
+            Button(appState.fixLastShortcut.isDisabled
+                ? "Fix Last Dictation…"
+                : "Fix Last Dictation…  (\(appState.fixLastShortcut.displayName))") {
+                appState.fixLastDictation()
+            }
+            .disabled(appState.lastDictatedText.isEmpty)
+
             if !appState.lastTranscript.isEmpty && !appState.isRecording && !appState.isTranscribing {
                 Button(appState.copyAgainShortcut.isDisabled
                     ? "Paste Again"
