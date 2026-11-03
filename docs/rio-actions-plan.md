@@ -509,6 +509,12 @@ back, but ONLY when the owner turns OFF "Trust conversation mode" in Settings. *
 spoken "yes"; the toggle is there to switch the check on. Action-key commands are
 unaffected (the key itself proves it was the owner).
 
+## Fix-round notes (collected by the lead during merges)
+- "go back" alone is B's media "previous track". When a browser is frontmost it should mean page
+  back. Make the executor context-aware (browser frontmost → `.browser(.back)`).
+- Builder I: Night Shift "enabled vs active" semantics, scroll direction and Wi-Fi via
+  `networksetup` without admin all need live confirmation.
+
 ## Wave 4 (after this build is tested and shipped)
 
 Owner picks: #32 text Rio from your iPhone (Messages from the owner's own handle only, risky
