@@ -408,6 +408,93 @@ Owns: `RioSystemActionHandler.swift`, `RioSystemPhrases.swift`, and new `RioKeyb
   allow list (hostile input like "press command q twice then rm" → nothing), and argument
   builders.
 
+## Wave 3 (contract v3; starts after wave 2 is merged)
+
+Owner picks (2026-11-03): #19 screen understanding, #20 click by voice, #21 multi-step tasks,
+#22 memory, #26 email drafts, #27 notes, #28 instant math and conversions, #30 live translator
+("I should just say, 'Translate what is being said,' and then it does that because sometimes I
+will be prompting in Arabic"). Arabic prompts must also work as commands.
+
+Contract v3 (the lead adds these to `RioAction` before wave 3 starts):
+`describeScreen(question: String?)`, `click(label: String, ordinal: Int?)`,
+`fillField(label: String, text: String)`, `runTask(goal: String)`,
+`remember(fact: String)`, `recall(query: String)`, `forget(query: String)`,
+`draftEmail(to: String?, subject: String?, body: String)`, `addNote(text: String)`,
+`calculate(expression: String)`, `startTranslation`, `stopTranslation`, `speakLastTranslation`.
+
+### Builder J: screen understanding and click by voice (`feat/rio-actions-j`)
+- #19 `.describeScreen`: capture the frontmost window with ScreenCaptureKit (Rio already has
+  Screen Recording for context), downscale to ≤1280 px, send it with the question to the
+  configured LLM's vision-capable model (on Groq a Llama 4 vision model; read the provider config,
+  and if no vision model is available, fail with a friendly message), and answer in ≤3 spoken
+  sentences. Phrases: "what's on my screen", "what does this error mean", "explain this",
+  "summarize this window", "what am I looking at". Capture never includes Rio's own windows.
+  Privacy disclosure plus a toggle (default ON).
+- #20 `.click` / `.fillField`: walk the frontmost app's Accessibility tree (depth and time capped,
+  e.g. 2,000 elements / 400 ms), find pressable elements (buttons, links, checkboxes, menu items,
+  tabs, rows) whose title, description or label best matches (exact > prefix > fuzzy, ordinal
+  for "the second…"), then AXPress. If several match equally, the bear says "Which one?" and
+  briefly numbers them on screen; "Rio, the second one" picks. `.fillField` focuses the text
+  field matching the label and types. Phrases: "click Send", "press the blue Submit button",
+  "click the second link", "check remember me", "type hello into the search box". Refuse to
+  click anything inside Rio's own windows or System Settings' privacy panes.
+
+### Builder K: multi-step tasks (`feat/rio-actions-k`)
+- #21 `.runTask(goal:)` ("Rio, find a flight to Doha next Friday under $800", "fill in this form
+  with my details", "open my last email from Professor Kim and draft a reply"). An agent loop: each
+  step takes a screenshot of the front window plus a compact Accessibility outline, sends them to
+  the LLM, and gets back ONE next action from the closed `RioAction` set (open URL, click,
+  fillField, pressKeys, browser, typeText, scroll) or `done(summary)` or `ask(question)`. Then it
+  executes through the normal executor, so every safety rule still applies. Limits: 25 steps,
+  3 minutes, stop on "Rio, stop" / Esc / Fn+Control. **Before any step that would buy, pay,
+  submit, send, delete, book or sign in, ask the user via RioConfirmationCenter, with the exact
+  step.** The bear shows a small progress card ("Step 4: searching flights"). Never types
+  passwords, card numbers or one-time codes; it asks the user to do those, then continues.
+- Tests: the step protocol parsing and validation (hostile outputs), the risky-step classifier,
+  and the loop limits with a fake model.
+
+### Builder L: memory, notes, email drafts, math (`feat/rio-actions-l`)
+- #22 memory: `remember` / `recall` / `forget`, stored locally in Application Support (JSON,
+  file protection, never sent anywhere except as the matched fact when answering). Phrases:
+  "remember my locker code is 4321", "what's my locker code", "forget my locker code", "what do
+  you remember about me". Recall is local fuzzy match first; the smart resolver may route
+  natural questions to `.recall`.
+- #26 `.draftEmail`: open a compose window in the default mail app (Mail via NSAppleScript with
+  parameters, never user text in the source; Gmail in the browser via a
+  `https://mail.google.com/mail/?view=cm&to=…&su=…&body=…` URL when the default handler is a
+  browser). NEVER sends. The smart resolver writes the body from "email Professor Kim that I'll
+  be late to office hours"; resolve the recipient from Contacts when it's a name.
+- #27 `.addNote`: append to an Apple Notes note named "Rio Notes" (create it if missing) via
+  NSAppleScript with parameters. Phrases: "note: …", "take a note …", "add to my notes …".
+- #28 `.calculate`: a pure, local evaluator. Arithmetic with + − × ÷ ^ %, parentheses, "15% of
+  84", "a third of 90", spoken numbers ("two hundred and five"), unit conversions (length, mass,
+  volume, temperature, speed, data, time) and time zones ("9 AM Doha time here", "what time is
+  it in Doha"). Instant and offline. Never `NSExpression` on raw user text; write a small
+  tokenizer and parser.
+- Tests for all four (memory store round-trip with a temp dir, phrase parsing, the email URL
+  and AppleScript parameter builders, and 80+ calculator cases).
+
+### Builder M: live translator and Arabic commands (`feat/rio-actions-m`)
+- #30 translator mode: "translate what's being said" / "start translating" →
+  `.startTranslation`. Mic chunks are cut on pauses (VAD, 0.6–6 s), each sent to Groq Whisper
+  (the same transcription service/config Rio uses) with language detection, then translated by
+  the configured LLM. Non-English → English, English → Arabic (setting: "my other language",
+  default Arabic). Live subtitles in a small caption panel next to the corner bear (last 3 lines,
+  original small and translation large, excluded from screen capture by default like the bear).
+  "say it" → `.speakLastTranslation` speaks the last translation through `RioVoice` in that
+  language's voice. "stop translating" / Esc / three-finger tap → stop; auto-stop after 10 min of
+  silence. Pauses while Rio is speaking (no feedback loop) and while dictation or the action key
+  is active. The bear wears headphones while it's on (expose `RioTranslatorMode.shared.isOn` for
+  the companion; the lead wires the art if needed). Disclosure: audio is sent to the
+  transcription provider while translating.
+- Arabic (and any non-English) commands: on the action key and in conversation mode, when the
+  transcript isn't English (the existing spoken-language detection or Whisper's language),
+  translate it to English (Groq Whisper's `/audio/translations` for audio, or the LLM for text)
+  BEFORE parsing, so "ريو افتح كروم" → "Rio open Chrome". Add a small built-in Arabic verb table
+  for the common commands (افتح/شغل/سكر/علي الصوت/وطي الصوت…) so those work even offline.
+- Tests: chunking and VAD logic on synthetic buffers, the direction rules, the Arabic verb table,
+  and that English transcripts are never sent for translation.
+
 ## Rules for every builder
 - Read `AGENTS.md` first and follow it. No new dependencies, no SPM/Xcode project. Swift 6.2
   toolchain, deployment target macOS 13, `-warnings-as-errors`. Use `#available` for newer APIs.
