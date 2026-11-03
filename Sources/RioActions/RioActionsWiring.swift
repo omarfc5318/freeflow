@@ -1,12 +1,22 @@
 import Foundation
 
-/// The one place AppState gets its Rio action pipeline from. The lead rewrites this at merge
-/// to build the real parser (with `InstalledAppCatalog.scan()`), executor and window controller.
+extension RioActionParser: RioActionParsing {}
+extension RioActionExecutor: RioActionExecuting {}
+
+/// The one place AppState gets its Rio action pipeline from: the real parser over the apps
+/// installed on this Mac, the executor, and the Accessibility window controller.
 enum RioActionsWiring {
-    @MainActor static func makeCoordinator() -> RioActionCoordinator {
+    @MainActor static func makeCoordinator(
+        companion: RioCompanionDirecting?,
+        typeText: @escaping @MainActor (String) async -> Bool
+    ) -> RioActionCoordinator {
         RioActionCoordinator(
-            parser: RioActionParser(installedApps: []),
-            executor: RioActionExecutor(),
+            parser: RioActionParser(installedApps: InstalledAppCatalog.scan()),
+            executor: RioActionExecutor(
+                windowController: WindowController(),
+                companion: companion,
+                typeText: typeText
+            ),
             smartResolver: nil
         )
     }

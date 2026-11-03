@@ -4056,7 +4056,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let coordinator = self.rioActionCoordinator ?? RioActionsWiring.makeCoordinator()
+            let coordinator = self.rioActionCoordinator ?? RioActionsWiring.makeCoordinator(
+                companion: nil,
+                typeText: { [weak self] text in await self?.typeTextForRioAction(text) ?? false }
+            )
             self.rioActionCoordinator = coordinator
             let outcome = await coordinator.run(transcript) { [weak self] line in
                 self?.statusText = line
@@ -4064,6 +4067,17 @@ final class AppState: ObservableObject, @unchecked Sendable {
             }
             self.finishRioAction(outcome, transcript: transcript)
         }
+    }
+
+    /// "Rio, type …": pastes into the frontmost app's focused field, restoring the clipboard after.
+    private func typeTextForRioAction(_ text: String) async -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let pendingRestore = writeTranscriptToPasteboard(trimmed)
+        pasteAtCursor(processIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier)
+        try? await Task.sleep(nanoseconds: 350_000_000)
+        restoreClipboardIfNeeded(pendingRestore)
+        return true
     }
 
     private func finishRioAction(_ outcome: RioActionOutcome, transcript: String) {

@@ -45,7 +45,6 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioActionParser.swift \
 	Sources/RioActions/RioActionParser+Controls.swift \
 	Sources/RioActions/RioActionParser+Windows.swift \
-	Sources/RioActions/RioActionTypes.swift \
 	Sources/RioActions/RioTextTools.swift \
 	Sources/RioActions/RioWebURLs.swift \
 	Sources/RecordingTimerPreference.swift \
