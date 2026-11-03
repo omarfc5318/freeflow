@@ -167,3 +167,26 @@ enum RioCompanionLayout {
         CGPoint(x: visibleFrame.minX + edgeInset, y: screenFrame.minY + groundInset)
     }
 }
+
+/// The owner's own Dock clicks (2026-11-03: "If I am clicking any apps on my taskbar, he will
+/// run to that taskbar"). The click opens the app exactly as macOS always does; the bear only
+/// runs over and punches the icon while it opens, so he never adds delay.
+enum DockClickHitTest {
+    /// A press and release this close together is a click, not a drag rearranging icons.
+    static let maxClickTravel: CGFloat = 6
+
+    /// The application icon under `point` (AX coordinates, top-left origin), never a folder,
+    /// stack, the Trash or a separator.
+    static func appItem(atAX point: CGPoint, items: [DockItemSnapshot]) -> DockItemSnapshot? {
+        items.first { $0.subrole == DockItemMatcher.applicationSubrole && $0.frame.contains(point) && $0.urlString != nil }
+    }
+
+    static func isClick(down: CGPoint, up: CGPoint) -> Bool {
+        hypot(up.x - down.x, up.y - down.y) <= maxClickTravel
+    }
+
+    /// AppKit global coordinates (bottom-left origin of the primary screen) to AX (top-left).
+    static func axPoint(fromAppKit point: CGPoint, primaryHeight: CGFloat) -> CGPoint {
+        CGPoint(x: point.x, y: primaryHeight - point.y)
+    }
+}

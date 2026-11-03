@@ -35,6 +35,7 @@ final class RioCompanionHub: RioCompanionDirecting {
     // MARK: Setup
 
     func attach(_ appState: AppState) {
+        startDockClickRuns()
         appState.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self, weak appState] _ in
@@ -216,12 +217,55 @@ final class RioCompanionHub: RioCompanionDirecting {
     // MARK: Dock run (RioCompanionDirecting)
 
     func runAndPunchDockIcon(appURL: URL, bundleIdentifier: String?, punch: @escaping @MainActor () -> Void) async -> Bool {
+        await runToDockIcon(appURL: appURL, allowStaleDock: false, punch: punch)
+    }
+
+    // MARK: The owner's own Dock clicks
+
+    private var dockClickMonitors: [Any] = []
+    private var dockMouseDown: CGPoint?
+
+    /// Watches left clicks on the Dock (global monitors only observe; the click still reaches the
+    /// Dock untouched, so apps open exactly as fast as always). On release over an app icon the
+    /// bear sprints there and punches it while the app opens.
+    func startDockClickRuns() {
+        guard dockClickMonitors.isEmpty else { return }
+        if let down = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] _ in
+            MainActor.assumeIsolated { self?.dockMouseDown(at: NSEvent.mouseLocation) }
+        }) { dockClickMonitors.append(down) }
+        if let up = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp, handler: { [weak self] _ in
+            MainActor.assumeIsolated { self?.dockMouseUp(at: NSEvent.mouseLocation) }
+        }) { dockClickMonitors.append(up) }
+    }
+
+    private func dockMouseDown(at location: CGPoint) {
+        dockMouseDown = nil
+        guard RioStyle.current == .corner, dockRunEnabled, let primary = NSScreen.screens.first else { return }
+        // Only presses near the bottom edge (where the Dock lives) are interesting.
+        guard location.y - primary.frame.minY < 160 else { return }
+        dockMouseDown = location
+        locator.refresh()
+    }
+
+    private func dockMouseUp(at location: CGPoint) {
+        guard let down = dockMouseDown, let primary = NSScreen.screens.first else { return }
+        dockMouseDown = nil
+        guard DockClickHitTest.isClick(down: down, up: location) else { return }
+        let point = DockClickHitTest.axPoint(fromAppKit: location, primaryHeight: primary.frame.height)
+        guard let appURL = locator.clickedAppURL(atAX: point) else { return }
+        Task { @MainActor [weak self] in
+            // The Dock is already opening the app; the punch is just the bear's flourish.
+            _ = await self?.runToDockIcon(appURL: appURL, allowStaleDock: true, punch: {})
+        }
+    }
+
+    private func runToDockIcon(appURL: URL, allowStaleDock: Bool, punch: @escaping @MainActor () -> Void) async -> Bool {
         guard RioStyle.current == .corner, dockRunEnabled, panel != nil,
               let screen = Self.homeScreen(),
               RioScreenChoice.canRunDockRun(bearScreen: homeDisplayID, screens: Self.screenInfos()) else { return false }
         let now = RioCompanionClock.now
         guard model.machine.canRun(at: now), model.run == nil,
-              let target = locator.target(for: appURL, primaryScreen: screen.frame) else { return false }
+              let target = locator.target(for: appURL, primaryScreen: screen.frame, allowStale: allowStaleDock) else { return false }
 
         let anchor = RioCompanionLayout.anchor(screenFrame: screen.frame, visibleFrame: screen.visibleFrame)
         let startX = anchor.x + RioCompanionMetrics.halfBody - screen.frame.minX
