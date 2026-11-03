@@ -628,6 +628,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @Published var rioCelebrate = 0
     @Published var isRioHelpVisible = false
     private var rioCompanionStateSubscriptions: Set<AnyCancellable> = []
+    private var rioConversationResumeWork: DispatchWorkItem?
 
     @Published var preserveClipboard: Bool {
         didSet {
@@ -4192,10 +4193,22 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let mode = RioConversationMode.shared
         mode.onCommand = { [weak self] command in self?.handleConversationCommand(command) }
         mode.playSound = { [weak self] name in self?.playAlertSound(named: name) }
-        $isRecording.combineLatest($isTranscribing)
-            .map { $0 || $1 }
+        // Also steps aside while Rio himself is talking, so the open mic never hears his own voice;
+        // listening resumes half a second after he finishes, past the room's echo.
+        Publishers.CombineLatest3($isRecording, $isTranscribing, RioVoice.shared.$isSpeaking)
+            .map { $0 || $1 || $2 }
             .removeDuplicates()
-            .sink { active in RioConversationMode.shared.setDictationActive(active) }
+            .sink { [weak self] active in
+                guard let self else { return }
+                self.rioConversationResumeWork?.cancel()
+                guard !active else {
+                    RioConversationMode.shared.setDictationActive(true)
+                    return
+                }
+                let work = DispatchWorkItem { RioConversationMode.shared.setDictationActive(false) }
+                self.rioConversationResumeWork = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+            }
             .store(in: &rioCompanionStateSubscriptions)
         mode.setTapToggleEnabled(conversationTapEnabled)
     }
