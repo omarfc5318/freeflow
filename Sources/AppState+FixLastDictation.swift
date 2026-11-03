@@ -22,7 +22,7 @@ extension AppState {
             original: original, edited: edited, isKnownWord: Self.spellCheckerKnowsWord
         )
         guard !corrections.isEmpty else { return false }
-        if learnVocabulary(from: corrections).isEmpty {
+        if learn(from: corrections).isEmpty {
             let status = "Rio already knows \(corrections.map { "“\($0.corrected)”" }.joined(separator: ", "))"
             statusText = status
             scheduleReadyStatusReset(after: 3, matching: [status])
