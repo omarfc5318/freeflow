@@ -62,6 +62,33 @@ class TranscriptionService {
     private let language: String?
     /// Vocabulary hint sent as Whisper's `prompt`, or nil to send none.
     private let vocabularyPrompt: String?
+    private let reportLock = NSLock()
+    private var storedVocabularyReport: VocabularyReport?
+
+    /// What the vocabulary hint did on the last `transcribe` call: the exact prompt sent and
+    /// whether its transcript was used. Nil until a file transcription has run.
+    struct VocabularyReport: Equatable {
+        let outcome: TranscriptionRequestCore.VocabularyOutcome
+        let prompt: String?
+
+        /// Text for the history item's debug status, e.g. " · Vocabulary: used (31 terms)".
+        var statusSuffix: String {
+            TranscriptionRequestCore.statusSuffix(outcome: outcome, prompt: prompt)
+        }
+    }
+
+    var vocabularyReport: VocabularyReport? {
+        reportLock.lock()
+        defer { reportLock.unlock() }
+        return storedVocabularyReport
+    }
+
+    private func record(outcome: TranscriptionRequestCore.VocabularyOutcome, prompt: String?) {
+        reportLock.lock()
+        defer { reportLock.unlock() }
+        storedVocabularyReport = VocabularyReport(outcome: outcome, prompt: prompt)
+    }
+
     private var transcriptionResponseFormat: String {
         Self.responseFormat(forModel: transcriptionModel)
     }
@@ -172,6 +199,7 @@ class TranscriptionService {
         let audioData = try Data(contentsOf: upload.fileURL)
 
         guard let prompt = vocabularyPrompt else {
+            record(outcome: .noPrompt, prompt: nil)
             return try await transcriptionResult(audioData: audioData, fileURL: upload.fileURL, prompt: nil).get()
         }
 
@@ -181,15 +209,17 @@ class TranscriptionService {
         async let plainRequest = transcriptionResult(audioData: audioData, fileURL: upload.fileURL, prompt: nil)
         let (prompted, plain) = await (promptedRequest, plainRequest)
 
-        switch TranscriptionRequestCore.choose(
+        let outcome = TranscriptionRequestCore.decide(
             prompted: try? prompted.get(),
             plain: try? plain.get(),
             prompt: prompt,
             isSilencePhrase: TranscriptionResponseParser.isStockSilencePhrase
-        ) {
-        case .prompted:
+        )
+        record(outcome: outcome ?? .promptedFailed, prompt: prompt)
+        switch outcome {
+        case .usedVocabulary:
             return try prompted.get()
-        case .plain:
+        case .promptedFailed, .plainChosen, .noPrompt:
             if case .failure(let error) = prompted {
                 os_log(.error, log: transcriptionLog, "Vocabulary request failed, used plain transcript: %{public}@", error.localizedDescription)
             }

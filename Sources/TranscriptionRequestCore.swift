@@ -23,9 +23,31 @@ enum TranscriptionRequestCore {
     /// Providers whose transcription endpoint documents FLAC uploads.
     private static let flacHosts: Set<String> = ["api.groq.com", "api.openai.com"]
 
-    /// The vocabulary as a plain comma-separated list ("Supabase, Groq, Claude."),
-    /// trimmed to the token budget. A plain list measured as safe: a labelled prompt
-    /// ("Vocabulary: …") made Whisper loop on noise-only audio.
+    /// Why the plain transcript was used over the prompted one.
+    enum PlainReason: Equatable {
+        case silence
+        case derailed
+        case scriptMismatch
+    }
+
+    /// What happened to the vocabulary hint for one transcription.
+    enum VocabularyOutcome: Equatable {
+        case usedVocabulary
+        case plainChosen(PlainReason)
+        case promptedFailed
+        case noPrompt
+    }
+
+    /// The prompt for one dictation. Over budget, the most useful terms win: names on
+    /// screen for this dictation first, then the Dictionary newest-first (it is
+    /// append-ordered, so learned words are at the end).
+    static func vocabularyPrompt(vocabulary: [String], contextTerms: [String]) -> String? {
+        vocabularyPrompt(terms: contextTerms + vocabulary.reversed())
+    }
+
+    /// Terms in priority order as a plain comma-separated list ("Supabase, Groq, Claude."),
+    /// deduped case-insensitively and trimmed to the token budget. A plain list measured as
+    /// safe: a labelled prompt ("Vocabulary: …") made Whisper loop on noise-only audio.
     static func vocabularyPrompt(terms: [String]) -> String? {
         var seen = Set<String>()
         var accepted: [String] = []
@@ -34,42 +56,110 @@ enum TranscriptionRequestCore {
             let term = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !term.isEmpty, seen.insert(term.lowercased()).inserted else { continue }
             let cost = estimatedTokens(term) + (accepted.isEmpty ? 0 : estimatedTokens(", "))
-            guard tokens + cost <= promptTokenBudget else { break }
+            // A long term may not fit while a shorter, lower-priority one still does.
+            guard tokens + cost <= promptTokenBudget else { continue }
             accepted.append(term)
             tokens += cost
         }
         return accepted.isEmpty ? nil : accepted.joined(separator: ", ") + "."
     }
 
-    /// An upper bound on Whisper's token count: 1.5 ASCII characters per token (measured
-    /// English names and code identifiers run 2–2.8), and one token per byte otherwise
-    /// (the tokenizer is byte-level).
+    /// A safe estimate of Whisper's token count: 2 ASCII characters per token, rounded up
+    /// (measured English names and code identifiers run 2–2.8; the 200 budget leaves margin
+    /// under the 224 limit), and one token per byte otherwise (the tokenizer is byte-level).
     static func estimatedTokens(_ text: String) -> Int {
         var ascii = 0
         var other = 0
         for byte in text.utf8 {
             if byte < 128 { ascii += 1 } else { other += 1 }
         }
-        return (ascii * 2 + 2) / 3 + other
+        return (ascii + 1) / 2 + other
     }
 
     /// The prompt fixes how names and jargon are spelled, but on audio with no speech it can
     /// make Whisper write the vocabulary itself or invent a sentence (measured on accidental
     /// taps), where the plain request returns a stock silence phrase. So: no speech in the plain
-    /// transcript wins; otherwise the prompted one, unless it looped or failed.
+    /// transcript wins; otherwise the prompted one, unless it looped, echoed, failed, or came
+    /// back in a different script from the speech (an English hint pulling Arabic or Hindi
+    /// into Latin).
     static func choose(
         prompted: String?,
         plain: String?,
         prompt: String,
         isSilencePhrase: (String) -> Bool
     ) -> Choice? {
+        guard let outcome = decide(prompted: prompted, plain: plain, prompt: prompt, isSilencePhrase: isSilencePhrase) else {
+            return nil
+        }
+        return outcome == .usedVocabulary ? .prompted : .plain
+    }
+
+    /// Like `choose`, but says why. Nil when neither transcript is usable.
+    static func decide(
+        prompted: String?,
+        plain: String?,
+        prompt: String,
+        isSilencePhrase: (String) -> Bool
+    ) -> VocabularyOutcome? {
         if let plain, plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSilencePhrase(plain) {
-            return .plain
+            return .plainChosen(.silence)
         }
-        if let prompted, !promptDerailed(transcript: prompted, prompt: prompt) {
-            return .prompted
+        guard let prompted else { return plain == nil ? nil : .promptedFailed }
+        if promptDerailed(transcript: prompted, prompt: prompt) {
+            return plain == nil ? nil : .plainChosen(.derailed)
         }
-        return plain == nil ? nil : .plain
+        if let plain, scriptMismatch(plain: plain, prompted: prompted) {
+            return .plainChosen(.scriptMismatch)
+        }
+        return .usedVocabulary
+    }
+
+    /// The text appended to the history item's debug status.
+    static func statusSuffix(outcome: VocabularyOutcome, prompt: String?) -> String {
+        switch outcome {
+        case .usedVocabulary:
+            let count = prompt?.split(separator: ",").count ?? 0
+            return " · Vocabulary: used (\(count) terms)"
+        case .plainChosen(.silence): return " · Vocabulary: skipped — no speech"
+        case .plainChosen(.derailed): return " · Vocabulary: skipped — prompted transcript derailed"
+        case .plainChosen(.scriptMismatch): return " · Vocabulary: skipped — script mismatch"
+        case .promptedFailed: return " · Vocabulary: skipped — prompted request failed"
+        case .noPrompt: return " · Vocabulary: none"
+        }
+    }
+
+    enum Script: Equatable {
+        case latin, arabic, devanagari, other
+    }
+
+    /// The script most of the text's letters are written in, or nil when no script has a
+    /// clear majority (or there are no letters).
+    static func dominantScript(_ text: String) -> Script? {
+        var counts: [Script: Int] = [:]
+        for scalar in text.unicodeScalars where scalar.properties.isAlphabetic {
+            counts[script(of: scalar), default: 0] += 1
+        }
+        let total = counts.values.reduce(0, +)
+        guard total > 0, let top = counts.max(by: { $0.value < $1.value }),
+              top.value * 2 > total else { return nil }
+        return top.key
+    }
+
+    private static func script(of scalar: Unicode.Scalar) -> Script {
+        switch scalar.value {
+        case 0x41...0x24F, 0x1E00...0x1EFF: return .latin
+        case 0x600...0x6FF, 0x750...0x77F, 0x8A0...0x8FF, 0xFB50...0xFDFF, 0xFE70...0xFEFF: return .arabic
+        case 0x900...0x97F: return .devanagari
+        default: return .other
+        }
+    }
+
+    /// True when the plain transcript is mainly a non-Latin script and the prompted one is
+    /// not mainly that same script. Code-switched speech that stays mostly in the spoken
+    /// script on both sides is not a mismatch.
+    static func scriptMismatch(plain: String, prompted: String) -> Bool {
+        guard let plainScript = dominantScript(plain), plainScript != .latin else { return false }
+        return dominantScript(prompted) != plainScript
     }
 
     /// True when a transcript made with the vocabulary prompt is unusable: the model looped

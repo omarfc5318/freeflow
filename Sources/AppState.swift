@@ -1284,8 +1284,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         return trimmed.isEmpty ? apiKey : trimmed
     }
 
-    /// `contextTerms` are names from the current window, used for this dictation only,
-    /// after the user's own Dictionary so they never push it out of the prompt.
+    /// `contextTerms` are names from the current window, used for this dictation only. Over
+    /// budget they win first, then the Dictionary newest-first, so learned words survive.
     func makeTranscriptionService(contextTerms: [String] = []) throws -> TranscriptionService {
         try TranscriptionService(
             apiKey: resolvedTranscriptionAPIKey,
@@ -1293,7 +1293,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
             transcriptionModel: transcriptionModel,
             language: resolvedTranscriptionLanguage,
             vocabularyPrompt: TranscriptionRequestCore.vocabularyPrompt(
-                terms: Self.vocabularyEntries(in: customVocabulary) + contextTerms
+                vocabulary: Self.vocabularyEntries(in: customVocabulary),
+                contextTerms: contextTerms
             )
         )
     }
@@ -1470,6 +1471,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 defer { Self.removeTemporaryAudio(boostedFileURL) }
                 let transcriptionService = try makeTranscriptionService()
                 let rawTranscript = try await transcriptionService.transcribe(fileURL: boostedFileURL ?? audioURL)
+                let vocabularyStatus = transcriptionService.vocabularyReport?.statusSuffix ?? ""
                 let parsedTranscript = Self.parseTranscriptCommands(
                     from: rawTranscript,
                     pressEnterCommandEnabled: self.isPressEnterVoiceCommandEnabled
@@ -1519,7 +1521,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         contextScreenshotDataURL: item.contextScreenshotDataURL,
                         contextScreenshotStatus: item.contextScreenshotStatus,
                         postProcessingStatus: processingStatus,
-                        debugStatus: "Retried",
+                        debugStatus: "Retried" + vocabularyStatus,
                         customVocabulary: item.customVocabulary,
                         audioFileName: item.audioFileName,
                         contextAppName: item.contextAppName,
@@ -3219,6 +3221,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         fileURL: boostedFileURL ?? transcriptionFileURL
                     )
                     let rawTranscript = try await transcript
+                    // Nil when the realtime stream supplied the transcript (no prompt involved).
+                    let vocabularyStatus = transcriptionService.vocabularyReport?.statusSuffix ?? ""
                     let parsedTranscript = Self.parseTranscriptCommands(
                         from: rawTranscript,
                         pressEnterCommandEnabled: self.isPressEnterVoiceCommandEnabled
@@ -3296,7 +3300,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
                             context: appContext,
                             processingStatus: processingStatus,
                             intent: sessionIntent,
-                            audioFileName: savedAudioFile?.fileName
+                            audioFileName: savedAudioFile?.fileName,
+                            debugStatusSuffix: vocabularyStatus
                         )
                         self.transcriptionTask = nil
                         self.transcribingAudioFileName = nil
@@ -3443,7 +3448,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         context: AppContext,
         processingStatus: String,
         intent: SessionIntent,
-        audioFileName: String? = nil
+        audioFileName: String? = nil,
+        debugStatusSuffix: String = ""
     ) {
         let newEntry = PipelineHistoryItem(
             intent: intent.persistedIntent,
@@ -3461,7 +3467,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
             contextScreenshotStatus: context.screenshotError
                 ?? "available (\(context.screenshotMimeType ?? "image"))",
             postProcessingStatus: processingStatus,
-            debugStatus: debugStatusMessage,
+            debugStatus: debugStatusMessage + debugStatusSuffix,
             customVocabulary: customVocabulary,
             audioFileName: audioFileName,
             contextAppName: context.appName,

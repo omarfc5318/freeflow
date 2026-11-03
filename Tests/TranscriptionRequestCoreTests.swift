@@ -16,8 +16,116 @@ enum TranscriptionRequestCoreTests {
         testChoiceKeepsSilenceSilent()
         testChoicePrefersVocabularyForSpeech()
         testChoiceFallsBack()
+        testLearnedWordReachesPromptBehindLiveDictionary()
+        testOverBudgetKeepsContextThenNewestWords()
+        testPromptDedupesAcrossContextAndVocabulary()
+        testEstimateUsesTwoASCIICharsPerToken()
+        testScriptMismatchPrefersPlain()
+        testSameScriptKeepsPrompted()
+        testOutcomeReporting()
         testFLACOnlyForKnownProviders()
         testFLACCopyKeepsEverySample()
+    }
+
+    private static let liveTerms = "Hala, Hala+, Supabase, Groq, Claude Code, Claude, Opus, Sonnet, Fable, Haiku, Anthropic, TestFlight, EAS, Expo, Doha, Dubai, Qatar, HyperFrames, Kokoro, Manim, Cloudflare, Wrangler, Rio, Dougie, Warp, GitHub, iOS, MAT108, ECS119, Taste Compass, Hala Hunt, shemagh"
+        .components(separatedBy: ", ")
+
+    /// Regression: learned words are appended to the Dictionary, so the old list-order cut
+    /// (1.5 chars/token) dropped every one of them behind a 32-term Dictionary.
+    private static func testLearnedWordReachesPromptBehindLiveDictionary() {
+        let prompt = TranscriptionRequestCore.vocabularyPrompt(vocabulary: liveTerms + ["Tariqullah"], contextTerms: []) ?? ""
+        TestSupport.expect(prompt.hasPrefix("Tariqullah, "), "Newest learned word comes first")
+        for term in liveTerms + ["Tariqullah"] {
+            TestSupport.expect(prompt.contains(term), "Prompt keeps \(term)")
+        }
+        TestSupport.expect(
+            TranscriptionRequestCore.estimatedTokens(prompt) <= TranscriptionRequestCore.promptTokenBudget,
+            "Still within budget"
+        )
+    }
+
+    private static func testOverBudgetKeepsContextThenNewestWords() {
+        let vocabulary = (1...300).map { "Word\($0)" }
+        let prompt = TranscriptionRequestCore.vocabularyPrompt(vocabulary: vocabulary, contextTerms: ["Nadia Al-Thani", "Project Falcon"]) ?? ""
+        TestSupport.expect(prompt.hasPrefix("Nadia Al-Thani, Project Falcon, Word300, Word299,"), "Context first, then newest")
+        TestSupport.expect(!prompt.contains("Word1,") && !prompt.contains("Word1."), "Oldest words are the ones cut")
+        TestSupport.expect(
+            TranscriptionRequestCore.estimatedTokens(prompt) <= TranscriptionRequestCore.promptTokenBudget,
+            "Over-budget list fits the budget"
+        )
+    }
+
+    private static func testPromptDedupesAcrossContextAndVocabulary() {
+        let prompt = TranscriptionRequestCore.vocabularyPrompt(vocabulary: ["Groq", "Claude"], contextTerms: ["claude", "Nadia"])
+        TestSupport.expectEqual(prompt, "claude, Nadia, Groq.")
+    }
+
+    private static func testEstimateUsesTwoASCIICharsPerToken() {
+        TestSupport.expectEqual(TranscriptionRequestCore.estimatedTokens("abcd"), 2)
+        TestSupport.expectEqual(TranscriptionRequestCore.estimatedTokens("abcde"), 3)
+        TestSupport.expectEqual(TranscriptionRequestCore.estimatedTokens("é"), 2)
+    }
+
+    private static func testScriptMismatchPrefersPlain() {
+        let prompt = "Hala, Supabase."
+        let arabic = "مرحبا كيف حالك اليوم يا صديقي"
+        TestSupport.expectEqual(
+            TranscriptionRequestCore.choose(prompted: "Marhaba kayf halak alyawm ya sadiqi", plain: arabic, prompt: prompt, isSilencePhrase: silence),
+            .plain
+        )
+        let urdu = "آپ کیسے ہیں آج کا دن کیسا رہا"
+        TestSupport.expectEqual(
+            TranscriptionRequestCore.choose(prompted: "How are you, how was your day today", plain: urdu, prompt: prompt, isSilencePhrase: silence),
+            .plain
+        )
+        let hindi = "आप कैसे हैं आज का दिन कैसा रहा"
+        TestSupport.expectEqual(
+            TranscriptionRequestCore.choose(prompted: "Aap kaise hain", plain: hindi, prompt: prompt, isSilencePhrase: silence),
+            .plain
+        )
+    }
+
+    private static func testSameScriptKeepsPrompted() {
+        let prompt = "Hala, Supabase."
+        TestSupport.expectEqual(
+            TranscriptionRequestCore.choose(
+                prompted: "ارسل الرابط على Supabase اليوم يا صديقي",
+                plain: "ارسل الرابط على سوبابيس اليوم يا صديقي",
+                prompt: prompt, isSilencePhrase: silence
+            ),
+            .prompted
+        )
+        TestSupport.expectEqual(
+            TranscriptionRequestCore.choose(prompted: "Ship it to Groq", plain: "Ship it to Grok", prompt: prompt, isSilencePhrase: silence),
+            .prompted
+        )
+    }
+
+    private static func testOutcomeReporting() {
+        let prompt = "Hala, Supabase, Groq."
+        let arabic = "مرحبا كيف حالك اليوم يا صديقي"
+        func outcome(_ prompted: String?, _ plain: String?) -> TranscriptionRequestCore.VocabularyOutcome? {
+            TranscriptionRequestCore.decide(prompted: prompted, plain: plain, prompt: prompt, isSilencePhrase: silence)
+        }
+        TestSupport.expectEqual(outcome("Ship it", "Ship it"), .usedVocabulary)
+        TestSupport.expectEqual(outcome("Hala", "Thank you."), .plainChosen(.silence))
+        TestSupport.expectEqual(outcome(Array(repeating: "Cine", count: 80).joined(separator: ", "), "Ship it today."), .plainChosen(.derailed))
+        TestSupport.expectEqual(outcome("Marhaba", arabic), .plainChosen(.scriptMismatch))
+        TestSupport.expectEqual(outcome(nil, "Ship it today."), .promptedFailed)
+        TestSupport.expect(outcome(nil, nil) == nil, "Nothing usable")
+        TestSupport.expectEqual(
+            TranscriptionRequestCore.statusSuffix(outcome: .usedVocabulary, prompt: prompt),
+            " · Vocabulary: used (3 terms)"
+        )
+        TestSupport.expectEqual(
+            TranscriptionRequestCore.statusSuffix(outcome: .promptedFailed, prompt: prompt),
+            " · Vocabulary: skipped — prompted request failed"
+        )
+        TestSupport.expectEqual(
+            TranscriptionRequestCore.statusSuffix(outcome: .plainChosen(.scriptMismatch), prompt: prompt),
+            " · Vocabulary: skipped — script mismatch"
+        )
+        TestSupport.expectEqual(TranscriptionRequestCore.statusSuffix(outcome: .noPrompt, prompt: nil), " · Vocabulary: none")
     }
 
     private static func testPromptIsPlainDedupedList() {
