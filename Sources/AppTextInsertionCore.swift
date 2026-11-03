@@ -41,6 +41,13 @@ enum AppTextInsertionCore {
         return role == "AXTextArea" || (subrole != nil && subrole != "AXUnknown")
     }
 
+    /// Read-only eligibility for correction learning and undo, which only compare the field with
+    /// the text they just pasted and keep nothing. Broader than `canCapture` so plain text fields
+    /// without a subrole (Messages' compose box) qualify; secure fields never do.
+    static func canObserveDictation(role: String?, subrole: String?) -> Bool {
+        isSupportedTextControl(role: role, subrole: subrole)
+    }
+
     /// Accepts exact expected text as inserted; prior ambiguity keeps paste fallback disabled.
     static func classifyWrite(
         originalValue: String,

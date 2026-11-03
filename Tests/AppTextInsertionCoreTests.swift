@@ -12,6 +12,7 @@ enum AppTextInsertionCoreTests {
         testReplacementPreservesRichContentOutsideSelection()
         testUnavailableSnapshotsDoNotWrite()
         testExactUTF16SnapshotMatching()
+        testDictationObservationEligibility()
         testWriteOutcomes()
         testDelayedWriteSequences()
         testPasteRequiresStableFocusedTarget()
@@ -40,6 +41,20 @@ enum AppTextInsertionCoreTests {
                 "Secure, unsupported, or unverifiable text-field roles must prevent capture"
             )
         }
+    }
+
+    private static func testDictationObservationEligibility() {
+        // Messages' compose box (messageBodyField) is a plain AXTextField with no subrole.
+        for (role, subrole) in [("AXTextField", nil), ("AXTextField", "AXUnknown"), ("AXTextArea", nil), ("AXComboBox", nil)] as [(String, String?)] {
+            TestSupport.expect(AppTextInsertionCore.canObserveDictation(role: role, subrole: subrole),
+                               "Learning and undo should read plain non-secure text fields like Messages' compose box")
+        }
+        for (role, subrole) in [("AXTextField", "AXSecureTextField"), ("AXButton", nil), (nil, nil)] as [(String?, String?)] {
+            TestSupport.expect(!AppTextInsertionCore.canObserveDictation(role: role, subrole: subrole),
+                               "Secure fields and non-text controls must never be observed")
+        }
+        TestSupport.expect(!AppTextInsertionCore.canCapture(role: "AXTextField", subrole: nil),
+                           "Observation must not broaden original-field capture")
     }
 
     private static func testEnterRoleEligibility() {

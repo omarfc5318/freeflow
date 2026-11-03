@@ -77,7 +77,7 @@ enum DictationUndo {
     private static func readableFocusedField() -> (AXUIElement, String)? {
         guard AXIsProcessTrusted(),
               let element = focusedElement(),
-              AppTextInsertionCore.canCapture(
+              AppTextInsertionCore.canObserveDictation(
                   role: attribute(element, kAXRoleAttribute) as? String,
                   subrole: attribute(element, kAXSubroleAttribute) as? String
               ),

@@ -149,9 +149,9 @@ final class CorrectionWatcher {
         return unsafeBitCast(value, to: AXUIElement.self)
     }
 
-    /// Uses the same stricter read eligibility as original-field insertion; never secure fields.
+    /// Read-only eligibility (includes plain fields like Messages' compose box); never secure fields.
     private static func isReadableTextControl(_ element: AXUIElement) -> Bool {
-        AppTextInsertionCore.canCapture(
+        AppTextInsertionCore.canObserveDictation(
             role: attribute(element, kAXRoleAttribute) as? String,
             subrole: attribute(element, kAXSubroleAttribute) as? String
         )
