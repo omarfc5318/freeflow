@@ -51,6 +51,26 @@ enum RioActionText {
         case .sendMessage: return "Preparing a message"
         case .createReminder: return "Creating a reminder"
         case .selectionTask: return "Working on your selection"
+        case .replyInConversation: return "Writing a reply"
+        case .readAloud: return "Reading"
+        case .answer: return "Thinking"
+        case .startTimer: return "Starting a timer"
+        case .cancelTimer: return "Cancelling the timer"
+        case .timerStatus: return "Checking the timer"
+        case .undoLast: return "Undoing"
+        case .showHelp: return "Here's what I can do"
+        case .openFile(let query): return "Looking for \(query)"
+        case .revealFile(let query): return "Finding \(query)"
+        case .calendarAgenda: return "Checking your calendar"
+        case .joinNextMeeting: return "Joining your meeting"
+        case .createEvent: return "Adding it to your calendar"
+        case .clipboard: return "Checking the clipboard"
+        case .pressKeys: return "Pressing keys"
+        case .browser: return "Controlling the browser"
+        case .systemToggle: return "Changing a setting"
+        case .brightness: return "Adjusting brightness"
+        case .batteryStatus: return "Checking the battery"
+        case .emptyTrash: return "Emptying the trash"
         }
     }
 }
@@ -94,11 +114,21 @@ final class RioActionCoordinator {
     private let parser: RioActionParsing
     private let executor: RioActionExecuting
     private let smartResolver: RioSmartResolving?
+    private let observer: RioActionObserving?
+    private let confirmer: RioConfirming?
 
-    init(parser: RioActionParsing, executor: RioActionExecuting, smartResolver: RioSmartResolving? = nil) {
+    init(
+        parser: RioActionParsing,
+        executor: RioActionExecuting,
+        smartResolver: RioSmartResolving? = nil,
+        observer: RioActionObserving? = nil,
+        confirmer: RioConfirming? = nil
+    ) {
         self.parser = parser
         self.executor = executor
         self.smartResolver = smartResolver
+        self.observer = observer
+        self.confirmer = confirmer
     }
 
     /// Runs one spoken command. `progress` receives a line like "Opening Google Chrome" before
@@ -128,7 +158,14 @@ final class RioActionCoordinator {
         var summaries: [String] = []
         for action in actions {
             progress(RioActionText.working(for: action))
-            switch await executor.execute(action) {
+            if action.requiresConfirmation {
+                // No confirmer means no way to ask, so never run it.
+                guard let confirmer, await confirmer.confirm(action) else { return .cancelled }
+            }
+            await observer?.willExecute(action)
+            let result = await executor.execute(action)
+            observer?.didExecute(action, result: result)
+            switch result {
             case .done(let summary):
                 summaries.append(summary)
             case .failed(let message):

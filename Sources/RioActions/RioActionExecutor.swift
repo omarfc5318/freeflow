@@ -9,16 +9,19 @@ final class RioActionExecutor {
     private let windowController: WindowControlling
     private let companion: RioCompanionDirecting?
     private let typeText: @MainActor (String) async -> Bool
+    private let handlers: [RioActionHandling]
     private var cachedApps: [InstalledApp]?
 
     init(
         windowController: WindowControlling,
         companion: RioCompanionDirecting?,
-        typeText: @escaping @MainActor (String) async -> Bool
+        typeText: @escaping @MainActor (String) async -> Bool,
+        handlers: [RioActionHandling] = []
     ) {
         self.windowController = windowController
         self.companion = companion
         self.typeText = typeText
+        self.handlers = handlers
     }
 
     func execute(_ action: RioAction) async -> RioActionResult {
@@ -65,8 +68,12 @@ final class RioActionExecutor {
         case .stopListening:
             // The coordinator turns conversation mode off when it sees this action.
             return .done(summary: "Stopped listening")
-        case .sendMessage, .createReminder, .selectionTask:
-            return .failed(message: "That smart action is coming soon")
+        default:
+            // Smart and wave 2 actions belong to the handlers (docs/rio-actions-plan.md).
+            for handler in handlers {
+                if let result = await handler.handle(action, executor: self) { return result }
+            }
+            return .failed(message: "I can't do that one yet")
         }
     }
 

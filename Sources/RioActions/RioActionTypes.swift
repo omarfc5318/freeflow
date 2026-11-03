@@ -38,12 +38,94 @@ enum RioAction: Equatable, Codable {
     case createReminder(title: String, due: Date?)
     case selectionTask(SelectionTask)
 
-    /// True for actions that reach another person or can't be undone; the executor must get
+    // Wave 2 (contract v2). Owners in docs/rio-actions-plan.md.
+    // E: context and reading
+    /// Types `body` into the open conversation's compose field and sends it. Always confirmed.
+    case replyInConversation(body: String)
+    case readAloud(ReadTarget)
+    /// An answer to a question, produced by the smart resolver; spoken and shown.
+    case answer(String)
+    // G: voice, timers, undo, help
+    case startTimer(seconds: Int, label: String?)
+    case cancelTimer
+    case timerStatus
+    case undoLast
+    case showHelp
+    // H: files, calendar, clipboard
+    /// Spotlight search, open the best match.
+    case openFile(query: String)
+    /// Spotlight search, reveal the best match in Finder.
+    case revealFile(query: String)
+    case calendarAgenda(CalendarRange)
+    case joinNextMeeting
+    case createEvent(title: String, start: Date, durationMinutes: Int?)
+    case clipboard(ClipboardCommand)
+    // I: keyboard, browser, system
+    case pressKeys(KeyCombo)
+    case browser(BrowserCommand)
+    case systemToggle(SystemSetting, isOn: Bool)
+    case brightness(VolumeChange)
+    case batteryStatus
+    /// Always confirmed.
+    case emptyTrash
+
+    /// True for actions that reach another person or can't be undone; the coordinator must get
     /// an explicit confirmation from the user before running them.
     var requiresConfirmation: Bool {
-        if case .sendMessage = self { return true }
-        return false
+        switch self {
+        case .sendMessage, .replyInConversation, .emptyTrash: return true
+        default: return false
+        }
     }
+}
+
+enum ReadTarget: String, Equatable, Codable {
+    /// The newest incoming message in the open conversation (Messages, WhatsApp, Slack…).
+    case lastMessage
+    /// The selected text in any app.
+    case selection
+    /// The readable text of the front browser page.
+    case page
+}
+
+enum CalendarRange: String, Equatable, Codable {
+    case today
+    case tomorrow
+    /// The next upcoming event.
+    case next
+}
+
+enum ClipboardCommand: Equatable, Codable {
+    /// Say/show what's on the clipboard now.
+    case readCurrent
+    /// Paste a recent clipboard item; `matching` is a spoken hint ("the link", "the address").
+    case pasteRecent(matching: String?)
+    /// Show the recent clipboard history.
+    case showHistory
+}
+
+/// A keyboard shortcut. `key` must be in `KeyCombo.allowedKeys`; executors refuse anything else.
+struct KeyCombo: Equatable, Codable {
+    let key: String
+    let command: Bool
+    let shift: Bool
+    let option: Bool
+    let control: Bool
+
+    static let allowedKeys: Set<String> = Set("abcdefghijklmnopqrstuvwxyz0123456789".map(String.init))
+        .union(["return", "escape", "tab", "space", "delete", "forwarddelete", "up", "down", "left", "right",
+                "home", "end", "pageup", "pagedown", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9",
+                "f10", "f11", "f12", "comma", "period", "slash", "semicolon", "quote", "leftbracket",
+                "rightbracket", "minus", "equal", "backtick", "backslash"])
+}
+
+enum BrowserCommand: String, Equatable, Codable {
+    case newTab, closeTab, reopenTab, nextTab, previousTab, back, forward, reload
+    case scrollDown, scrollUp, scrollToTop, scrollToBottom, find
+}
+
+enum SystemSetting: String, Equatable, Codable {
+    case wifi, bluetooth, darkMode, nightShift
 }
 
 enum VolumeChange: Equatable, Codable {

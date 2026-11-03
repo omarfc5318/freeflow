@@ -16,6 +16,12 @@ TEST_CONTEXT_HARNESS = $(BUILD_DIR)/ContextCaptureHarness.swift
 TEST_DISPATCH_HARNESS = $(BUILD_DIR)/AppTextInsertionDispatchHarness.swift
 TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioActionTypes.swift \
+	Sources/RioActions/RioActionHandlers.swift \
+	Sources/RioActions/RioContextPhrases.swift \
+	Sources/RioActions/RioVoicePhrases.swift \
+	Sources/RioActions/RioKnowledgePhrases.swift \
+	Sources/RioActions/RioSystemPhrases.swift \
+	Sources/RioActions/RioPersonality.swift \
 	Sources/RioActions/TapGestureDetector.swift \
 	Sources/RioActions/WakePhraseExtractor.swift \
 	Sources/RioActions/WindowAppNameResolver.swift \

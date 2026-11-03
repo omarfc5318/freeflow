@@ -63,6 +63,7 @@ struct RioActionParser {
             ?? Self.parseScreenshot(s) ?? Self.parseDoNotDisturb(s) {
             return ParsedClause(action: action, verb: nil)
         }
+        if let action = RioExtraPhrases.parse(raw: raw, simplified: s) { return ParsedClause(action: action, verb: nil) }
         if let window = parseWindow(s, inherited: false) { return window }
         return parseAppVerb(s, inherited: false)
     }

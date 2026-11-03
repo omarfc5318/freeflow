@@ -4080,7 +4080,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
         return true
     }
 
-    private func finishRioAction(_ outcome: RioActionOutcome, transcript: String) {
+    @MainActor private func finishRioAction(_ outcome: RioActionOutcome, transcript: String) {
+        if let line = RioPersonality.spokenLine(for: outcome, hour: Calendar.current.component(.hour, from: Date())) {
+            RioVoice.shared.speak(line)
+        }
         let summary: String
         switch outcome {
         case .nothing, .cancelled:

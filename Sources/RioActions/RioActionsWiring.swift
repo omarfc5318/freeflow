@@ -15,9 +15,17 @@ enum RioActionsWiring {
             executor: RioActionExecutor(
                 windowController: WindowController(),
                 companion: companion,
-                typeText: typeText
+                typeText: typeText,
+                handlers: [
+                    RioVoiceActionHandler.shared,
+                    RioKnowledgeActionHandler.shared,
+                    RioSystemActionHandler.shared,
+                    RioSmartActionHandler.shared,
+                ]
             ),
-            smartResolver: nil
+            smartResolver: RioSmartResolverFactory.make(),
+            observer: RioUndoJournal.shared,
+            confirmer: RioConfirmationCenter.shared
         )
     }
 }
