@@ -26,9 +26,13 @@ import Foundation
 /// ("open my resume" yes, "open Chrome" never).
 enum RioExtraPhrases {
     static func parse(raw: String, simplified: String) -> RioAction? {
-        RioContextPhrases.parse(raw: raw, simplified: simplified)
-            ?? RioVoicePhrases.parse(raw: raw, simplified: simplified)
-            ?? RioKnowledgePhrases.parse(raw: raw, simplified: simplified)
-            ?? RioSystemPhrases.parse(raw: raw, simplified: simplified)
+        RioTranslatorPhrases.parse(raw: raw, simplified: simplified)       // M (before E's "translate this")
+            ?? RioContextPhrases.parse(raw: raw, simplified: simplified)   // E
+            ?? RioScreenPhrases.parse(raw: raw, simplified: simplified)    // J
+            ?? RioVoicePhrases.parse(raw: raw, simplified: simplified)     // G
+            ?? RioKnowledgePhrases.parse(raw: raw, simplified: simplified) // H
+            ?? RioMemoryPhrases.parse(raw: raw, simplified: simplified)    // L
+            ?? RioSystemPhrases.parse(raw: raw, simplified: simplified)    // I
+            ?? RioTaskPhrases.parse(raw: raw, simplified: simplified)      // K (last: the broadest)
     }
 }

@@ -4092,7 +4092,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     /// Runs a spoken command (action key or conversation mode) and shows the result.
     /// "Stop listening" ends conversation mode directly.
-    @MainActor private func runRioCommand(_ transcript: String) async {
+    @MainActor private func runRioCommand(_ spokenTranscript: String) async {
+        // Arabic (or any non-English) commands become English before parsing: "ريو افتح كروم".
+        let transcript = await RioCommandTranslator.shared.englishCommand(from: spokenTranscript)
         if RioConversationCommands.isStopListening(transcript) {
             RioConversationMode.shared.stop(.stopListening)
             statusText = "Stopped listening"

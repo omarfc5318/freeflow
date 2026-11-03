@@ -69,6 +69,26 @@ enum RioAction: Equatable, Codable {
     /// Always confirmed.
     case emptyTrash
 
+    // Wave 3 (contract v3). Owners in docs/rio-actions-plan.md.
+    // J: screen understanding and click by voice
+    case describeScreen(question: String?)
+    case click(label: String, ordinal: Int?)
+    case fillField(label: String, text: String)
+    // K: multi-step tasks
+    case runTask(goal: String)
+    // L: memory, email drafts, notes, math
+    case remember(fact: String)
+    case recall(query: String)
+    case forget(query: String)
+    /// Opens a compose window; never sends.
+    case draftEmail(to: String?, subject: String?, body: String)
+    case addNote(text: String)
+    case calculate(expression: String)
+    // M: live translator
+    case startTranslation
+    case stopTranslation
+    case speakLastTranslation
+
     /// True for actions that reach another person or can't be undone; the coordinator must get
     /// an explicit confirmation from the user before running them.
     var requiresConfirmation: Bool {

@@ -422,6 +422,28 @@ Contract v3 (the lead adds these to `RioAction` before wave 3 starts):
 `draftEmail(to: String?, subject: String?, body: String)`, `addNote(text: String)`,
 `calculate(expression: String)`, `startTranslation`, `stopTranslation`, `speakLastTranslation`.
 
+Wave 3 wiring (done by the lead; branch `feat/rio-actions` already contains waves 1–2 fully merged):
+- Contract v3 cases are in `RioActionTypes.swift`. The undo plan marks them (read-only ones are
+  ignored; click, fillField, runTask, remember, forget, draftEmail and addNote can't be undone. L
+  may make remember/forget undoable in `RioUndoPlan.swift`, the only G file L may edit).
+- Phrase order in `RioExtraPhrases`: Translator (M), Context (E), Screen (J), Voice (G),
+  Knowledge (H), Memory (L), System (I), Task (K, last because it's the broadest).
+- Handlers wired: `RioScreenActionHandler` (J), `RioTaskActionHandler` (K),
+  `RioMemoryActionHandler` (L), `RioTranslatorActionHandler` (M). Replace your STUB files.
+- AppState already calls `await RioCommandTranslator.shared.englishCommand(from:)` (M) on every
+  action-key and conversation command before parsing. `RioTranslatorMode.shared.isOn` (M) is
+  for the bear's headphones.
+- **The smart resolver must learn the v3 actions:** builder L owns adding them to E's
+  `RioSmartSchema.swift` and `RioSmartPrompt.swift`, with validation (text fields single-line
+  where appropriate, `runTask` goals ≤ 300 chars, no URLs smuggled into `click` labels) and tests.
+- Reuse what exists: the LLM client `RioSmartLLMClient.swift` (E), the AX helpers
+  `RioAccessibility.swift` (E: `RioAX`), the confirmation panel `RioConfirmationCenter` (E),
+  the contact chooser in `RioMessagingCore.swift` (E), `RioVoice` (G), `RioConversationMode` (D),
+  `MicUsageMonitor` (D), and the transcription service and config in `TranscriptionService.swift`.
+  Reading those files is fine; edit only files you own or that this brief explicitly gives you.
+- Nobody in wave 3 edits AppState, SettingsView or MenuBarView. Each builder exposes a
+  `Rio<Area>SettingsSection` view (if it needs settings) that the lead embeds.
+
 ### Builder J: screen understanding and click by voice (`feat/rio-actions-j`)
 - #19 `.describeScreen`: capture the frontmost window with ScreenCaptureKit (Rio already has
   Screen Recording for context), downscale to ≤1280 px, send it with the question to the
@@ -487,6 +509,11 @@ Contract v3 (the lead adds these to `RioAction` before wave 3 starts):
   is active. The bear wears headphones while it's on (expose `RioTranslatorMode.shared.isOn` for
   the companion; the lead wires the art if needed). Disclosure: audio is sent to the
   transcription provider while translating.
+- Conversation mode's wake listener is on-device en-US, so Arabic spoken after "Rio" won't
+  transcribe well there. When online, re-transcribe the command audio after the wake word with
+  Whisper (coordinate through `RioConversationMode`/`WakeWordListener`, C's files; M may edit
+  WakeWordListener.swift for this hook only). The action key path already uses Whisper, which is
+  multilingual.
 - Arabic (and any non-English) commands: on the action key and in conversation mode, when the
   transcript isn't English (the existing spoken-language detection or Whisper's language),
   translate it to English (Groq Whisper's `/audio/translations` for audio, or the LLM for text)

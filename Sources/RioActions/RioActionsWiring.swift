@@ -20,6 +20,10 @@ enum RioActionsWiring {
                     RioVoiceActionHandler.shared,
                     RioKnowledgeActionHandler.shared,
                     RioSystemActionHandler.shared,
+                    RioScreenActionHandler.shared,
+                    RioTaskActionHandler.shared,
+                    RioMemoryActionHandler.shared,
+                    RioTranslatorActionHandler.shared,
                     RioSmartActionHandler.shared,
                 ]
             ),

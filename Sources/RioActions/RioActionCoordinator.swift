@@ -71,6 +71,19 @@ enum RioActionText {
         case .brightness: return "Adjusting brightness"
         case .batteryStatus: return "Checking the battery"
         case .emptyTrash: return "Emptying the trash"
+        case .describeScreen: return "Looking at your screen"
+        case .click(let label, _): return "Clicking \(label)"
+        case .fillField(let label, _): return "Filling in \(label)"
+        case .runTask: return "Working on it step by step"
+        case .remember: return "Remembering that"
+        case .recall: return "Remembering"
+        case .forget: return "Forgetting that"
+        case .draftEmail: return "Drafting an email"
+        case .addNote: return "Adding a note"
+        case .calculate: return "Calculating"
+        case .startTranslation: return "Starting the translator"
+        case .stopTranslation: return "Stopping the translator"
+        case .speakLastTranslation: return "Saying it"
         }
     }
 }

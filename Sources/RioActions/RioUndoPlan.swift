@@ -102,10 +102,12 @@ enum RioUndoPlan {
         case .clipboard(let command):
             if case .pasteRecent = command { return .irreversible }
             return .ignore
-        case .undoLast, .showHelp, .timerStatus, .answer, .readAloud, .calendarAgenda, .batteryStatus, .stopListening:
+        case .undoLast, .showHelp, .timerStatus, .answer, .readAloud, .calendarAgenda, .batteryStatus, .stopListening,
+             .describeScreen, .recall, .calculate, .startTranslation, .stopTranslation, .speakLastTranslation:
             return .ignore
         case .openURL, .webSearch, .lockScreen, .screenshot, .typeText, .sendMessage, .replyInConversation,
-             .openFile, .revealFile, .joinNextMeeting, .pressKeys, .browser, .emptyTrash:
+             .openFile, .revealFile, .joinNextMeeting, .pressKeys, .browser, .emptyTrash,
+             .click, .fillField, .runTask, .remember, .forget, .draftEmail, .addNote:
             return .irreversible
         }
     }
