@@ -504,7 +504,9 @@ it pauses while Rio speaks, messages, replies and Empty Trash always confirm, an
 after 5 minutes idle. To do in the fix round: commands that come from conversation mode and inject
 input or change data (`typeText`, `pressKeys`, `fillField`, `click`, clipboard `pasteRecent`,
 `runTask`, `systemToggle`, `quitApp`) need a spoken "yes" (or Return) after Rio reads the action
-back, unless the owner turns on "Trust conversation mode" in Settings. Action-key commands are
+back, but ONLY when the owner turns OFF "Trust conversation mode" in Settings. **Owner decision
+(2026-11-03): "Trust conversation mode" is ON by default**, so by default these run without the
+spoken "yes"; the toggle is there to switch the check on. Action-key commands are
 unaffected (the key itself proves it was the owner).
 
 ## Wave 4 (after this build is tested and shipped)
