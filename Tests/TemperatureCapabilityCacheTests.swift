@@ -2,9 +2,8 @@ import Foundation
 
 enum TemperatureCapabilityCacheTests {
     static func run() {
-        let suite = "TemperatureCapabilityCacheTests-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let (defaults, suite) = TestScratchDefaults.make("TemperatureCapabilityCache")
+        defer { TestScratchDefaults.remove(suite) }
         var now = Date(timeIntervalSince1970: 1_000)
         let cache = TemperatureCapabilityCache(defaults: defaults, key: "cache", now: { now })
         func request(model: String = "model", temperature: Double = 0, token: String = "secret", host: String = "provider.invalid") -> URLRequest {

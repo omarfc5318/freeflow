@@ -28,6 +28,8 @@ final class RioCompanionModel: ObservableObject {
     var groundY: CGFloat = RioCompanionMetrics.cornerPanelSize.height - RioCompanionLayout.groundInset
     var run: Run?
     var errorText: (text: String, until: TimeInterval)?
+    /// A plain speech card shown whatever he is doing (except mid run or trick), e.g. the crash apology.
+    var noticeText: (text: String, until: TimeInterval)?
     var onStop: () -> Void = {}
 
     private var lastMode: RioCompanionMachine.Mode = .asleep
@@ -76,6 +78,9 @@ final class RioCompanionModel: ObservableObject {
             figure = RioCompanionPoseBuilder.figure(mode: .shrug, time: time, elapsed: elapsed, level: 0)
             bubble = .init(caption: nil, text: errorText.text)
         }
+        if let noticeText, now < noticeText.until, ![.away, .sprint, .punch, .returning].contains(mode) {
+            bubble = .init(caption: nil, text: noticeText.text)
+        }
         return RioCompanionSnapshot(
             figure: figure, time: time, center: CGPoint(x: x, y: groundY),
             outfit: outfit, look: look, bubble: bubble, impact: impact, isHidden: mode == .away
@@ -101,7 +106,7 @@ final class RioCompanionModel: ObservableObject {
         if abs(interval - frameInterval) > 0.0001 { frameInterval = interval }
     }
 
-    var needsTimer: Bool { frameInterval < Self.sleepyInterval - 0.001 || run != nil || errorText != nil }
+    var needsTimer: Bool { frameInterval < Self.sleepyInterval - 0.001 || run != nil || errorText != nil || noticeText != nil }
 }
 
 struct RioCompanionRootView: View {

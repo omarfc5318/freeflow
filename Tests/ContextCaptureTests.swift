@@ -33,9 +33,8 @@ final class TestContextService {
 
 enum ContextCaptureTests {
     @MainActor static func run() async {
-        let suite = "FreeFlowTests.ContextCapture.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let (defaults, suite) = TestScratchDefaults.make("ContextCapture")
+        defer { TestScratchDefaults.remove(suite) }
 
         TestSupport.expect(TestContextState(defaults: defaults).contextCaptureEnabled,
                            "Missing preference must preserve context capture for existing users")

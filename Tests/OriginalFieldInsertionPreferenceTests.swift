@@ -2,9 +2,8 @@ import Foundation
 
 enum OriginalFieldInsertionPreferenceTests {
     static func run() {
-        let suite = "FreeFlowTests.OriginalFieldInsertion.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let (defaults, suite) = TestScratchDefaults.make("OriginalFieldInsertion")
+        defer { TestScratchDefaults.remove(suite) }
 
         TestSupport.expect(!OriginalFieldInsertionPreference.defaultEnabled, "Original-field insertion must default to off")
         TestSupport.expect(!OriginalFieldInsertionPreference.load(from: defaults), "A missing preference must keep original-field insertion off")
@@ -12,7 +11,7 @@ enum OriginalFieldInsertionPreferenceTests {
 
         for enabled in [true, false] {
             defaults.set(enabled, forKey: OriginalFieldInsertionPreference.storageKey)
-            let reloaded = UserDefaults(suiteName: suite)!
+            let reloaded = TestScratchDefaults.reopen(suite)
             TestSupport.expectEqual(OriginalFieldInsertionPreference.load(from: reloaded), enabled)
             TestSupport.expectEqual(reloaded.object(forKey: OriginalFieldInsertionPreference.storageKey) as? Bool, enabled)
         }

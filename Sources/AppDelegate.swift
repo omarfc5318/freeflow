@@ -6,6 +6,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // The launch agent starts a copy at login or right after registering; if Rio is already
+        // running, that copy leaves quietly (a clean exit, so launchd does not restart it).
+        if Self.isDuplicateLaunchAgentCopy() { exit(0) }
+        // A marker left by the last run means it crashed; a clean quit removes it below.
+        let recoveredFromCrash = RioCrashMarker.standard.beginRun()
+        RioLaunchAtLogin.migrateAtLaunch()
+        installTerminationSignalHandler()
         NetworkMonitor.shared.start()
         appState.bindRioCompanionState()
         // "Rio, undo" can delete the calendar events Rio adds.
@@ -13,6 +20,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Clipboard history (memory only, concealed/password copies skipped) starts with the app.
         RioClipboardHistory.shared.start()
         RioCompanionHub.shared.attach(appState)
+        if recoveredFromCrash { appState.rioRecoveredFromCrash = true }
         RioCompanionHub.shared.onStopPressed = { [weak self] in self?.appState.overlayManager.onStopButtonPressed?() }
 
         NotificationCenter.default.addObserver(
@@ -33,9 +41,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             appState.startHotkeyMonitoring()
             appState.startAccessibilityPolling()
-            Task { @MainActor in
-                UpdateManager.shared.startPeriodicChecks()
-            }
 
             if !AXIsProcessTrusted() {
                 appState.showAccessibilityAlert()
@@ -176,12 +181,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         appState.startHotkeyMonitoring()
         appState.startAccessibilityPolling()
-        Task { @MainActor in
-            UpdateManager.shared.startPeriodicChecks()
-        }
 
         if !AXIsProcessTrusted() {
             appState.showAccessibilityAlert()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        RioCrashMarker.standard.endRun()
+    }
+
+    /// True when launchd started this process and another copy of the same app is already up.
+    private static func isDuplicateLaunchAgentCopy() -> Bool {
+        guard getppid() == 1, let bundleID = Bundle.main.bundleIdentifier else { return false }
+        let me = ProcessInfo.processInfo.processIdentifier
+        return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).contains { $0.processIdentifier != me }
+    }
+
+    private var terminationSignalSource: DispatchSourceSignal?
+
+    /// `kill <pid>` (SIGTERM) is a request to quit, not a crash: quit cleanly so the marker is
+    /// removed and launchd leaves Rio stopped.
+    private func installTerminationSignalHandler() {
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler { NSApp.terminate(nil) }
+        source.resume()
+        terminationSignalSource = source
     }
 }

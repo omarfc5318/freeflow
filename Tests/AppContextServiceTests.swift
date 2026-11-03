@@ -16,16 +16,15 @@ enum AppContextServiceTests {
     }
 
     private static func testDesktopFallbackPreferencePersistence() {
-        let suiteName = "FreeFlowTests.DesktopFallback.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let (defaults, suiteName) = TestScratchDefaults.make("DesktopFallback")
+        defer { TestScratchDefaults.remove(suiteName) }
 
         TestSupport.expect(DesktopScreenshotFallbackPreference.load(from: defaults), "Missing preference must preserve enabled fallback")
         TestSupport.expect(defaults.object(forKey: DesktopScreenshotFallbackPreference.storageKey) == nil, "Reading a default must not write it")
 
         for enabled in [false, true, false] {
             DesktopScreenshotFallbackPreference.save(enabled, to: defaults)
-            let reloadedDefaults = UserDefaults(suiteName: suiteName)!
+            let reloadedDefaults = TestScratchDefaults.reopen(suiteName)
             TestSupport.expectEqual(DesktopScreenshotFallbackPreference.load(from: reloadedDefaults), enabled)
         }
         defaults.removeObject(forKey: DesktopScreenshotFallbackPreference.storageKey)

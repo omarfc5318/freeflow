@@ -467,8 +467,8 @@ enum TeddyDougieTests {
     }
 
     private static func testSongStartTime() {
-        let defaults = UserDefaults(suiteName: "TeddyDougieTests.song")!
-        defaults.removePersistentDomain(forName: "TeddyDougieTests.song")
+        let (defaults, suite) = TestScratchDefaults.make("TeddyDougieSong")
+        defer { TestScratchDefaults.remove(suite) }
         TestSupport.expect(TeddyDougieSong.fileURL(defaults: defaults) == nil, "No song: the built-in beat plays")
         defaults.set("/nonexistent/song.m4a", forKey: TeddyDougieSong.pathKey)
         TestSupport.expect(TeddyDougieSong.fileURL(defaults: defaults) == nil, "A missing file falls back to the beat")
@@ -477,7 +477,6 @@ enum TeddyDougieTests {
         TestSupport.expectEqual(TeddyDougieSong.startTime(clampedTo: 15, defaults: defaults), 0)
         defaults.set(-5.0, forKey: TeddyDougieSong.startSecondsKey)
         TestSupport.expectEqual(TeddyDougieSong.startTime(clampedTo: 230, defaults: defaults), 0)
-        defaults.removePersistentDomain(forName: "TeddyDougieTests.song")
     }
 
     private static func testBeatLength() {
