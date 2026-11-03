@@ -44,6 +44,11 @@ import Foundation
     }
 
     private func cancelTimer() -> RioActionResult {
+        // "Rio, stop" first stops a running multi-step task (builder K).
+        if RioTaskProgress.shared.isRunning {
+            RioTaskActionHandler.shared.stop()
+            return .done(summary: "Okay, I stopped")
+        }
         switch timers.cancel() {
         case .cancelled: return .done(summary: "Timer cancelled")
         case .stoppedRinging: return .done(summary: "Okay, stopped")

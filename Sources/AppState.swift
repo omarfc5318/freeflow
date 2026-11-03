@@ -3953,6 +3953,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private func beginRioActionSessionIfHolding() {
         guard rioActionsEnabled, shortcutSessionController.activeMode == .hold else { return }
         rioActionSessionRequested = true
+        // The action key also stops a running multi-step task.
+        MainActor.assumeIsolated { if RioTaskProgress.shared.isRunning { RioTaskActionHandler.shared.stop() } }
         setRioActionPhase(.listening)
     }
 
@@ -4122,6 +4124,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
         center.$isHelpVisible.removeDuplicates().sink { [weak self] in self?.isRioHelpVisible = $0 }
             .store(in: &rioCompanionStateSubscriptions)
         bindRioConversationMode()
+        // Multi-step tasks narrate each step on the bear's card.
+        let task = RioTaskProgress.shared
+        task.$stepText.combineLatest(task.$stepNumber, task.$isRunning)
+            .sink { [weak self] _, _, running in
+                guard let self, running, let card = RioTaskProgress.shared.cardText else { return }
+                self.rioActionPhase = .working(card)
+            }
+            .store(in: &rioCompanionStateSubscriptions)
     }
 
     /// Conversation mode hands commands to the action pipeline, steps aside while dictating, and

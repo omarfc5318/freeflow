@@ -24,6 +24,11 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioVisionRequest.swift \
 	Sources/RioActions/RioMemoryPhrases.swift \
 	Sources/RioActions/RioTaskPhrases.swift \
+	Sources/RioActions/RioTaskStep.swift \
+	Sources/RioActions/RioTaskSafety.swift \
+	Sources/RioActions/RioTaskPrompt.swift \
+	Sources/RioActions/RioTaskRunner.swift \
+	Sources/RioActions/RioTaskProgress.swift \
 	Sources/RioActions/RioImprovePolicy.swift \
 	Sources/RioActions/RioContextPhrases.swift \
 	Sources/RioActions/RioSmartSchema.swift \
