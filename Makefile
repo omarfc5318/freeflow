@@ -89,6 +89,8 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RecordingTimerPreference.swift \
 	Sources/RioCompanion/RioCompanionMachine.swift \
 	Sources/RioCompanion/RioDockRunCore.swift \
+	Sources/RioCompanion/RioScreenFollowCore.swift \
+	Sources/RioLaunchCore.swift \
 	Sources/RioCompanion/RioPersonalityCore.swift \
 	Sources/TranscriptionErrorPresentationCore.swift \
 	Sources/TextExpansionCore.swift \
@@ -106,7 +108,6 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/LanguageProbeCore.swift \
 	Sources/TeddyRagdollCore.swift \
 	Sources/TeddyMilestoneCore.swift \
-	Sources/UpdateManager.swift \
 	Sources/UsageStatsCore.swift \
 	Sources/VocabularyMergeCore.swift \
 	Sources/WhisperBoostCore.swift \
@@ -118,6 +119,10 @@ TEST_SOURCES = $(shell find Tests -name '*.swift' -type f | LC_ALL=C sort)
 SHELL_SCRIPTS = $(shell find .github/scripts .agents/skills -name '*.sh' -type f | LC_ALL=C sort)
 YAML_FILES = $(shell find .github -type f \( -name '*.yml' -o -name '*.yaml' \) | LC_ALL=C sort)
 RESOURCES = $(CONTENTS)/Resources
+# Relaunch-after-crash agent (SMAppService.agent): Label and BundleProgram are rewritten per build.
+LAUNCH_AGENT_SOURCE = Resources/com.zachlatta.freeflow.agent.plist
+LAUNCH_AGENTS_DIR = $(CONTENTS)/Library/LaunchAgents
+LAUNCH_AGENT_PLIST = $(LAUNCH_AGENTS_DIR)/$(BUNDLE_ID).agent.plist
 ARCH ?= $(shell uname -m)
 
 # Pick the icon source based on which bundle we are building. Dev builds get
@@ -139,7 +144,7 @@ endif
 
 all: $(APP_EXECUTABLE_TARGET)
 
-$(APP_EXECUTABLE_TARGET): $(SOURCES) Info.plist $(ICON_ICNS)
+$(APP_EXECUTABLE_TARGET): $(SOURCES) Info.plist $(LAUNCH_AGENT_SOURCE) $(ICON_ICNS)
 	@mkdir -p "$(MACOS_DIR)" "$(RESOURCES)"
 ifeq ($(ARCH),universal)
 	swiftc \
@@ -172,6 +177,10 @@ endif
 	@plutil -replace CFBundleExecutable -string "$(APP_NAME)" "$(CONTENTS)/Info.plist"
 	@plutil -replace CFBundleIdentifier -string "$(BUNDLE_ID)" "$(CONTENTS)/Info.plist"
 	@cp $(ICON_ICNS) "$(RESOURCES)/AppIcon.icns"
+	@mkdir -p "$(LAUNCH_AGENTS_DIR)"
+	@cp "$(LAUNCH_AGENT_SOURCE)" "$(LAUNCH_AGENT_PLIST)"
+	@plutil -replace Label -string "$(BUNDLE_ID).agent" "$(LAUNCH_AGENT_PLIST)"
+	@plutil -replace BundleProgram -string "Contents/MacOS/$(APP_NAME)" "$(LAUNCH_AGENT_PLIST)"
 	@plutil -replace NSMicrophoneUsageDescription -string "$(APP_NAME) needs microphone access to transcribe your speech." "$(CONTENTS)/Info.plist"
 	@plutil -replace NSSpeechRecognitionUsageDescription -string "$(APP_NAME) uses speech recognition to turn your voice into text, and for on-device listening for \"Rio\" in conversation mode. Conversation mode listening never leaves your Mac." "$(CONTENTS)/Info.plist"
 	@plutil -replace NSAccessibilityUsageDescription -string "$(APP_NAME) needs accessibility access to detect the text cursor position and paste transcribed text." "$(CONTENTS)/Info.plist"
@@ -212,7 +221,7 @@ test: $(TEST_CONTEXT_HARNESS) $(TEST_DISPATCH_HARNESS)
 	@$(TEST_RUNNER)
 
 validate:
-	plutil -lint Info.plist FreeFlow.entitlements
+	plutil -lint Info.plist FreeFlow.entitlements $(LAUNCH_AGENT_SOURCE)
 	@set -e; for script in $(SHELL_SCRIPTS); do bash -n "$$script"; done
 	@ruby -e 'require "yaml"; ARGV.each { |file| YAML.load_file(file) }' $(YAML_FILES)
 

@@ -15,7 +15,7 @@ that architecture unless the user explicitly approves a migration.
 - `Sources/AppContextService.swift`: foreground-app metadata and screenshots.
 - `Sources/ShortcutCore/`: shortcut models, matching, and session behavior.
 - `Sources/PipelineHistoryStore.swift`: local pipeline history.
-- `Sources/UpdateManager.swift`: update and release behavior.
+- `Sources/RioLaunchCore.swift` and `Sources/RioLaunchAtLogin.swift`: launch agent (relaunch after a crash) and crash marker. Rio has no in-app updater.
 - `Sources/SettingsView.swift`, `Sources/SetupView.swift`, and other SwiftUI
   files: user interface.
 - `Tests/`: dependency-free executable tests.

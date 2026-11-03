@@ -3,16 +3,20 @@ import Foundation
 @main
 struct FreeFlowTests {
     static func main() async {
+        let preferencePlistsBefore = PreferenceLeakCheck.testPlists(in: PreferenceLeakCheck.preferencesDirectory)
         await AppContextServiceTests.run()
         await ContextCaptureTests.run()
         await LLMAPITransportTests.run()
+        TestScratchDefaults.removeAll()
         TemperatureCapabilityCacheTests.run()
         ModelConfigurationTests.run()
         RecordingCaptureTimingTests.run()
         RecordingTimerPreferenceTests.run()
         OriginalFieldInsertionPreferenceTests.run()
         ShortcutCoreTests.run()
-        SemanticVersionTests.run()
+        PreferenceLeakCheckTests.run()
+        RioLaunchCoreTests.run()
+        RioScreenFollowTests.run()
         LLMCooldownManagerTests.run()
         PostProcessingServiceTests.run()
         TranscriptionErrorPresentationCoreTests.run()
@@ -66,6 +70,8 @@ struct FreeFlowTests {
         await RioVisionRequestTests.run()
         await TranscriptionServiceTests.run()
         await APIConfigurationDraftTests.run()
+        let leakedPlists = PreferenceLeakCheck.leakedSinceStart(before: preferencePlistsBefore)
+        TestSupport.expect(leakedPlists.isEmpty, "Tests left UserDefaults plists in ~/Library/Preferences: \(leakedPlists.prefix(5))")
         print("FreeFlowTests passed")
     }
 }

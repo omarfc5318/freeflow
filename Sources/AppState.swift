@@ -763,7 +763,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @Published var selectedSettingsTab: SettingsTab? = .general
     @Published var pipelineHistory: [PipelineHistoryItem] = []
     @Published var debugStatusMessage = "Idle"
-    @Published var debugShowsUpdateReminderAfterDictation = false
     @Published var lastRawTranscript = ""
     @Published var lastPostProcessedTranscript = ""
     @Published var lastPostProcessingPrompt = ""
@@ -777,6 +776,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @Published var lastContextSelectedText: String = ""
     @Published var lastContextLLMPrompt: String = ""
     @Published var hasScreenRecordingPermission = false
+    /// True once when this launch follows a crash (a marker file was left behind). The corner
+    /// bear says sorry and Rio says it aloud.
+    @Published var rioRecoveredFromCrash = false
     @Published var launchAtLogin: Bool {
         didSet { setLaunchAtLogin(launchAtLogin) }
     }
@@ -836,7 +838,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private var pendingMicrophonePermissionSelectionSnapshot: AppSelectionSnapshot?
     private var pendingMicrophonePermissionManualCommandRequested: Bool?
     private var isApplyingAPIConfiguration = false
-    private let postTranscriptionUpdateReminderDuration: TimeInterval = 7
 
     init() {
         UserDefaults.standard.removeObject(forKey: "force_http2_transcription")
@@ -1026,7 +1027,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.pipelineHistory = savedHistory
         self.hasAccessibility = initialAccessibility
         self.hasScreenRecordingPermission = initialScreenCapturePermission
-        self.launchAtLogin = SMAppService.mainApp.status == .enabled
+        self.launchAtLogin = RioLaunchAtLogin.isEnabled
         self.selectedMicrophoneID = selectedMicrophoneID
         self.precomputeMacros()
 
@@ -1061,11 +1062,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
         overlayManager.onStopButtonPressed = { [weak self] in
             DispatchQueue.main.async {
                 self?.handleOverlayStopButtonPressed()
-            }
-        }
-        overlayManager.onUpdateOverlayPressed = { [weak self] in
-            DispatchQueue.main.async {
-                self?.handleUpdateOverlayPressed()
             }
         }
 
@@ -1720,14 +1716,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     private func setLaunchAtLogin(_ enabled: Bool) {
         do {
-            if enabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
+            try RioLaunchAtLogin.set(enabled)
         } catch {
             // Revert the toggle on failure without re-triggering didSet
-            let current = SMAppService.mainApp.status == .enabled
+            let current = RioLaunchAtLogin.isEnabled
             if current != launchAtLogin {
                 launchAtLogin = current
             }
@@ -1735,7 +1727,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     }
 
     func refreshLaunchAtLoginStatus() {
-        let current = SMAppService.mainApp.status == .enabled
+        let current = RioLaunchAtLogin.isEnabled
         if current != launchAtLogin {
             launchAtLogin = current
         }
@@ -3418,9 +3410,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         if trimmedFinalTranscript.isEmpty {
                             self.statusText = shouldPressEnterAfterPaste ? enterOnlyStatusText : "Nothing to transcribe"
                             self.clearPendingOverlayDismissToken()
-                            if !self.showPostTranscriptionUpdateReminderIfNeeded() {
-                                self.showClosingMoment(shouldPressEnterAfterPaste ? .sent : .didntCatchThat)
-                            }
+                            self.showClosingMoment(shouldPressEnterAfterPaste ? .sent : .didntCatchThat)
                             if shouldPressEnterAfterPaste {
                                 if useOriginalFieldInsertion {
                                     if let textInsertionTarget {
@@ -3440,12 +3430,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
                                 self.scheduleOverlayDismissAfterFailureIndicator(after: 2.5)
                             } else {
                                 self.clearPendingOverlayDismissToken()
-                                if !self.showPostTranscriptionUpdateReminderIfNeeded() {
-                                    if shouldPressEnterAfterPaste {
-                                        self.showClosingMoment(.sent)
-                                    } else {
-                                        self.overlayManager.dismiss()
-                                    }
+                                if shouldPressEnterAfterPaste {
+                                    self.showClosingMoment(.sent)
+                                } else {
+                                    self.overlayManager.dismiss()
                                 }
                             }
 
@@ -3899,62 +3887,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     private func clearPendingOverlayDismissToken() {
         pendingOverlayDismissToken = nil
-    }
-
-    @MainActor
-    private func showPostTranscriptionUpdateReminderIfNeeded() -> Bool {
-        if debugShowsUpdateReminderAfterDictation {
-            showDebugUpdateAvailableOverlay()
-            return true
-        }
-
-        let updateManager = UpdateManager.shared
-        guard updateManager.shouldShowPostTranscriptionReminder() else { return false }
-
-        let dismissToken = UUID()
-        pendingOverlayDismissToken = dismissToken
-        updateManager.markPostTranscriptionReminderShown()
-        overlayManager.showUpdateAvailable(version: updateManager.latestReleaseVersion)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + postTranscriptionUpdateReminderDuration) { [weak self] in
-            guard let self, self.pendingOverlayDismissToken == dismissToken else { return }
-            self.pendingOverlayDismissToken = nil
-            self.overlayManager.dismiss()
-        }
-
-        return true
-    }
-
-    @MainActor
-    func showDebugUpdateAvailableOverlay() {
-        let updateManager = UpdateManager.shared
-        let version = updateManager.latestReleaseVersion.isEmpty ? "9.9.9" : updateManager.latestReleaseVersion
-        let dismissToken = UUID()
-        if isDebugOverlayActive || debugOverlayTimer != nil {
-            stopDebugOverlay()
-        }
-        pendingOverlayDismissToken = dismissToken
-        overlayManager.showUpdateAvailable(version: version)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + postTranscriptionUpdateReminderDuration) { [weak self] in
-            guard let self, self.pendingOverlayDismissToken == dismissToken else { return }
-            self.pendingOverlayDismissToken = nil
-            self.overlayManager.dismiss()
-        }
-    }
-
-    @MainActor
-    private func handleUpdateOverlayPressed() {
-        clearPendingOverlayDismissToken()
-        overlayManager.dismiss()
-        selectedSettingsTab = .general
-        NotificationCenter.default.post(name: .showSettings, object: nil)
-
-        DispatchQueue.main.async {
-            if UpdateManager.shared.updateAvailable {
-                UpdateManager.shared.showUpdateAlert()
-            }
-        }
     }
 
     /// Shows a bear moment (learned words, milestone, undone) unless a dictation or one of

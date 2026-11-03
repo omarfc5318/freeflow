@@ -36,7 +36,7 @@ private func bodyData(_ request: URLRequest) -> Data? {
 
 enum LLMAPITransportTests {
     static func run() async {
-        func perform(_ replies: [(Int, String)], body payload: [String: Any] = ["model": "fixture", "temperature": 0, "top_p": 0.7, "max_completion_tokens": 128, "messages": []], endpoint: String = UUID().uuidString, cache: TemperatureCapabilityCache = TemperatureCapabilityCache(defaults: UserDefaults(suiteName: "transport-\(UUID().uuidString)")!)) async throws -> [URLRequest] {
+        func perform(_ replies: [(Int, String)], body payload: [String: Any] = ["model": "fixture", "temperature": 0, "top_p": 0.7, "max_completion_tokens": 128, "messages": []], endpoint: String = UUID().uuidString, cache: TemperatureCapabilityCache = TemperatureCapabilityCache(defaults: TestScratchDefaults.make("Transport").defaults)) async throws -> [URLRequest] {
             StubLLMURLProtocol.requests = []
             var remaining = replies
             StubLLMURLProtocol.handler = { _ in
@@ -112,16 +112,15 @@ enum LLMAPITransportTests {
         let rejectedAgain = try! await perform([(400, rejected), (400, rejected)])
         TestSupport.expect(rejectedAgain.count == 2, "Second rejection stops after one retry")
 
-        let persistentCache = TemperatureCapabilityCache(defaults: UserDefaults(suiteName: "transport-persistent-\(UUID().uuidString)")!)
+        let persistentCache = TemperatureCapabilityCache(defaults: TestScratchDefaults.make("TransportPersistent").defaults)
         let endpoint = UUID().uuidString
         let first = try! await perform([(400, rejected), (200, accepted)], endpoint: endpoint, cache: persistentCache)
         let subsequent = try! await perform([(200, accepted)], endpoint: endpoint, cache: persistentCache)
         let omittedBody = try! JSONSerialization.jsonObject(with: bodyData(subsequent[0])!) as! [String: Any]
         TestSupport.expect(first.count == 2 && subsequent.count == 1 && omittedBody["temperature"] == nil, "Runtime rejection is cached and subsequent call omits temperature")
 
-        let staleSuite = "transport-stale-\(UUID().uuidString)"
-        let staleDefaults = UserDefaults(suiteName: staleSuite)!
-        defer { staleDefaults.removePersistentDomain(forName: staleSuite) }
+        let (staleDefaults, staleSuite) = TestScratchDefaults.make("TransportStale")
+        defer { TestScratchDefaults.remove(staleSuite) }
         let staleCache = TemperatureCapabilityCache(defaults: staleDefaults)
         let sharedEndpoint = UUID().uuidString
         var sharedRequest = URLRequest(url: URL(string: "https://provider.invalid/\(sharedEndpoint)/chat")!)
@@ -133,7 +132,7 @@ enum LLMAPITransportTests {
         staleCache.record(.supported, for: sharedRequest, observation: staleObservation)
         TestSupport.expect(staleCache.capability(for: sharedRequest) == .unsupported, "Cache ignores stale success after newer runtime rejection")
 
-        let supportedCache = TemperatureCapabilityCache(defaults: UserDefaults(suiteName: "transport-supported-\(UUID().uuidString)")!)
+        let supportedCache = TemperatureCapabilityCache(defaults: TestScratchDefaults.make("TransportSupported").defaults)
         let supportedEndpoint = UUID().uuidString
         let validCompletion = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"OK\"}}]}"
         _ = try! await perform([(200, validCompletion)], endpoint: supportedEndpoint, cache: supportedCache)
@@ -146,7 +145,7 @@ enum LLMAPITransportTests {
             (429, "{\"error\":{\"code\":\"rate_limit_exceeded\"}}", "rate limit"),
             (400, "{\"error\":{\"code\":\"invalid_request\",\"message\":\"bad request\"}}", "unrelated 400")
         ] {
-            let isolated = TemperatureCapabilityCache(defaults: UserDefaults(suiteName: "transport-\(label)-\(UUID().uuidString)")!)
+            let isolated = TemperatureCapabilityCache(defaults: TestScratchDefaults.make("Transport-\(label)").defaults)
             let isolatedEndpoint = UUID().uuidString
             _ = try! await perform([(status, body)], endpoint: isolatedEndpoint, cache: isolated)
             let next = try! await perform([(200, validCompletion)], endpoint: isolatedEndpoint, cache: isolated)

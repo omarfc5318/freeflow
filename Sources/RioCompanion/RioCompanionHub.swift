@@ -12,11 +12,21 @@ final class RioCompanionHub: RioCompanionDirecting {
 
     let model = RioCompanionModel()
     private let locator = RioDockLocator()
-    private var panel: NSPanel?
-    private var cancellables = Set<AnyCancellable>()
+    private(set) var panel: NSPanel?
+    var cancellables = Set<AnyCancellable>()
+    // Screen following (RioCompanionHub+ScreenFollow.swift). `homeDisplayID` nil means the primary.
+    nonisolated(unsafe) static var homeDisplayIDStorage: Int?
+    var homeDisplayID: Int? {
+        get { Self.homeDisplayIDStorage }
+        set { Self.homeDisplayIDStorage = newValue }
+    }
+    var screenFollow = RioScreenFollowDebounce()
+    var screenFollowTimer: Timer?
+    var isMovingScreens = false
+    private var recoveryAnnounced = false
     private var tierTimer: Timer?
     private var lastActionPhase: RioActionPhase = .idle
-    private var voiceIsActive = false
+    var voiceIsActive = false
     private var runToken = UUID()
     private var observersInstalled = false
 
@@ -43,7 +53,7 @@ final class RioCompanionHub: RioCompanionDirecting {
         center.publisher(for: UserDefaults.didChangeNotification).receive(on: DispatchQueue.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.applyStyle() } }.store(in: &cancellables)
         center.publisher(for: NSApplication.didChangeScreenParametersNotification).receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in MainActor.assumeIsolated { self?.relayout() } }.store(in: &cancellables)
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.reconcileHomeScreen(); self?.relayout() } }.store(in: &cancellables)
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             workspace.publisher(for: name).debounce(for: .milliseconds(400), scheduler: DispatchQueue.main)
@@ -53,6 +63,7 @@ final class RioCompanionHub: RioCompanionDirecting {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.relayout(); self?.locator.refresh() } }
             .store(in: &cancellables)
+        installScreenFollow()
         model.onStop = { [weak self] in self?.onStopPressed?() }
     }
 
@@ -66,6 +77,7 @@ final class RioCompanionHub: RioCompanionDirecting {
             relayout()
             locator.refresh()
             kick()
+            updateScreenFollowTimer()
         } else if let panel {
             panel.orderOut(nil)
             panel.contentView = nil
@@ -73,6 +85,8 @@ final class RioCompanionHub: RioCompanionDirecting {
             self.panel = nil
             tierTimer?.invalidate()
             tierTimer = nil
+            homeDisplayID = nil
+            updateScreenFollowTimer()
         }
     }
 
@@ -115,6 +129,17 @@ final class RioCompanionHub: RioCompanionDirecting {
         kick()
     }
 
+    /// After a crash restart: the bear says sorry on a speech card and Rio says it aloud.
+    private func announceRecovery() {
+        let text = Self.recoveryMessage
+        RioVoice.shared.speak(text)
+        guard RioStyle.current == .corner, panel != nil else { return }
+        model.noticeText = (text, RioCompanionClock.now + 5)
+        kick()
+    }
+
+    static let recoveryMessage = "Sorry, I tripped! I'm back."
+
     func showFailure() { showError("Something went wrong", seconds: 2.2) }
 
     func trick(isAway: Bool) {
@@ -127,7 +152,7 @@ final class RioCompanionHub: RioCompanionDirecting {
     /// Where the trick bear jumps out of: the corner bear's centre, from the top left of his
     /// screen. Main thread only.
     nonisolated static func trickHome() -> (screen: NSScreen, point: CGPoint)? {
-        guard let screen = NSScreen.screens.first else { return nil }
+        guard let screen = homeScreen() else { return nil }
         let anchor = RioCompanionLayout.anchor(screenFrame: screen.frame, visibleFrame: screen.visibleFrame)
         let centerX = anchor.x + RioCompanionMetrics.halfBody - screen.frame.minX
         let centerY = screen.frame.height - (anchor.y - screen.frame.minY + 30)
@@ -136,12 +161,16 @@ final class RioCompanionHub: RioCompanionDirecting {
 
     private var celebrateWatcher = RioCounterWatcher()
     private var lastTimer: (remaining: Int?, ringing: Bool) = (nil, false)
-    private var lastSpeaking = false
-    private var lastHelp = false
+    var lastSpeaking = false
+    var lastHelp = false
 
     /// Mirrors AppState's Rio state (action phase, speech, timer, help card, celebrations).
     private func syncAppState(_ appState: AppState) {
         syncActionPhase(appState.rioActionPhase)
+        if appState.rioRecoveredFromCrash, !recoveryAnnounced {
+            recoveryAnnounced = true
+            announceRecovery()
+        }
         guard RioStyle.current == .corner else { return }
         let now = RioCompanionClock.now
         var changed = false
@@ -188,7 +217,8 @@ final class RioCompanionHub: RioCompanionDirecting {
 
     func runAndPunchDockIcon(appURL: URL, bundleIdentifier: String?, punch: @escaping @MainActor () -> Void) async -> Bool {
         guard RioStyle.current == .corner, dockRunEnabled, panel != nil,
-              let screen = NSScreen.screens.first else { return false }
+              let screen = Self.homeScreen(),
+              RioScreenChoice.canRunDockRun(bearScreen: homeDisplayID, screens: Self.screenInfos()) else { return false }
         let now = RioCompanionClock.now
         guard model.machine.canRun(at: now), model.run == nil,
               let target = locator.target(for: appURL, primaryScreen: screen.frame) else { return false }
@@ -263,8 +293,8 @@ final class RioCompanionHub: RioCompanionDirecting {
     }
 
     /// Puts the small corner panel at the bottom-left of the primary screen.
-    private func relayout() {
-        guard panel != nil, model.run == nil, let screen = NSScreen.screens.first else { return }
+    func relayout() {
+        guard panel != nil, model.run == nil, let screen = Self.homeScreen() else { return }
         let anchor = RioCompanionLayout.anchor(screenFrame: screen.frame, visibleFrame: screen.visibleFrame)
         let size = RioCompanionMetrics.cornerPanelSize
         let origin = CGPoint(x: anchor.x - RioCompanionMetrics.leftPad, y: screen.frame.minY)
@@ -285,6 +315,7 @@ final class RioCompanionHub: RioCompanionDirecting {
                 guard let self else { return }
                 let t = RioCompanionClock.now
                 if let error = self.model.errorText, t >= error.until { self.model.errorText = nil }
+                if let notice = self.model.noticeText, t >= notice.until { self.model.noticeText = nil }
                 self.model.refreshTier(at: t)
                 if !self.model.needsTimer && self.model.machine.mode(at: t) == .asleep {
                     self.tierTimer?.invalidate()
