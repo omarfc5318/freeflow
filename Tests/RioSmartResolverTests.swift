@@ -121,6 +121,12 @@ enum RioSmartResolverTests {
             #"{"action":"clipboard","command":"showHistory"}"#, #"{"action":"browser","command":"newTab"}"#,
             #"{"action":"systemToggle","setting":"wifi","isOn":false}"#, #"{"action":"brightness","mode":"up"}"#,
             #"{"action":"batteryStatus"}"#,
+            #"{"action":"describeScreen"}"#, #"{"action":"click","label":"Save"}"#,
+            #"{"action":"fillField","label":"Email","text":"a@b.com"}"#, #"{"action":"runTask","goal":"rename my files"}"#,
+            #"{"action":"remember","fact":"my pin is 99"}"#, #"{"action":"recall","query":"pin"}"#,
+            #"{"action":"forget","query":"pin"}"#, #"{"action":"draftEmail","body":"Hi"}"#,
+            #"{"action":"addNote","text":"milk"}"#, #"{"action":"calculate","expression":"2 plus 2"}"#,
+            #"{"action":"startTranslation"}"#, #"{"action":"stopTranslation"}"#, #"{"action":"speakLastTranslation"}"#,
         ]
         for example in examples {
             let result = parse("{\"actions\":[\(example)]}")

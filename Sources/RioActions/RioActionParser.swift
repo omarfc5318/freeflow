@@ -14,6 +14,8 @@ struct RioActionParser {
         // "2 and a half minutes" must not split into two clauses on "and" (timers only).
         let body = RioTimerPhrases.protectingDurations(in: Self.stripEnvelope(transcript))
         guard !body.isEmpty else { return .empty }
+        // Notes, memories and maths keep "and", "plus" and commas: claim the whole sentence first.
+        if let whole = RioPersonalPhrases.wholeUtterance(body) { return .actions([whole]) }
 
         var clauses = Self.splitClauses(body)
         if let last = clauses.last, !Self.startsGreedyCommand(last) {

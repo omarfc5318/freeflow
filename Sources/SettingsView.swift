@@ -622,6 +622,9 @@ struct GeneralSettingsView: View {
                 SettingsCard("Screen & Clicking", icon: "cursorarrow.rays") {
                     RioScreenSettingsSection()
                 }
+                SettingsCard("Rio's Memory", icon: "brain") {
+                    RioMemorySettingsSection()
+                }
                 SettingsCard("Edit Mode", icon: "pencil") {
                     commandModeSection
                 }
