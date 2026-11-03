@@ -57,6 +57,7 @@ enum ShortcutRole {
     case toggle
     case copyAgain
     case undoLast
+    case fixLast
 
     var title: String {
         switch self {
@@ -64,6 +65,7 @@ enum ShortcutRole {
         case .toggle: return "Tap to Toggle"
         case .copyAgain: return "Paste Again"
         case .undoLast: return "Undo Last Dictation"
+        case .fixLast: return "Fix Last Dictation"
         }
     }
 }
@@ -75,6 +77,7 @@ enum ShortcutEvent: Equatable {
     case toggleDeactivated
     case copyAgainTriggered
     case undoLastTriggered
+    case fixLastTriggered
 }
 
 struct ShortcutConfiguration: Equatable {
@@ -82,6 +85,7 @@ struct ShortcutConfiguration: Equatable {
     let toggle: ShortcutBinding
     let copyAgain: ShortcutBinding
     let undoLast: ShortcutBinding
+    let fixLast: ShortcutBinding
     let permittedAdditionalExactMatchModifiers: ShortcutModifiers
 
     init(
@@ -89,12 +93,14 @@ struct ShortcutConfiguration: Equatable {
         toggle: ShortcutBinding,
         copyAgain: ShortcutBinding = .disabled,
         undoLast: ShortcutBinding = .disabled,
+        fixLast: ShortcutBinding = .disabled,
         permittedAdditionalExactMatchModifiers: ShortcutModifiers = []
     ) {
         self.hold = hold
         self.toggle = toggle
         self.copyAgain = copyAgain
         self.undoLast = undoLast
+        self.fixLast = fixLast
         self.permittedAdditionalExactMatchModifiers = permittedAdditionalExactMatchModifiers
     }
 
@@ -349,6 +355,11 @@ struct ShortcutBinding: Codable, Hashable, Identifiable, Equatable {
     )
     static let defaultHold = ShortcutPreset.fnKey.binding
     static let defaultToggle = ShortcutPreset.fnKey.binding.withAddedModifiers(.command)
+    /// A lone tap of Right Command. Fires on release only when no other key or modifier was
+    /// pressed meanwhile (see ShortcutMatcher), so Cmd chords never trigger it.
+    static let defaultFixLast = ShortcutBinding(
+        keyCode: 54, keyDisplay: "Right Command", modifiers: [], kind: .modifierKey, preset: nil
+    )
 
     static let modifierKeyCodes: Set<UInt16> = [54, 55, 56, 58, 59, 60, 61, 62, 63]
 

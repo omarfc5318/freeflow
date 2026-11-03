@@ -28,6 +28,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/HandsFreeCore.swift \
 	Sources/LLMAPITransport.swift \
 	Sources/LLMCooldownManager.swift \
+	Sources/ManualCorrectionCore.swift \
 	Sources/ModelConfiguration.swift \
 	Sources/OriginalFieldInsertionPreference.swift \
 	Sources/PostProcessingService.swift \

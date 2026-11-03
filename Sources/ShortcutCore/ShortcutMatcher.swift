@@ -19,6 +19,9 @@ struct ShortcutInputState: Equatable {
     var toggleIsActive = false
     var copyAgainIsActive = false
     var undoLastIsActive = false
+    var fixLastIsActive = false
+    /// A bare-modifier Fix Last press became part of a chord and must not fire on release.
+    var fixLastTainted = false
 
     var currentModifiers: ShortcutModifiers {
         ShortcutBinding.modifiers(for: pressedModifierKeyCodes)
@@ -31,7 +34,8 @@ struct ShortcutInputState: Equatable {
             let isToggleKey = configuration.toggle.kind == .key && configuration.toggle.keyCode == keyCode
             let isCopyAgainKey = configuration.copyAgain.kind == .key && configuration.copyAgain.keyCode == keyCode
             let isUndoLastKey = configuration.undoLast.kind == .key && configuration.undoLast.keyCode == keyCode
-            return isHoldKey || isToggleKey || isCopyAgainKey || isUndoLastKey
+            let isFixLastKey = configuration.fixLast.kind == .key && configuration.fixLast.keyCode == keyCode
+            return isHoldKey || isToggleKey || isCopyAgainKey || isUndoLastKey || isFixLastKey
         }
         if keyReferenceHeld {
             return true
@@ -62,6 +66,14 @@ struct ShortcutInputState: Equatable {
         }
 
         if configuration.undoLast.referencesPressedModifiers(
+            pressedModifierKeyCodes: pressedModifierKeyCodes,
+            currentModifiers: currentModifiers,
+            permittedAdditionalExactMatchModifiers: configuration.permittedAdditionalExactMatchModifiers
+        ) {
+            return true
+        }
+
+        if configuration.fixLast.referencesPressedModifiers(
             pressedModifierKeyCodes: pressedModifierKeyCodes,
             currentModifiers: currentModifiers,
             permittedAdditionalExactMatchModifiers: configuration.permittedAdditionalExactMatchModifiers
@@ -169,6 +181,7 @@ enum ShortcutMatcher {
         var nextState = state
         nextState.pressedKeyCodes.removeAll()
         nextState.pressedModifierKeyCodes.removeAll()
+        nextState.fixLastTainted = true
         let emittedEvents = updateActiveBindings(in: &nextState, configuration: configuration)
         return ShortcutMatchResult(
             state: nextState,
@@ -185,11 +198,13 @@ enum ShortcutMatcher {
         let previousToggle = state.toggleIsActive
         let previousCopyAgain = state.copyAgainIsActive
         let previousUndoLast = state.undoLastIsActive
+        let previousFixLast = state.fixLastIsActive
 
         state.holdIsActive = bindingIsActive(configuration.hold, state: state, configuration: configuration)
         state.toggleIsActive = bindingIsActive(configuration.toggle, state: state, configuration: configuration)
         state.copyAgainIsActive = bindingIsActive(configuration.copyAgain, state: state, configuration: configuration)
         state.undoLastIsActive = bindingIsActive(configuration.undoLast, state: state, configuration: configuration)
+        state.fixLastIsActive = bindingIsActive(configuration.fixLast, state: state, configuration: configuration)
 
         var events = emitChanges(
             previousHold: previousHold,
@@ -204,7 +219,31 @@ enum ShortcutMatcher {
         if !previousUndoLast && state.undoLastIsActive {
             events.insert(.undoLastTriggered, at: 0)
         }
+        if fixLastFired(previous: previousFixLast, state: &state, binding: configuration.fixLast) {
+            events.insert(.fixLastTriggered, at: 0)
+        }
         return events
+    }
+
+    /// Key shortcuts fire when pressed. A bare modifier (a lone Right Command tap) fires on
+    /// release, and only if nothing else was pressed meanwhile, so chords like Cmd+C or
+    /// Cmd+Tab and a modifier held for something else (Fn dictation) never trigger it.
+    private static func fixLastFired(
+        previous: Bool,
+        state: inout ShortcutInputState,
+        binding: ShortcutBinding
+    ) -> Bool {
+        guard binding.kind == .modifierKey else {
+            return !previous && state.fixLastIsActive
+        }
+        let otherModifiers = state.pressedModifierKeyCodes.subtracting([binding.keyCode])
+        let isTainted = !otherModifiers.isEmpty || !state.pressedKeyCodes.isEmpty
+        if state.fixLastIsActive {
+            state.fixLastTainted = (previous ? state.fixLastTainted : false) || isTainted
+            return false
+        }
+        defer { state.fixLastTainted = false }
+        return previous && !state.fixLastTainted && !isTainted
     }
 
     private static func emitChanges(
@@ -290,7 +329,7 @@ enum ShortcutMatcher {
         for keyCode: UInt16,
         configuration: ShortcutConfiguration
     ) -> [ShortcutBinding] {
-        [configuration.hold, configuration.toggle, configuration.copyAgain, configuration.undoLast].filter { binding in
+        [configuration.hold, configuration.toggle, configuration.copyAgain, configuration.undoLast, configuration.fixLast].filter { binding in
             binding.kind == .key && binding.keyCode == keyCode
         }
     }
@@ -299,7 +338,9 @@ enum ShortcutMatcher {
         for keyCode: UInt16,
         configuration: ShortcutConfiguration
     ) -> [ShortcutBinding] {
-        [configuration.hold, configuration.toggle, configuration.copyAgain, configuration.undoLast].filter { binding in
+        // A bare-modifier Fix Last is a tap: its modifier events always pass through to apps.
+        let fixLast = configuration.fixLast.kind == .modifierKey ? ShortcutBinding.disabled : configuration.fixLast
+        return [configuration.hold, configuration.toggle, configuration.copyAgain, configuration.undoLast, fixLast].filter { binding in
             switch binding.kind {
             case .key, .modifierKey:
                 return modifierEvent(for: keyCode, affects: binding)

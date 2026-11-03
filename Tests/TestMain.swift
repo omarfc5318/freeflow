@@ -18,6 +18,8 @@ struct FreeFlowTests {
         TranscriptionErrorPresentationCoreTests.run()
         TranscriptTextCoreTests.run()
         CorrectionLearningCoreTests.run()
+        ManualCorrectionCoreTests.run()
+        FixLastShortcutTests.run()
         FeatureCoreTests.run()
         TranscriptionRequestCoreTests.run()
         HandsFreeUndoContextTests.run()
