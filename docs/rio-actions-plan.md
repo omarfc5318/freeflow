@@ -495,6 +495,29 @@ Contract v3 (the lead adds these to `RioAction` before wave 3 starts):
 - Tests: chunking and VAD logic on synthetic buffers, the direction rules, the Arabic verb table,
   and that English transcripts are never sent for translation.
 
+## Open security item for the audit/fix round
+
+Automated review (2026-11-03) flagged acoustic command injection in conversation mode: any audio
+near the mic that says "Rio, …" (a video, someone in the room) reaches the action pipeline.
+Already mitigated: the "Rio" prefix is required, it pauses while another app uses the mic (calls),
+it pauses while Rio speaks, messages, replies and Empty Trash always confirm, and it shuts off
+after 5 minutes idle. To do in the fix round: commands that come from conversation mode and inject
+input or change data (`typeText`, `pressKeys`, `fillField`, `click`, clipboard `pasteRecent`,
+`runTask`, `systemToggle`, `quitApp`) need a spoken "yes" (or Return) after Rio reads the action
+back, unless the owner turns on "Trust conversation mode" in Settings. Action-key commands are
+unaffected (the key itself proves it was the owner).
+
+## Wave 4 (after this build is tested and shipped)
+
+Owner picks: #32 text Rio from your iPhone (Messages from the owner's own handle only, risky
+actions still confirm on the Mac), #33 "Rio, watch me" (record a named macro of
+clicks/keys/app switches, then replay it), #34 follow-ups and pronouns ("open it again", "do the
+same for Spotify", "send that to Ali too"), #38 "find that thing" search (Messages
+attachments + Mail + Downloads + Spotlight, filtered by person and time), #39 clean up Downloads
+(show the plan, confirm, then move/rename), #41 meeting copilot (rolling 5 min of call audio kept
+on the Mac only, off by default, with a visible recording badge on the bear; "what did they just
+say", "action items").
+
 ## Rules for every builder
 - Read `AGENTS.md` first and follow it. No new dependencies, no SPM/Xcode project. Swift 6.2
   toolchain, deployment target macOS 13, `-warnings-as-errors`. Use `#available` for newer APIs.
