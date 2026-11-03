@@ -19,6 +19,9 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioActionHandlers.swift \
 	Sources/RioActions/RioTranslatorPhrases.swift \
 	Sources/RioActions/RioScreenPhrases.swift \
+	Sources/RioActions/RioClickMatcher.swift \
+	Sources/RioActions/RioClickSafety.swift \
+	Sources/RioActions/RioVisionRequest.swift \
 	Sources/RioActions/RioMemoryPhrases.swift \
 	Sources/RioActions/RioTaskPhrases.swift \
 	Sources/RioActions/RioImprovePolicy.swift \
