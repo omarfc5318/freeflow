@@ -1,0 +1,104 @@
+import Foundation
+
+/// Email drafts and Apple Notes (builder L): URL and AppleScript parameter builders, routing, and
+/// recipient resolution. Nothing here touches Mail, Notes or Contacts.
+enum RioEmailNotesTests {
+    static func run() {
+        routing()
+        gmailLinks()
+        mailtoLinks()
+        mailScript()
+        recipients()
+        notesScript()
+    }
+
+    private static func routing() {
+        ETest.eq(RioMailRouter.route(defaultHandlerBundleID: "com.apple.mail"), .appleMail)
+        ETest.eq(RioMailRouter.route(defaultHandlerBundleID: nil), .appleMail)
+        for browser in ["com.google.Chrome", "com.apple.Safari", "org.mozilla.firefox", "com.brave.Browser",
+                        "company.thebrowser.Browser", "com.microsoft.edgemac", "com.google.Chrome.beta"] {
+            ETest.eq(RioMailRouter.route(defaultHandlerBundleID: browser), .gmailWeb, browser)
+        }
+        for other in ["com.microsoft.Outlook", "com.readdle.smartemail-Mac", "com.freron.MailMate"] {
+            ETest.eq(RioMailRouter.route(defaultHandlerBundleID: other), .mailtoDefault, other)
+        }
+    }
+
+    private static func gmailLinks() {
+        let url = RioEmailLinks.gmailCompose(to: "kim@ucdavis.edu", subject: "Running late", body: "Hi Professor Kim,\nI'll be late & sorry.")
+        ETest.eq(
+            url?.absoluteString,
+            "https://mail.google.com/mail/?view=cm&fs=1&to=kim%40ucdavis.edu&su=Running%20late&body=Hi%20Professor%20Kim%2C%0AI%27ll%20be%20late%20%26%20sorry."
+        )
+        ETest.eq(
+            RioEmailLinks.gmailCompose(to: nil, subject: nil, body: "Hello")?.absoluteString,
+            "https://mail.google.com/mail/?view=cm&fs=1&body=Hello"
+        )
+        // Hostile text can't add a recipient or change the host.
+        let hostile = RioEmailLinks.gmailCompose(to: "a@b.com", subject: "x&to=evil@x.com", body: "#fragment?&cc=evil@x.com")
+        let items = hostile.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?.queryItems ?? []
+        ETest.eq(items.filter { $0.name == "to" }.count, 1)
+        ETest.eq(items.filter { $0.name == "cc" }.count, 0)
+        ETest.eq(hostile?.host, "mail.google.com")
+        ETest.eq(RioEmailLinks.gmailCompose(to: nil, subject: nil, body: String(repeating: "word ", count: 3_000)), nil, "too long for a URL")
+    }
+
+    private static func mailtoLinks() {
+        ETest.eq(
+            RioEmailLinks.mailto(to: "kim@ucdavis.edu", subject: "Hi", body: "Late & sorry")?.absoluteString,
+            "mailto:kim%40ucdavis.edu?subject=Hi&body=Late%20%26%20sorry"
+        )
+        ETest.eq(RioEmailLinks.mailto(to: nil, subject: nil, body: "Hello")?.absoluteString, "mailto:?body=Hello")
+    }
+
+    private static func mailScript() {
+        let call = RioMailScripts.draft(to: "a@b.com", subject: "S", body: "B")
+        ETest.eq(call.handler, "draftmail")
+        ETest.eq(call.arguments, ["a@b.com", "S", "B"])
+        ETest.eq(call.source, RioMailScripts.source)
+        // User text only ever travels as an argument; the source is constant and can't send.
+        let nasty = "\"; do shell script \"rm -rf /\" -- send"
+        let hostile = RioMailScripts.draft(to: nil, subject: nasty, body: nasty)
+        ETest.eq(hostile.source, RioMailScripts.source)
+        ETest.eq(hostile.arguments, ["", nasty, nasty])
+        TestSupport.expect(!RioText.matches(#"\bsend\b"#, RioMailScripts.source), "the mail script must never send")
+        TestSupport.expect(!RioMailScripts.source.contains("shell"), "no shell in the mail script")
+        TestSupport.expect(RioMailScripts.source.contains("make new outgoing message"), "creates a draft window")
+    }
+
+    private static func candidate(_ given: String, _ family: String, phones: [String] = [], emails: [String] = []) -> RioContactCandidate {
+        RioContactCandidate(
+            fullName: "\(given) \(family)", givenName: given, familyName: family, nickname: "",
+            phones: phones.map { RioContactPhone(label: "mobile", number: $0) }, emails: emails
+        )
+    }
+
+    private static func recipients() {
+        let sam = candidate("Sam", "Kim", phones: ["+1 530 555 0100"], emails: ["sam.kim@ucdavis.edu"])
+        ETest.eq(RioMailRecipient.resolve(spoken: "Professor Kim", candidates: [sam]), .match(name: "Sam Kim", handle: "sam.kim@ucdavis.edu"))
+        ETest.eq(RioMailRecipient.resolve(spoken: "Dr. Sam Kim", candidates: [sam]), .match(name: "Sam Kim", handle: "sam.kim@ucdavis.edu"))
+        ETest.eq(RioMailRecipient.resolve(spoken: "sam", candidates: [sam]), .match(name: "Sam Kim", handle: "sam.kim@ucdavis.edu"))
+        let phoneOnly = candidate("Ali", "Rahman", phones: ["+97455500000"])
+        ETest.eq(RioMailRecipient.resolve(spoken: "Ali", candidates: [phoneOnly]), .noHandle(name: "Ali Rahman"))
+        let two = [sam, candidate("Lee", "Kim", emails: ["lee@x.com"])]
+        ETest.eq(RioMailRecipient.resolve(spoken: "Kim", candidates: two), .ambiguous(["Lee Kim", "Sam Kim"]))
+        ETest.eq(RioMailRecipient.resolve(spoken: "Nobody", candidates: [sam]), .notFound)
+        ETest.eq(RioMailRecipient.resolve(spoken: "kim@ucdavis.edu", candidates: []), .match(name: "kim@ucdavis.edu", handle: "kim@ucdavis.edu"))
+        ETest.eq(RioMailRecipient.resolve(spoken: "+1 530 555 0100", candidates: [sam]), .notFound, "a phone number is not an email")
+    }
+
+    private static func notesScript() {
+        let call = RioNotesScripts.append(text: "Ask Ali about the deck")
+        ETest.eq(call.handler, "appendnote")
+        ETest.eq(call.arguments, ["Rio Notes", "<div>Ask Ali about the deck</div>"])
+        ETest.eq(call.source, RioNotesScripts.source)
+        ETest.eq(RioNotesScripts.append(text: "Ask <b>Ali</b> & co").arguments[1], "<div>Ask &lt;b&gt;Ali&lt;/b&gt; &amp; co</div>")
+        ETest.eq(RioNotesScripts.append(text: "a\nb").arguments[1], "<div>a</div><div>b</div>")
+        ETest.eq(RioNotesScripts.append(text: "a\n\nb").arguments[1], "<div>a</div><div><br></div><div>b</div>")
+        let nasty = "\" & (do shell script \"x\") & \""
+        ETest.eq(RioNotesScripts.append(text: nasty).source, RioNotesScripts.source)
+        TestSupport.expect(!RioNotesScripts.source.contains("shell"), "no shell in the notes script")
+        TestSupport.expect(!RioNotesScripts.source.contains("delete"), "the notes script never deletes")
+        ETest.eq(RioNotesScripts.noteTitle, "Rio Notes")
+    }
+}

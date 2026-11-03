@@ -20,10 +20,22 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioTranslatorPhrases.swift \
 	Sources/RioActions/RioScreenPhrases.swift \
 	Sources/RioActions/RioMemoryPhrases.swift \
+	Sources/RioActions/RioNumberWords.swift \
+	Sources/RioActions/RioCalcUnits.swift \
+	Sources/RioActions/RioCalcTime.swift \
+	Sources/RioActions/RioCalcParser.swift \
+	Sources/RioActions/RioCalculator.swift \
+	Sources/RioActions/RioMathPhrases.swift \
+	Sources/RioActions/RioMemoryVoice.swift \
+	Sources/RioActions/RioMemoryMatcher.swift \
+	Sources/RioActions/RioMemoryStore.swift \
+	Sources/RioActions/RioEmailDraft.swift \
+	Sources/RioActions/RioNotesScript.swift \
 	Sources/RioActions/RioTaskPhrases.swift \
 	Sources/RioActions/RioImprovePolicy.swift \
 	Sources/RioActions/RioContextPhrases.swift \
 	Sources/RioActions/RioSmartSchema.swift \
+	Sources/RioActions/RioSmartV3Actions.swift \
 	Sources/RioActions/RioSmartPrompt.swift \
 	Sources/RioActions/RioSmartResolver.swift \
 	Sources/RioActions/RioSmartLLMClient.swift \

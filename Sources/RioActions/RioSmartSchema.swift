@@ -95,6 +95,9 @@ enum RioSmartResponseParser {
         "startTimer", "cancelTimer", "timerStatus", "undoLast", "showHelp",
         "openFile", "revealFile", "calendarAgenda", "joinNextMeeting", "createEvent", "clipboard",
         "browser", "systemToggle", "brightness", "batteryStatus",
+        // Wave 3 (validated in RioSmartV3Actions).
+        "describeScreen", "click", "fillField", "runTask", "remember", "recall", "forget", "draftEmail", "addNote",
+        "calculate", "startTranslation", "stopTranslation", "speakLastTranslation",
     ]
 
     static func actions(from content: String, now: Date, timeZone: TimeZone) -> [RioAction] {
@@ -142,31 +145,31 @@ enum RioSmartResponseParser {
 
     // MARK: Field validation
 
-    private static func hasControlCharacter(_ text: String, allowNewlines: Bool) -> Bool {
+    static func hasControlCharacter(_ text: String, allowNewlines: Bool) -> Bool {
         text.unicodeScalars.contains { scalar in
             guard scalar.properties.generalCategory == .control else { return false }
             return !(allowNewlines && (scalar == "\n" || scalar == "\t" || scalar == "\r"))
         }
     }
 
-    private static func text(_ value: Any?, max: Int, multiline: Bool = false) -> String? {
+    static func text(_ value: Any?, max: Int, multiline: Bool = false) -> String? {
         guard let string = value as? String else { return nil }
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count <= max, !hasControlCharacter(trimmed, allowNewlines: multiline) else { return nil }
         return trimmed
     }
 
-    private static func isShellLike(_ text: String) -> Bool {
+    static func isShellLike(_ text: String) -> Bool {
         text.contains { ";|`$<>\\".contains($0) } || text.contains("&&") || text.contains("../")
     }
 
     /// App names, contacts, languages and file queries: single line, nothing shell-like.
-    private static func name(_ value: Any?, max: Int = 80) -> String? {
+    static func name(_ value: Any?, max: Int = 80) -> String? {
         guard let value = text(value, max: max), !isShellLike(value) else { return nil }
         return value
     }
 
-    private static func integer(_ value: Any?) -> Int? {
+    static func integer(_ value: Any?) -> Int? {
         guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
               number.doubleValue == number.doubleValue.rounded(), abs(number.doubleValue) < 1e12 else { return nil }
         return number.intValue
@@ -177,7 +180,7 @@ enum RioSmartResponseParser {
         return number.boolValue
     }
 
-    private static func isPresent(_ value: Any?) -> Bool {
+    static func isPresent(_ value: Any?) -> Bool {
         value != nil && !(value is NSNull)
     }
 
@@ -246,7 +249,7 @@ enum RioSmartResponseParser {
                   let isOn = boolean(object["isOn"]) else { return nil }
             return .systemToggle(setting, isOn: isOn)
         case "batteryStatus": return .batteryStatus
-        default: return nil
+        default: return RioSmartV3Actions.action(kind: kind, object: object, now: now, timeZone: timeZone)
         }
     }
 
