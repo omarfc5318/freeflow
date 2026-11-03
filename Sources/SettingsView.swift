@@ -625,6 +625,9 @@ struct GeneralSettingsView: View {
                 SettingsCard("Rio's Memory", icon: "brain") {
                     RioMemorySettingsSection()
                 }
+                SettingsCard("Live Translator", icon: "character.bubble") {
+                    RioTranslatorSettingsSection()
+                }
                 SettingsCard("Edit Mode", icon: "pencil") {
                     commandModeSection
                 }

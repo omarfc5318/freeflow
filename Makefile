@@ -18,6 +18,16 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioActionTypes.swift \
 	Sources/RioActions/RioActionHandlers.swift \
 	Sources/RioActions/RioTranslatorPhrases.swift \
+	Sources/RioActions/RioTranslatorLanguages.swift \
+	Sources/RioActions/RioSpeechChunker.swift \
+	Sources/RioActions/RioSubtitleBoard.swift \
+	Sources/RioActions/RioTranslatorSession.swift \
+	Sources/RioActions/RioTranslatorText.swift \
+	Sources/RioActions/RioTranslatorLayout.swift \
+	Sources/RioActions/RioArabicCommandClauses.swift \
+	Sources/RioActions/RioArabicText.swift \
+	Sources/RioActions/RioArabicCommandTable.swift \
+	Sources/RioActions/RioArabicVocabulary.swift \
 	Sources/RioActions/RioScreenPhrases.swift \
 	Sources/RioActions/RioClickMatcher.swift \
 	Sources/RioActions/RioClickSafety.swift \

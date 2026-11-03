@@ -71,6 +71,10 @@ import Foundation
     private static let tapUnavailableMessage = "The three-finger tap isn't available on this Mac."
 
     private func handleTap() {
+        // While the live translator is on, the tap belongs to it (it stops translating).
+        let translator = RioTranslatorMode.shared
+        guard !translator.isOn else { return }
+        if let stopped = translator.lastTapStop, Date().timeIntervalSince(stopped) < 1 { return }
         apply(core.toggle(now: Date(), offReason: .tap))
     }
 

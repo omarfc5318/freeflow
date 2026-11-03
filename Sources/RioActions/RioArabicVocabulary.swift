@@ -1,0 +1,75 @@
+import Foundation
+
+/// Word lists for the offline Arabic command table: app names as people say them, numbers,
+/// languages, the wake word and filler. Keys are matched after `RioArabicText.normalize`, with
+/// spaces ignored and a leading "ال" dropped, so each is written once in plain form.
+enum RioArabicVocabulary {
+    /// Arabic transliteration of an app or site name -> the English name Rio's parser resolves.
+    static let apps: [String: String] = {
+        let table: [(String, String)] = [
+            ("كروم", "Chrome"), ("جوجل كروم", "Chrome"), ("قوقل كروم", "Chrome"), ("غوغل كروم", "Chrome"),
+            ("سفاري", "Safari"), ("فايرفوكس", "Firefox"), ("فاير فوكس", "Firefox"),
+            ("سبوتيفاي", "Spotify"), ("سبوتفاي", "Spotify"), ("سبوتيفي", "Spotify"),
+            ("واتساب", "WhatsApp"), ("واتس اب", "WhatsApp"), ("واتس", "WhatsApp"),
+            ("تيليجرام", "Telegram"), ("تلجرام", "Telegram"), ("تلغرام", "Telegram"), ("تيليغرام", "Telegram"),
+            ("ترمنال", "Terminal"), ("ترمينال", "Terminal"), ("تيرمنال", "Terminal"), ("تيرمينال", "Terminal"),
+            ("فايندر", "Finder"), ("نوتس", "Notes"), ("ملاحظات", "Notes"), ("ميل", "Mail"), ("بريد", "Mail"),
+            ("رسائل", "Messages"), ("تقويم", "Calendar"), ("كاليندر", "Calendar"),
+            ("اعدادات", "System Settings"), ("اعدادات النظام", "System Settings"),
+            ("زوم", "Zoom"), ("سلاك", "Slack"), ("ديسكورد", "Discord"), ("وورد", "Word"), ("ورد", "Word"),
+            ("اكسل", "Excel"), ("بوربوينت", "PowerPoint"), ("اكس كود", "Xcode"),
+            ("فيجوال ستوديو كود", "Visual Studio Code"), ("في اس كود", "Visual Studio Code"),
+            ("صور", "Photos"), ("خرائط", "Maps"), ("ساعه", "Clock"), ("اله حاسبه", "Calculator"),
+            ("نوشن", "Notion"), ("فيغما", "Figma"), ("فيجما", "Figma"),
+            ("يوتيوب", "YouTube"), ("جيميل", "Gmail"), ("نتفلكس", "Netflix"), ("انستقرام", "Instagram"),
+            ("انستجرام", "Instagram"), ("تويتر", "Twitter"), ("فيسبوك", "Facebook"), ("لينكدان", "LinkedIn"),
+            ("لينكد ان", "LinkedIn"), ("تيك توك", "TikTok"), ("ريديت", "Reddit"), ("جوجل", "Google"),
+            ("قوقل", "Google"), ("غوغل", "Google"), ("شات جي بي تي", "ChatGPT"),
+        ]
+        return Dictionary(table.map { (key(for: $0.0), $0.1) }, uniquingKeysWith: { first, _ in first })
+    }()
+
+    /// Arabic language names (and "to <language>" forms) -> the English name `translate this to …` uses.
+    static let languages: [String: String] = {
+        let table: [(String, String)] = [
+            ("انجليزي", "English"), ("انجليزيه", "English"), ("انكليزي", "English"), ("انكليزيه", "English"),
+            ("فرنسي", "French"), ("فرنسيه", "French"), ("عربي", "Arabic"), ("عربيه", "Arabic"),
+            ("اسباني", "Spanish"), ("اسبانيه", "Spanish"), ("الماني", "German"), ("المانيه", "German"),
+            ("ايطالي", "Italian"), ("ايطاليه", "Italian"), ("برتغالي", "Portuguese"), ("هندي", "Hindi"),
+            ("اردو", "Urdu"), ("فارسي", "Persian"), ("تركي", "Turkish"), ("تركيه", "Turkish"),
+            ("روسي", "Russian"), ("صيني", "Chinese"), ("ياباني", "Japanese"), ("كوري", "Korean"),
+        ]
+        return Dictionary(table.map { ($0.0, $0.1) }, uniquingKeysWith: { first, _ in first })
+    }()
+
+    /// Spoken numbers (after normalising) a volume or brightness can be set to.
+    static let numbers: [String: Int] = [
+        "صفر": 0, "واحد": 1, "اثنين": 2, "ثلاثه": 3, "اربعه": 4, "خمسه": 5, "سته": 6, "سبعه": 7,
+        "ثمانيه": 8, "تسعه": 9, "عشره": 10, "عشرين": 20, "ثلاثين": 30, "اربعين": 40, "خمسين": 50,
+        "ستين": 60, "سبعين": 70, "ثمانين": 80, "تسعين": 90, "ميه": 100, "مئه": 100, "نص": 50, "نصف": 50,
+    ]
+
+    /// "To the max": volume or brightness 100.
+    static let maximumWords: Set<String> = ["اخير", "اخر", "اخره", "ماكس", "اقصي", "كامل", "اعلي", "كله"]
+
+    /// Greeting words that may come before "ريو".
+    static let greetings: Set<String> = ["يا", "هلا", "هاي", "هي", "اهلا", "مرحبا", "اوكي", "اوك", "طيب", "هيه", "هلو"]
+    static let wakeWords: Set<String> = ["ريو", "ريوو", "ريوه", "يارايو", "ريو،", "rio"]
+
+    /// Words dropped wherever they appear: politeness, "I want", "now", "a bit".
+    static let fillers: Set<String> = [
+        "الحين", "الان", "بسرعه", "ابي", "ابغي", "ابغا", "ممكن", "تقدر", "بتقدر", "يلا", "طيب", "ياخي",
+        "حبيبي", "عاد", "لي", "شوي", "شويه", "شويا", "قليلا", "بليز", "تكفي",
+    ]
+    /// Two-word politeness phrases dropped as a unit.
+    static let fillerPhrases: [[String]] = [["لو", "سمحت"], ["من", "فضلك"], ["لو", "تكرمت"], ["الله", "يعافيك"]]
+
+    /// The lookup form of a table key: normalised, spaces removed, leading "ال" dropped.
+    static func key(for text: String) -> String {
+        stripArticle(RioArabicText.normalize(text).replacingOccurrences(of: " ", with: ""))
+    }
+
+    static func stripArticle(_ word: String) -> String {
+        word.hasPrefix("ال") && word.count >= 4 ? String(word.dropFirst(2)) : word
+    }
+}
