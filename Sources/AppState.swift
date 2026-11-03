@@ -607,6 +607,17 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// A three-finger trackpad tap toggles conversation mode (always-listening "Rio ..." mode).
+    @Published var conversationTapEnabled: Bool = UserDefaults.standard.object(forKey: "rio_conversation_tap_enabled") == nil
+        ? true
+        : UserDefaults.standard.bool(forKey: "rio_conversation_tap_enabled") {
+        didSet {
+            UserDefaults.standard.set(conversationTapEnabled, forKey: "rio_conversation_tap_enabled")
+            let enabled = conversationTapEnabled
+            Task { @MainActor in RioConversationMode.shared.setTapToggleEnabled(enabled) }
+        }
+    }
+
     /// What the corner bear shows for the action key; the overlay only observes it.
     @Published var rioActionPhase: RioActionPhase = .idle
     // Corner bear state, mirrored from RioVoice / RioCompanionCenter by bindRioCompanionState().
@@ -808,6 +819,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private var rioActionSessionRequested = false
     private var rioActionPhaseToken = UUID()
     private var rioActionCoordinator: RioActionCoordinator?
+    private var isRioConversationCommandRunning = false
     private var pendingShortcutStartTask: Task<Void, Never>?
     private var pendingShortcutStartMode: RecordingTriggerMode?
     private var realtimeService: RealtimeTranscriptionService?
@@ -3272,6 +3284,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
                     activeRealtime?.cancel()
                 }
                 do {
+                    // Offline, an action key session is transcribed on this Mac so the built-in
+                    // commands keep working. Fn dictation is unchanged.
+                    if isRioActionSession, !NetworkMonitor.shared.isOnline {
+                        try await self.finishRioActionSessionOffline(
+                            fileURL: transcriptionFileURL, savedAudioFileName: savedAudioFile?.fileName
+                        )
+                        return
+                    }
                     // The saved recording stays untouched; only a temporary boosted copy is transcribed.
                     let boostedFileURL = boostsQuietSpeech ? Self.whisperBoostedCopy(of: transcriptionFileURL) : nil
                     defer { Self.removeTemporaryAudio(boostedFileURL) }
@@ -4063,18 +4083,76 @@ final class AppState: ObservableObject, @unchecked Sendable {
         overlayManager.dismiss()
 
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            let coordinator = self.rioActionCoordinator ?? RioActionsWiring.makeCoordinator(
-                companion: RioCompanionHub.shared,
-                typeText: { [weak self] text in await self?.typeTextForRioAction(text) ?? false }
-            )
-            self.rioActionCoordinator = coordinator
-            let outcome = await coordinator.run(transcript) { [weak self] line in
-                self?.statusText = line
-                self?.rioActionPhase = .working(line)
-            }
-            self.finishRioAction(outcome, transcript: transcript)
+            await self?.runRioCommand(transcript)
         }
+    }
+
+    /// Runs a spoken command (action key or conversation mode) and shows the result.
+    /// "Stop listening" ends conversation mode directly.
+    @MainActor private func runRioCommand(_ transcript: String) async {
+        if RioConversationCommands.isStopListening(transcript) {
+            RioConversationMode.shared.stop(.stopListening)
+            statusText = "Stopped listening"
+            setRioActionPhase(.succeeded("Stopped listening"))
+            scheduleReadyStatusReset(after: 3, matching: ["Stopped listening"])
+            recordRioActionHistory(transcript: transcript, outcome: "Stopped listening")
+            return
+        }
+        let coordinator = rioActionCoordinator ?? RioActionsWiring.makeCoordinator(
+            companion: RioCompanionHub.shared,
+            typeText: { [weak self] text in await self?.typeTextForRioAction(text) ?? false }
+        )
+        rioActionCoordinator = coordinator
+        let outcome = await coordinator.run(transcript) { [weak self] line in
+            self?.statusText = line
+            self?.rioActionPhase = .working(line)
+        }
+        finishRioAction(outcome, transcript: transcript)
+    }
+
+    /// A command heard by conversation mode. One at a time: anything said while a command is
+    /// still running is dropped.
+    @MainActor private func handleConversationCommand(_ transcript: String) {
+        guard !isRioConversationCommandRunning, !isRecording, !isTranscribing else { return }
+        isRioConversationCommandRunning = true
+        statusText = "Working..."
+        setRioActionPhase(.working("Working on it"))
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.runRioCommand(transcript)
+            self.isRioConversationCommandRunning = false
+        }
+    }
+
+    /// Fn + Control while offline: transcribe the recording on-device, then run it as usual.
+    @MainActor private func finishRioActionSessionOffline(fileURL: URL, savedAudioFileName: String?) async throws {
+        do {
+            let transcript = try await RioOfflineTranscriber.transcribe(fileURL: fileURL)
+            try Task.checkCancellation()
+            finishRioActionSession(transcript: transcript, savedAudioFileName: savedAudioFileName)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            let failure = (error as? RioOfflineTranscriber.Failure) ?? .failed
+            try Task.checkCancellation()
+            failRioActionSession(failure.message, savedAudioFileName: savedAudioFileName)
+        }
+    }
+
+    /// Ends an action session that produced no usable transcript, with a short spoken reason.
+    @MainActor private func failRioActionSession(_ message: String, savedAudioFileName: String?) {
+        guard isTranscribing else { return }
+        transcriptionTask = nil
+        transcribingAudioFileName = nil
+        isTranscribing = false
+        endCriticalDictationActivity()
+        if let savedAudioFileName { Self.deleteAudioFile(savedAudioFileName) }
+        audioRecorder.cleanup()
+        refreshAvailableMicrophonesIfNeeded()
+        debugStatusMessage = "Done"
+        clearPendingOverlayDismissToken()
+        overlayManager.dismiss()
+        finishRioAction(.failed(message), transcript: "")
     }
 
     /// "Rio, type …": pastes into the frontmost app's focused field, restoring the clipboard after.
@@ -4105,6 +4183,21 @@ final class AppState: ObservableObject, @unchecked Sendable {
             .store(in: &rioCompanionStateSubscriptions)
         center.$isHelpVisible.removeDuplicates().sink { [weak self] in self?.isRioHelpVisible = $0 }
             .store(in: &rioCompanionStateSubscriptions)
+        bindRioConversationMode()
+    }
+
+    /// Conversation mode hands commands to the action pipeline, steps aside while dictating, and
+    /// listens for the three-finger tap.
+    @MainActor private func bindRioConversationMode() {
+        let mode = RioConversationMode.shared
+        mode.onCommand = { [weak self] command in self?.handleConversationCommand(command) }
+        mode.playSound = { [weak self] name in self?.playAlertSound(named: name) }
+        $isRecording.combineLatest($isTranscribing)
+            .map { $0 || $1 }
+            .removeDuplicates()
+            .sink { active in RioConversationMode.shared.setDictationActive(active) }
+            .store(in: &rioCompanionStateSubscriptions)
+        mode.setTapToggleEnabled(conversationTapEnabled)
     }
 
     @MainActor private func finishRioAction(_ outcome: RioActionOutcome, transcript: String) {

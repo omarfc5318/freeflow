@@ -24,6 +24,8 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioPersonality.swift \
 	Sources/RioActions/TapGestureDetector.swift \
 	Sources/RioActions/WakePhraseExtractor.swift \
+	Sources/RioActions/RioConversationCore.swift \
+	Sources/RioActions/MicUsageCore.swift \
 	Sources/RioActions/WindowAppNameResolver.swift \
 	Sources/RioActions/WindowGeometry.swift \
 	Sources/APIConfigurationDraft.swift \
