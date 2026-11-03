@@ -5,6 +5,10 @@ enum LLMAPITransport {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.urlCache = nil
+        // Like the old one-session-per-request design, nothing is remembered between requests.
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieAcceptPolicy = .never
         // URLSession's resource timeout is session-scoped, while each caller
         // already puts its configured timeout on the URLRequest. Keep both
         // session timers aligned with that request instead of applying one
@@ -12,6 +16,79 @@ enum LLMAPITransport {
         configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = timeout
         return URLSession(configuration: configuration)
+    }
+
+    /// One long-lived session for every provider call, so the TCP+TLS connection (and its
+    /// HTTP/2 stream pool) opened when recording starts is still warm when the audio is
+    /// uploaded and again for cleanup. A session per request paid DNS, TCP and TLS each time.
+    /// It is replaced whenever the network changes or the Mac wakes (see `resetSharedSession`),
+    /// and after any connection-level failure, so a half-dead pooled connection is never reused.
+    private static let sessionLock = NSLock()
+    private static var _sharedSession = makeEphemeralSession(timeout: 3600)
+
+    private static var sharedSession: URLSession {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        return _sharedSession
+    }
+
+    /// Drops every pooled connection; the next request opens a fresh one. Safe from any thread.
+    static func resetSharedSession() {
+        sessionLock.lock()
+        let old = _sharedSession
+        _sharedSession = makeEphemeralSession(timeout: 3600)
+        sessionLock.unlock()
+        old.finishTasksAndInvalidate()
+    }
+
+    /// A connection that went stale while idle fails with this; one retry on a brand-new
+    /// connection is safe (and is exactly what every request used to get).
+    static func isStaleConnectionError(_ error: Error) -> Bool {
+        (error as? URLError)?.code == .networkConnectionLost
+    }
+
+    /// Connection-level failures after which the pooled connections are not trusted again.
+    static func isConnectionFailure(_ error: Error) -> Bool {
+        guard let code = (error as? URLError)?.code else { return false }
+        return [.networkConnectionLost, .timedOut, .cannotConnectToHost, .notConnectedToInternet,
+                .secureConnectionFailed, .dnsLookupFailed, .cannotFindHost].contains(code)
+    }
+
+    /// Runs `operation` on the shared (warm) session within the request's total timeout, as the
+    /// per-request sessions used to enforce. If the reused connection turns out to be dead, it
+    /// is repeated once on a fresh session; any connection failure also resets the pool.
+    private static func withStaleConnectionRetry(
+        timeout: TimeInterval,
+        _ operation: @escaping @Sendable (URLSession) async throws -> (Data, URLResponse)
+    ) async throws -> (Data, URLResponse) {
+        do {
+            return try await withTotalTimeout(timeout) { try await operation(sharedSession) }
+        } catch where isStaleConnectionError(error) && !Task.isCancelled {
+            resetSharedSession()
+            let session = makeEphemeralSession(timeout: timeout)
+            defer { session.finishTasksAndInvalidate() }
+            return try await withTotalTimeout(timeout) { try await operation(session) }
+        } catch {
+            if isConnectionFailure(error) { resetSharedSession() }
+            throw error
+        }
+    }
+
+    /// Fails with `URLError(.timedOut)` once `seconds` have passed, cancelling the request.
+    static func withTotalTimeout<T: Sendable>(
+        _ seconds: TimeInterval,
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+                throw URLError(.timedOut)
+            }
+            defer { group.cancelAll() }
+            guard let result = try await group.next() else { throw URLError(.unknown) }
+            return result
+        }
     }
 
     private static func timeout(for request: URLRequest) -> TimeInterval {
@@ -25,18 +102,18 @@ enum LLMAPITransport {
     static func data(
         for request: URLRequest
     ) async throws -> (Data, URLResponse) {
-        let session = makeEphemeralSession(timeout: timeout(for: request))
-        defer { session.finishTasksAndInvalidate() }
-        return try await data(for: request, using: session)
+        try await withStaleConnectionRetry(timeout: timeout(for: request)) { session in
+            try await data(for: request, using: session)
+        }
     }
 
     static func data(
         for request: URLRequest,
         cache: TemperatureCapabilityCache
     ) async throws -> (Data, URLResponse) {
-        let session = makeEphemeralSession(timeout: timeout(for: request))
-        defer { session.finishTasksAndInvalidate() }
-        return try await data(for: request, using: session, cache: cache)
+        try await withStaleConnectionRetry(timeout: timeout(for: request)) { session in
+            try await data(for: request, using: session, cache: cache)
+        }
     }
 
     static func data(
@@ -118,9 +195,40 @@ enum LLMAPITransport {
         for request: URLRequest,
         from bodyData: Data
     ) async throws -> (Data, URLResponse) {
-        // Fresh session per upload — no poisoned connection re-use.
-        let session = makeEphemeralSession(timeout: timeout(for: request))
-        defer { session.finishTasksAndInvalidate() }
-        return try await session.upload(for: request, from: bodyData)
+        // Reuses the warm connection; a dead one is retried once on a fresh session.
+        try await withStaleConnectionRetry(timeout: timeout(for: request)) { session in
+            try await session.upload(for: request, from: bodyData)
+        }
+    }
+
+    /// Hosts worth warming: one entry per distinct http(s) origin, skipping blanks, malformed
+    /// URLs and loopback hosts (no handshake worth hiding there).
+    static func prewarmURLs(baseURLs: [String]) -> [URL] {
+        var seen = Set<String>()
+        var urls: [URL] = []
+        for raw in baseURLs {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: trimmed),
+                  let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+                  let host = url.host?.lowercased(), !host.isEmpty,
+                  host != "localhost", host != "127.0.0.1", host != "::1" else { continue }
+            let origin = "\(scheme)://\(host):\(url.port ?? (scheme == "https" ? 443 : 80))"
+            if seen.insert(origin).inserted { urls.append(url) }
+        }
+        return urls
+    }
+
+    /// Opens (or confirms) the connection to each provider host while the user is still
+    /// speaking. Sends a body-less HEAD with no credentials and no user data to the already
+    /// configured base URL; the status and body are ignored. Only the connection matters.
+    static func prewarm(baseURLs: [String]) {
+        for url in prewarmURLs(baseURLs: baseURLs) {
+            var request = URLRequest(url: url)
+            request.httpMethod = "HEAD"
+            request.timeoutInterval = 5
+            Task.detached(priority: .utility) {
+                _ = try? await sharedSession.data(for: request)
+            }
+        }
     }
 }

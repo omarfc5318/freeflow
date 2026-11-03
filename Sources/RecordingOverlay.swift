@@ -13,6 +13,19 @@ final class RecordingOverlayState: ObservableObject {
     @Published var updateVersion: String = ""
     @Published var errorMessage: String?
     @Published var toastID: UUID?
+    @Published var teddyTrip: TeddyTrip = .none
+    @Published var moment: TeddyMoment?
+    @Published var outfit: TeddyOutfit = .hoodie
+    /// What the talking bear wears for the spoken language (Arabic, Hindi or Urdu).
+    @Published var spokenLook: SpokenLook = .none
+}
+
+/// Voice tricks ("Rio go crazy", "Rio show me ur shi jelly", "Rio hit the Dougie"): while the bear is away the pill is empty, and
+/// once it has jumped back it rests there until the pill closes.
+enum TeddyTrip {
+    case none
+    case away
+    case back
 }
 
 enum OverlayPhase {
@@ -21,6 +34,8 @@ enum OverlayPhase {
     case transcribing
     case feedback
     case updateAvailable
+    /// The bear holds up a card with a short message (learned words, didn't catch that, ...).
+    case moment
 }
 
 // MARK: - NSScreen Helpers
@@ -76,6 +91,7 @@ private func makeNotchContent<V: View>(
 
 final class RecordingOverlayManager {
     private var overlayWindow: NSPanel?
+    private var momentToken: UUID?
     private let overlayState = RecordingOverlayState()
     private var lockedOverlayWidth: CGFloat?
 
@@ -133,6 +149,7 @@ final class RecordingOverlayManager {
     func showInitializing(mode: RecordingTriggerMode = .hold, isCommandMode: Bool = false) {
         DispatchQueue.main.async {
             self.lockedOverlayWidth = nil
+            self.overlayState.teddyTrip = .none
             self.overlayState.recordingTriggerMode = mode
             self.overlayState.isCommandMode = isCommandMode
             self.overlayState.recordingStartedAt = nil
@@ -150,6 +167,7 @@ final class RecordingOverlayManager {
     ) {
         DispatchQueue.main.async {
             self.lockedOverlayWidth = nil
+            self.overlayState.teddyTrip = .none
             self.overlayState.recordingTriggerMode = mode
             self.overlayState.isCommandMode = isCommandMode
             self.beginRecordingTimer(startedAt: startedAt, showsRecordingTimer: showsRecordingTimer)
@@ -240,6 +258,47 @@ final class RecordingOverlayManager {
                 self.overlayState.toastID = nil
                 self.dismissAll()
             }
+        }
+    }
+
+    /// Drops the pill down for a moment with the bear holding up a card. Skipped while a
+    /// recording is starting or running; `interruptsTranscribing` lets the moments that
+    /// fire at the very end of a dictation replace the closing transcribing pill. A new
+    /// dictation replaces the moment at once.
+    func showMoment(_ moment: TeddyMoment, interruptsTranscribing: Bool = false) {
+        guard !moment.text.isEmpty else { return }
+        DispatchQueue.main.async {
+            // A moment that closes a dictation replaces that dictation's own pill (still
+            // recording or transcribing); AppState has already ruled out a newer recording.
+            // The update notice is never covered by a learned word or a milestone.
+            let busy: Set<OverlayPhase> = interruptsTranscribing
+                ? [.initializing] : [.initializing, .recording, .transcribing, .updateAvailable]
+            if self.overlayWindow != nil, busy.contains(self.overlayState.phase) { return }
+            let token = UUID()
+            self.momentToken = token
+            self.lockedOverlayWidth = nil
+            self.overlayState.isCommandMode = false
+            self.overlayState.teddyTrip = .none
+            self.overlayState.moment = moment
+            self.overlayState.phase = .moment
+            self.showOverlayPanel(animatedResize: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + moment.seconds) {
+                guard self.momentToken == token, self.overlayState.phase == .moment else { return }
+                self.dismissAll()
+            }
+        }
+    }
+
+    /// The outfit the bear wears in every pill state; set when a recording starts.
+    func setOutfit(_ outfit: TeddyOutfit) {
+        DispatchQueue.main.async { self.overlayState.outfit = outfit }
+    }
+
+    /// The traditional look the talking bear wears while you dictate; the pill only.
+    func setSpokenLook(_ look: SpokenLook) {
+        DispatchQueue.main.async {
+            guard self.overlayState.spokenLook != look else { return }
+            self.overlayState.spokenLook = look
         }
     }
 
@@ -364,14 +423,14 @@ final class RecordingOverlayManager {
     /// the drop-down pill.
     private var useWingedLayout: Bool {
         guard screenHasNotch else { return false }
-        let useCompact = (UserDefaults.standard.object(forKey: "use_compact_overlay") as? Bool) ?? true
+        let useCompact = (UserDefaults.standard.object(forKey: "use_compact_overlay") as? Bool) ?? false
         guard useCompact else { return false }
         switch overlayState.phase {
         case .recording, .initializing, .transcribing:
             return true
         case .feedback:
             return overlayState.errorMessage?.isEmpty ?? true
-        case .updateAvailable:
+        case .updateAvailable, .moment:
             return false
         }
     }
@@ -401,9 +460,10 @@ final class RecordingOverlayManager {
         }
 
         let width = overlayWidth
-        let useCompact = (UserDefaults.standard.object(forKey: "use_compact_overlay") as? Bool) ?? true
-        let forceDropDownPill = overlayState.phase == .feedback
-            && !(overlayState.errorMessage?.isEmpty ?? true)
+        let useCompact = (UserDefaults.standard.object(forKey: "use_compact_overlay") as? Bool) ?? false
+        let forceDropDownPill = (overlayState.phase == .feedback
+            && !(overlayState.errorMessage?.isEmpty ?? true))
+            || overlayState.phase == .moment
         // Compact mode: overlay sits flush with the menu bar on every display.
         // notchOverlap equals the menu-bar height on non-notched screens too,
         // so zero protrusion is universal — not notch-only. The legacy
@@ -441,29 +501,32 @@ final class RecordingOverlayManager {
             return max(notchWidth, feedbackWidth)
         }
 
+        if overlayState.phase == .moment {
+            let momentWidth = TeddyLearnedCard.pillWidth(for: overlayState.moment?.text ?? "")
+            guard screenHasNotch else { return momentWidth }
+            return max(notchWidth, momentWidth)
+        }
+
         if overlayState.phase == .updateAvailable {
             let updateWidth: CGFloat = 190
             guard screenHasNotch else { return updateWidth }
             return max(notchWidth, updateWidth)
         }
 
-        let commandModeWidth: CGFloat = 180
-        let toggleWidth: CGFloat = 150
+        // The pill shows only the talking bear, plus the Edit Mode pencil and the
+        // hands-free stop button when they apply.
+        let commandModeWidth: CGFloat = 150
+        let toggleWidth: CGFloat = 120
         let defaultWidth: CGFloat = 92
-        let baseWidth: CGFloat
+        let width: CGFloat
 
         if overlayState.isCommandMode {
-            baseWidth = commandModeWidth
+            width = commandModeWidth
         } else if overlayState.phase == .recording && overlayState.recordingTriggerMode == .toggle {
-            baseWidth = toggleWidth
+            width = toggleWidth
         } else {
-            baseWidth = defaultWidth
+            width = defaultWidth
         }
-
-        // Reserve separate leading, center, and trailing slots while recording.
-        let width = overlayState.phase == .recording && overlayState.showsRecordingTimer
-            ? max(baseWidth, overlayState.isCommandMode ? 224 : 180)
-            : baseWidth
         guard screenHasNotch else { return width }
         return max(notchWidth, width)
     }
@@ -474,7 +537,26 @@ final class RecordingOverlayManager {
         showOverlayPanel(animatedResize: true)
     }
 
+    /// Main thread only. Where the pill's bear sits, measured from the top left of its
+    /// screen, or nil when no pill is showing.
+    func teddyHome() -> (screen: NSScreen, point: CGPoint)? {
+        guard let panel = overlayWindow, panel.isVisible, let screen = targetScreen else { return nil }
+        // The pill's content area is the bottom 38 pt; the wings centre it in the panel.
+        let bearCenterAboveBottom = useWingedLayout ? panel.frame.height / 2 : min(19, panel.frame.height / 2)
+        let point = CGPoint(
+            x: panel.frame.midX - screen.frame.minX,
+            y: screen.frame.maxY - (panel.frame.minY + bearCenterAboveBottom)
+        )
+        return (screen, point)
+    }
+
+    /// Main thread only.
+    func setTeddyTrip(_ trip: TeddyTrip) {
+        overlayState.teddyTrip = trip
+    }
+
     private func dismissAll() {
+        overlayState.teddyTrip = .none
         lockedOverlayWidth = nil
         overlayState.recordingStartedAt = nil
         overlayState.isCommandMode = false
@@ -961,11 +1043,17 @@ struct RecordingOverlayView: View {
     let onStopButtonPressed: () -> Void
     let onUpdateOverlayPressed: () -> Void
 
-    private var leadingAccessoryWidth: CGFloat {
-        guard showsLiveRecordingContent && state.showsRecordingTimer else { return 24 }
-        return state.isCommandMode ? 72 : 48
-    }
+    private let leadingAccessoryWidth: CGFloat = 24
     private let trailingAccessoryWidth: CGFloat = 32
+
+    private var bearMood: TalkingBearView.Mood {
+        if state.teddyTrip == .back { return .idle }
+        switch state.phase {
+        case .initializing: return .idle
+        case .recording: return .talking
+        default: return .thinking
+        }
+    }
 
     private var showsLiveRecordingContent: Bool {
         state.phase == .recording
@@ -981,42 +1069,23 @@ struct RecordingOverlayView: View {
                 ErrorOverlayView(message: message)
             } else if state.phase == .feedback {
                 FailureIndicatorView()
+            } else if state.phase == .moment, let moment = state.moment {
+                TeddyMomentView(moment: moment, outfit: state.outfit)
             } else if state.phase == .updateAvailable {
                 UpdateAvailableOverlayView(onPress: onUpdateOverlayPressed)
             } else {
                 ZStack {
-                    Group {
-                        if state.phase == .initializing {
-                            InitializingDotsView()
-                                .transition(.opacity)
-                        } else if showsLiveRecordingContent {
-                            if state.showsRecordingTimer, let start = state.recordingStartedAt {
-                                RecordingElapsedTimeView(start: start)
-                                    .transition(.opacity)
-                            } else {
-                                WaveformView(audioLevel: state.audioLevel, showsActivityPulse: true)
-                                    .transition(.opacity)
-                            }
-                        } else {
-                            ProcessingIndicatorView()
-                                .transition(.opacity)
-                        }
+                    if state.teddyTrip != .away {
+                        TalkingBearView(
+                            mood: bearMood, audioLevel: state.audioLevel, height: 30,
+                            isEditing: state.isCommandMode, outfit: state.outfit,
+                            look: state.spokenLook
+                        )
                     }
 
                     HStack {
                         Group {
-                            if showsLiveRecordingContent && state.showsRecordingTimer {
-                                HStack(spacing: 6) {
-                                    if state.isCommandMode {
-                                        CommandModeIndicator()
-                                    }
-                                    WaveformView(
-                                        audioLevel: state.audioLevel,
-                                        showsActivityPulse: true
-                                    )
-                                }
-                                .transition(.opacity)
-                            } else if state.isCommandMode {
+                            if state.isCommandMode {
                                 CommandModeIndicator()
                                     .transition(.opacity)
                             }

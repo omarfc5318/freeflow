@@ -21,18 +21,40 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/AppTextInsertionCore.swift \
 	Sources/AppTextInsertionTarget.swift \
 	Sources/ContextInferenceFailure.swift \
+	Sources/ContextVocabularyCore.swift \
+	Sources/CorrectionLearningCore.swift \
+	Sources/DictationStyleCore.swift \
+	Sources/FLACUploadAudio.swift \
+	Sources/HandsFreeCore.swift \
 	Sources/LLMAPITransport.swift \
 	Sources/LLMCooldownManager.swift \
+	Sources/ManualCorrectionCore.swift \
+	Sources/MishearingTallyCore.swift \
 	Sources/ModelConfiguration.swift \
 	Sources/OriginalFieldInsertionPreference.swift \
 	Sources/PostProcessingService.swift \
 	Sources/RecordingCaptureTiming.swift \
 	Sources/RecordingTimerPreference.swift \
 	Sources/TranscriptionErrorPresentationCore.swift \
+	Sources/TextExpansionCore.swift \
 	Sources/TranscriptTextCore.swift \
 	Sources/TemperatureCapabilityCache.swift \
+	Sources/TranscriptionRequestCore.swift \
 	Sources/TranscriptionService.swift \
+	Sources/UndoDictationCore.swift \
+	Sources/TeddyBearCore.swift \
+	Sources/TeddyBeat.swift \
+	Sources/TeddyDougieCore.swift \
+	Sources/TeddySongSyncCore.swift \
+	Sources/TeddyLookCore.swift \
+	Sources/SpokenLookCore.swift \
+	Sources/LanguageProbeCore.swift \
+	Sources/TeddyRagdollCore.swift \
+	Sources/TeddyMilestoneCore.swift \
 	Sources/UpdateManager.swift \
+	Sources/UsageStatsCore.swift \
+	Sources/VocabularyMergeCore.swift \
+	Sources/WhisperBoostCore.swift \
 	Sources/ShortcutCore/DictationShortcutSessionController.swift \
 	Sources/ShortcutCore/ShortcutMatcher.swift \
 	Sources/ShortcutCore/ShortcutModels.swift

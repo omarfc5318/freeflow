@@ -58,6 +58,17 @@ enum LLMAPITransportTests {
             return StubLLMURLProtocol.requests
         }
 
+        let warmed = LLMAPITransport.prewarmURLs(baseURLs: [
+            "https://provider.invalid/openai/v1", " https://provider.invalid/v1/ ", "https://other.invalid:8443/v1",
+            "https://OTHER.invalid:8443/x", "http://localhost:11434/v1", "http://127.0.0.1:1234", "", "not a url", "ftp://x.invalid"
+        ])
+        // One URL per distinct remote http(s) origin.
+        TestSupport.expectEqual(
+            warmed.map(\.absoluteString), ["https://provider.invalid/openai/v1", "https://other.invalid:8443/v1"]
+        )
+        TestSupport.expect(LLMAPITransport.isStaleConnectionError(URLError(.networkConnectionLost)), "Dropped connection counts as stale")
+        TestSupport.expect(!LLMAPITransport.isStaleConnectionError(URLError(.timedOut)), "Timeout is not retried as stale")
+
         let rejected = "{\"error\":{\"code\":\"unsupported_parameter\",\"param\":\"temperature\",\"message\":\"temperature is unsupported\"}}"
         let accepted = "{\"choices\":[]}"
         let retry = try! await perform([(400, rejected), (200, accepted)])

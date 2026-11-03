@@ -102,6 +102,16 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
     /// to a realtime transcription socket. The recorder writes a normalized
     /// 16 kHz mono PCM16 WAV file independently for upload-based transcription.
     var onPCM16Samples: ((Data) -> Void)?
+    /// Called on the capture queue with each buffer's RMS level (0...1) and length in
+    /// seconds. Levels only; no audio leaves the recorder through this callback. Set and
+    /// cleared from the main thread while capture runs, so access goes through a lock.
+    var onLevelSample: (@Sendable (Float, TimeInterval) -> Void)? {
+        get { levelSampleHandlerLock.withLock { $0 } }
+        set { levelSampleHandlerLock.withLock { $0 = newValue } }
+    }
+    private let levelSampleHandlerLock = OSAllocatedUnfairLock<(@Sendable (Float, TimeInterval) -> Void)?>(
+        initialState: nil
+    )
     private let recordingConverterLock = OSAllocatedUnfairLock<AVAudioConverter?>(initialState: nil)
     private let pcm16ConverterLock = OSAllocatedUnfairLock<AVAudioConverter?>(initialState: nil)
     private let recordingTargetFormat: AVAudioFormat = {
@@ -225,18 +235,28 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
         sessionObservers.removeAll()
     }
 
-    private func teardownSessionLocked() {
+    /// Detaches the sample delegate (no further audio is recorded from this point) and releases
+    /// the session. `stopRunning()` is a slow hardware teardown; with `deferringStop` it is
+    /// returned to the caller instead of run, so the file can be finalized and handed on first.
+    @discardableResult
+    private func teardownSessionLocked(deferringStop: Bool = false) -> AVCaptureSession? {
         removeSessionObservers()
         isSessionInterrupted = false
 
         audioDataOutput?.setSampleBufferDelegate(nil, queue: nil)
+        var sessionToStop: AVCaptureSession?
         if let session = captureSession, session.isRunning {
-            session.stopRunning()
+            if deferringStop {
+                sessionToStop = session
+            } else {
+                session.stopRunning()
+            }
         }
 
         captureSession = nil
         currentInput = nil
         audioDataOutput = nil
+        return sessionToStop
     }
 
     private func reportRecordingFailure(_ error: Error, completion: ((URL?) -> Void)? = nil) {
@@ -689,7 +709,10 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
 
         sessionQueue.async {
             self.cancelWatchdog()
-            self.teardownSessionLocked()
+            // Audio capture ends when the delegate is detached; the file is complete once the
+            // queue drains. Hand the file on before the slow hardware stop, which then runs
+            // here (on the serial session queue, so a new recording still waits for it).
+            let sessionToStop = self.teardownSessionLocked(deferringStop: true)
             let outputURL = self.finishAudioFileLocked(discard: false)
             self._recording.withLock { $0 = false }
             self.liveLevelNormalizerLock.withLock { $0.reset() }
@@ -698,6 +721,7 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
                 self.audioLevel = 0.0
                 completion(outputURL)
             }
+            sessionToStop?.stopRunning()
         }
     }
 
@@ -715,6 +739,17 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
             DispatchQueue.main.async {
                 self.isRecording = false
                 self.audioLevel = 0.0
+            }
+        }
+    }
+
+    /// Like `cleanup()` but never blocks the caller: it runs after any queued work on the
+    /// session queue (such as a deferred hardware stop) and before any later recording starts.
+    func cleanupWithoutWaiting() {
+        sessionQueue.async {
+            if let url = self.tempFileURL {
+                try? FileManager.default.removeItem(at: url)
+                self.tempFileURL = nil
             }
         }
     }
@@ -750,6 +785,9 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
         ) else { return 0 }
 
         let rms = rmsLevel(for: inputBuffer)
+        if let handler = onLevelSample, sourceFormat.sampleRate > 0 {
+            handler(rms, Double(frameCount) / sourceFormat.sampleRate)
+        }
         let normalizedDisplayLevel = liveLevelNormalizerLock.withLock {
             $0.normalizedLevel(forRMS: rms)
         }

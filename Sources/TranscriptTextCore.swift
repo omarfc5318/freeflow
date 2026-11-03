@@ -59,10 +59,19 @@ enum TranscriptionResponseParser {
         return text
     }
 
-    private static func isHallucination(text: String, json: [String: Any]) -> Bool {
-        let normalized = text
+    /// True for the stock phrases Whisper emits when it hears no speech ("Thank you.").
+    static func isStockSilencePhrase(_ text: String) -> Bool {
+        hallucinationPhrases.contains(normalizedPhrase(text))
+    }
+
+    private static func normalizedPhrase(_ text: String) -> String {
+        text
             .lowercased()
             .trimmingCharacters(in: CharacterSet.punctuationCharacters.union(.whitespacesAndNewlines))
+    }
+
+    private static func isHallucination(text: String, json: [String: Any]) -> Bool {
+        let normalized = normalizedPhrase(text)
         guard hallucinationPhrases.contains(normalized) else {
             return false
         }
