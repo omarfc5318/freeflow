@@ -67,7 +67,7 @@ private let rioEscapeKeyCode: UInt16 = 53
 
     /// To the right of the bear in the bottom-left corner, kept on screen.
     private func frame(for size: CGSize) -> CGRect {
-        guard let screen = NSScreen.screens.first else { return CGRect(origin: .zero, size: size) }
+        guard let screen = RioCompanionHub.homeScreen() ?? NSScreen.screens.first else { return CGRect(origin: .zero, size: size) }
         let visible = screen.visibleFrame
         let bearClearance: CGFloat = 84
         var origin = CGPoint(x: visible.minX + RioCompanionLayout.edgeInset + bearClearance, y: visible.minY + Self.margin)

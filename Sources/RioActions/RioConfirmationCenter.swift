@@ -64,7 +64,7 @@ final class RioConfirmationCenter: RioConfirming {
 
     /// Just above the corner bear, inside the visible screen.
     private func origin(for size: NSSize) -> NSPoint {
-        guard let screen = NSScreen.screens.first else { return .zero }
+        guard let screen = RioCompanionHub.homeScreen() ?? NSScreen.screens.first else { return .zero }
         let anchor = RioCompanionLayout.anchor(screenFrame: screen.frame, visibleFrame: screen.visibleFrame)
         let visible = screen.visibleFrame
         let x = min(max(anchor.x, visible.minX + 8), visible.maxX - size.width - 8)
