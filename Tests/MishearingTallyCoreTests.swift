@@ -6,6 +6,7 @@ enum MishearingTallyCoreTests {
     }
 
     static func run() {
+        testCommonSingleWordNeverBecomesARule()
         testFirstFixOnlyCounts()
         testSecondFixCreatesReplacement()
         testKeyIsCaseInsensitive()
@@ -15,6 +16,21 @@ enum MishearingTallyCoreTests {
         testPairStartsOverAfterPromotion()
         testCapDropsOldest()
         testRoundTripsThroughJSON()
+    }
+
+    private static func testCommonSingleWordNeverBecomesARule() {
+        // A rule rewrites every "hello" forever; a single everyday word must stay a prompt hint.
+        var tally = MishearingTally()
+        let known: (String) -> Bool = { ["hello", "cloud", "code"].contains($0) }
+        _ = tally.record(fix("Hello", "Hala"), existingRules: [], isKnownWord: known)
+        TestSupport.expect(tally.record(fix("Hello", "Hala"), existingRules: [], isKnownWord: known) == nil,
+                           "A single dictionary word must never become a replacement rule")
+        _ = tally.record(fix("cloud code", "Claude Code"), existingRules: [], isKnownWord: known)
+        TestSupport.expect(tally.record(fix("cloud code", "Claude Code"), existingRules: [], isKnownWord: known)?.heard == "cloud code",
+                           "A multi-word mishearing may become a rule")
+        _ = tally.record(fix("Halla", "Hala"), existingRules: [], isKnownWord: known)
+        TestSupport.expect(tally.record(fix("Halla", "Hala"), existingRules: [], isKnownWord: known)?.heard == "Halla",
+                           "A single non-dictionary mishearing may become a rule")
     }
 
     private static func testFirstFixOnlyCounts() {

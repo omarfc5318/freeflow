@@ -73,6 +73,10 @@ extension AppState {
     /// Adds the corrected words to the vocabulary and counts each mishearing; one fixed twice
     /// becomes a replacement rule, which also works when the word is already in the vocabulary.
     @discardableResult
+    private static func isDictionaryWord(_ word: String) -> Bool {
+        NSSpellChecker.shared.checkSpelling(of: word, startingAt: 0).location == NSNotFound
+    }
+
     func learn(from corrections: [LearnedCorrection]) -> LearnOutcome {
         var outcome = LearnOutcome()
         outcome.addedTerms = addVocabularyTerms(corrections.map(\.corrected))
@@ -80,7 +84,7 @@ extension AppState {
         var tally: MishearingTally = Self.loadStoredJSON(forKey: Self.mishearingTallyStorageKey) ?? MishearingTally()
         var rules = wordReplacements
         for correction in corrections {
-            if let rule = tally.record(correction, existingRules: rules) {
+            if let rule = tally.record(correction, existingRules: rules, isKnownWord: Self.isDictionaryWord) {
                 rules.append(rule)
                 outcome.newRules.append(rule)
             }

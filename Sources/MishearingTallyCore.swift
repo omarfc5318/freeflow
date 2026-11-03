@@ -27,9 +27,16 @@ struct MishearingTally: Codable, Equatable {
 
     /// Counts one fix. Returns the replacement rule to add once the pair reached the threshold
     /// and no rule for the same heard phrase exists yet (a rule the user wrote always wins).
-    mutating func record(_ correction: LearnedCorrection, existingRules: [WordReplacement]) -> WordReplacement? {
+    /// A single everyday word ("Hello" → "Hala") never becomes a rule: rules rewrite every
+    /// whole-word match in every dictation, so it would replace the real word too.
+    mutating func record(
+        _ correction: LearnedCorrection,
+        existingRules: [WordReplacement],
+        isKnownWord: (String) -> Bool = { _ in false }
+    ) -> WordReplacement? {
         guard Self.isCountable(correction) else { return nil }
         let original = correction.original.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !original.contains(where: { $0.isWhitespace }), isKnownWord(original.lowercased()) { return nil }
         let corrected = correction.corrected.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let hasRule = existingRules.contains {
