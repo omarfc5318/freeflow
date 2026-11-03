@@ -23,6 +23,8 @@ enum WakeWordListenerStartResult: Equatable {
     /// Replace the recognition task before Apple's ~1 minute limit.
     static let taskLifetime: TimeInterval = 50
     private static let maxConsecutiveFailures = 5
+    /// Speech heard before the recognizer first shows "Rio" (partial results lag the voice).
+    private static let commandLeadSeconds = 1.5
 
     private let onCommand: @MainActor (String) -> Void
     private let engine = AVAudioEngine()
@@ -33,6 +35,8 @@ enum WakeWordListenerStartResult: Equatable {
     private var wantsListening = false
     private var isPaused = false
     private var pendingCommand: String?
+    /// Where in the recent audio the command began (for the Arabic second listen).
+    private var commandAudioMark: Int?
     private var consecutiveFailures = 0
     private var silenceTimer: Task<Void, Never>?
     private var lifetimeTimer: Task<Void, Never>?
@@ -176,6 +180,7 @@ enum WakeWordListenerStartResult: Equatable {
         silenceTimer?.cancel()
         lifetimeTimer?.cancel()
         pendingCommand = nil
+        commandAudioMark = nil
         task?.cancel()
         task = nil
         guard let recognizer else { return }
@@ -208,6 +213,7 @@ enum WakeWordListenerStartResult: Equatable {
         if let text {
             consecutiveFailures = 0
             if let command = WakePhraseExtractor.command(in: text), command != pendingCommand {
+                if pendingCommand == nil { commandAudioMark = requestBox.mark(secondsBack: Self.commandLeadSeconds) }
                 pendingCommand = command
                 scheduleSilenceTimer(generation: generation)
             }
@@ -242,9 +248,23 @@ enum WakeWordListenerStartResult: Equatable {
     /// old words can't come back.
     private func finishCommandAndRestart() {
         let command = pendingCommand
+        let mark = commandAudioMark
         pendingCommand = nil
+        commandAudioMark = nil
         beginRecognitionTask()
-        if let command { onCommand(command) }
+        guard let command else { return }
+        // Arabic after "Rio" comes out as nonsense from the English recognizer: read that
+        // command's audio again with Whisper when the text doesn't look like a command.
+        guard let mark, RioCommandAudioRecheck.isAvailable(forOnDeviceText: command),
+              let audio = requestBox.recentAudio(since: mark) else {
+            onCommand(command)
+            return
+        }
+        Task { @MainActor [weak self] in
+            let better = await RioCommandAudioRecheck.transcribe(pcm16: audio.pcm16, sampleRate: audio.sampleRate)
+            guard let self, self.wantsListening, !self.isPaused else { return }
+            self.onCommand(better ?? command)
+        }
     }
 
     /// The recognizer failed (not by our own cancel): retry, and give up after repeated failures.
@@ -271,6 +291,12 @@ enum WakeWordListenerStartResult: Equatable {
 private final class RecognitionRequestBox: @unchecked Sendable {
     private let lock = NSLock()
     private var request: SFSpeechAudioBufferRecognitionRequest?
+    // A short rolling copy of the microphone (mono PCM16, about 16 kHz), in memory only, so a
+    // command's audio can be read again. `written` counts samples since the engine started.
+    private static let recentSeconds = 12
+    private var recent: [Int16] = []
+    private var written = 0
+    private var recentRate = 16_000
 
     func replace(with newRequest: SFSpeechAudioBufferRecognitionRequest?) {
         lock.lock()
@@ -283,6 +309,50 @@ private final class RecognitionRequestBox: @unchecked Sendable {
     func append(_ buffer: AVAudioPCMBuffer) {
         lock.lock()
         request?.append(buffer)
+        keepRecent(buffer)
         lock.unlock()
+    }
+
+    /// A position `secondsBack` before now, for `recentAudio(since:)`.
+    func mark(secondsBack: Double) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return max(0, written - Int(secondsBack * Double(recentRate)))
+    }
+
+    /// Audio from `mark` to now, or nil when it is too short or has already scrolled out.
+    func recentAudio(since mark: Int) -> (pcm16: Data, sampleRate: Int)? {
+        lock.lock()
+        defer { lock.unlock() }
+        let start = max(mark, written - recent.count)
+        let count = written - start
+        guard count >= recentRate / 3 else { return nil }
+        var data = Data(capacity: count * 2)
+        for sample in recent.suffix(count) {
+            withUnsafeBytes(of: sample.littleEndian) { data.append(contentsOf: $0) }
+        }
+        return (data, recentRate)
+    }
+
+    /// Caller holds the lock. Averages down to about 16 kHz and keeps the last few seconds.
+    private func keepRecent(_ buffer: AVAudioPCMBuffer) {
+        guard let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return }
+        let step = max(1, Int(buffer.format.sampleRate / 16_000))
+        let rate = Int(buffer.format.sampleRate) / step
+        if rate != recentRate {
+            recent = []
+            recentRate = rate
+        }
+        let frames = Int(buffer.frameLength)
+        var index = 0
+        while index + step <= frames {
+            var sum: Float = 0
+            for offset in 0..<step { sum += channel[index + offset] }
+            recent.append(Int16(max(-1, min(1, sum / Float(step))) * 32_767))
+            index += step
+            written += 1
+        }
+        let limit = Self.recentSeconds * recentRate
+        if recent.count > limit { recent.removeFirst(recent.count - limit) }
     }
 }
