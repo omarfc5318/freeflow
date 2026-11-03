@@ -18,6 +18,12 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioActionTypes.swift \
 	Sources/RioActions/RioActionHandlers.swift \
 	Sources/RioActions/RioContextPhrases.swift \
+	Sources/RioActions/RioSmartSchema.swift \
+	Sources/RioActions/RioSmartPrompt.swift \
+	Sources/RioActions/RioSmartResolver.swift \
+	Sources/RioActions/RioSmartLLMClient.swift \
+	Sources/RioActions/RioMessagingCore.swift \
+	Sources/RioActions/RioConfirmationContent.swift \
 	Sources/RioActions/RioVoicePhrases.swift \
 	Sources/RioActions/RioKnowledgePhrases.swift \
 	Sources/RioActions/RioSystemPhrases.swift \

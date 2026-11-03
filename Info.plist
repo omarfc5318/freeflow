@@ -26,6 +26,14 @@
     <string>FreeFlow needs microphone access to transcribe your speech.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Rio Dictate uses speech recognition to turn your voice into text, and for on-device listening for "Rio" in conversation mode. Conversation mode listening never leaves your Mac.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>Rio Dictate looks up the person you name (for example "text Ali") in your Contacts on this Mac to find their number. Contacts are never uploaded or stored.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Rio Dictate controls Messages to send a text only after you confirm it.</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>Rio Dictate adds reminders when you ask, for example "remind me to call Mom at 3".</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>Rio Dictate adds reminders when you ask, for example "remind me to call Mom at 3".</string>
     <key>NSAccessibilityUsageDescription</key>
     <string>FreeFlow needs accessibility access to detect the text cursor position and paste transcribed text.</string>
 </dict>

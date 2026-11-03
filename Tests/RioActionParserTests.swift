@@ -285,9 +285,9 @@ enum RioActionParserTests {
             ("tell me a joke", unk("tell me a joke")),
             ("chrome", unk("chrome")),
             ("hello there", unk("hello there")),
-            ("send a message to Sarah saying hi", unk("send a message to Sarah saying hi")),
+            ("send the report to Sarah", unk("send the report to Sarah")),
             ("remind me to call mom", unk("remind me to call mom")),
-            ("summarize this", unk("summarize this")),
+            ("summarize the news", unk("summarize the news")),
         ]
     }
 
