@@ -2706,6 +2706,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         errorMessage = nil
 
         isRecording = true
+        // Rio stops talking the moment you start talking to him.
+        MainActor.assumeIsolated { RioVoice.shared.stopSpeaking() }
         recordingStartedAt = Date()
         statusText = "Starting..."
         hasShownScreenshotPermissionAlert = false
@@ -4170,6 +4172,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     /// Mirrors Rio's voice, timer, celebration and help state onto AppState for the corner bear.
     @MainActor func bindRioCompanionState() {
         guard rioCompanionStateSubscriptions.isEmpty else { return }
+        RioVoice.shared.isRioRecordingProvider = { [weak self] in self?.isRecording ?? false }
         let voice = RioVoice.shared
         let center = RioCompanionCenter.shared
         voice.$isSpeaking.removeDuplicates().sink { [weak self] in self?.isRioSpeaking = $0 }

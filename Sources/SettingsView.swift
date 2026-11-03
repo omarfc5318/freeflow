@@ -730,6 +730,9 @@ struct GeneralSettingsView: View {
                 SettingsCard("Rio in the Corner", icon: "pawprint.fill") {
                     RioCompanionSettingsSection()
                 }
+                SettingsCard("Rio's Voice", icon: "speaker.wave.2.fill") {
+                    RioVoiceSettingsSection()
+                }
                 SettingsCard("Edit Mode", icon: "pencil") {
                     commandModeSection
                 }

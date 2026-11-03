@@ -11,7 +11,8 @@ struct RioActionParser {
     }
 
     func parse(_ transcript: String) -> RioActionParse {
-        let body = Self.stripEnvelope(transcript)
+        // "2 and a half minutes" must not split into two clauses on "and" (timers only).
+        let body = RioTimerPhrases.protectingDurations(in: Self.stripEnvelope(transcript))
         guard !body.isEmpty else { return .empty }
 
         var clauses = Self.splitClauses(body)
