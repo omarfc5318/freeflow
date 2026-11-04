@@ -36,11 +36,22 @@ import Foundation
         self.isOnline = isOnline
     }
 
-    /// Returns `transcript` unchanged when it's already English or can't be translated.
+    /// Returns `transcript` unchanged when it's already English or can't be translated. Records
+    /// the language the command was spoken in (`RioSpokenLanguageMemory`) on every call, so the
+    /// brain answers an Arabic question in Arabic and an English one in English.
     func englishCommand(from transcript: String) async -> String {
         // A command is running: the translator (if on) steps aside while Rio answers.
         RioTranslatorMode.shared.noteCommandHeard()
-        switch RioCommandTranslationPlan.plan(for: transcript) {
+        let plan = RioCommandTranslationPlan.plan(for: transcript)
+        let english = await translate(transcript, plan: plan)
+        RioSpokenLanguageMemory.shared.record(
+            RioSpokenLanguage.detect(transcript: transcript, plan: plan), english: english, at: Date()
+        )
+        return english
+    }
+
+    private func translate(_ transcript: String, plan: RioCommandTranslationPlan) async -> String {
+        switch plan {
         case .unchanged:
             return transcript
         case .offline(let english):

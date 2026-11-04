@@ -30,6 +30,9 @@ import Foundation
     private var lastWordLength = 5
     private var lastSilenceCheck = Date.distantPast
     private lazy var voice: AVSpeechSynthesisVoice? = Self.chooseVoice()
+    /// For answers in Arabic script (an Arabic question gets an Arabic answer); English voices
+    /// cannot read it.
+    private lazy var arabicVoice: AVSpeechSynthesisVoice? = Self.chooseArabicVoice()
 
     private init() {
         delegateBridge.owner = self
@@ -45,7 +48,7 @@ import Foundation
         lastSpokenText = prepared
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
         let utterance = RioUtterance(string: prepared, token: tracker.begin())
-        utterance.voice = voice
+        utterance.voice = RioArabicVoiceChooser.needsArabicVoice(prepared) ? (arabicVoice ?? voice) : voice
         utterance.pitchMultiplier = RioVoiceStyle.pitch
         utterance.rate = RioVoiceStyle.rate
         utterance.volume = RioVoiceStyle.volume
@@ -87,6 +90,18 @@ import Foundation
             return voice
         }
         return AVSpeechSynthesisVoice(language: "en-US")
+    }
+
+    /// The best installed Arabic voice, else the system's Saudi Arabic voice.
+    private static func chooseArabicVoice() -> AVSpeechSynthesisVoice? {
+        let candidates = AVSpeechSynthesisVoice.speechVoices().map { voice in
+            RioVoiceCandidate(identifier: voice.identifier, name: voice.name, language: voice.language, quality: quality(of: voice))
+        }
+        if let picked = RioArabicVoiceChooser.pick(from: candidates),
+           let voice = AVSpeechSynthesisVoice(identifier: picked.identifier) {
+            return voice
+        }
+        return AVSpeechSynthesisVoice(language: "ar-SA")
     }
 
     private static func quality(of voice: AVSpeechSynthesisVoice) -> RioVoiceQuality {

@@ -109,13 +109,22 @@ struct RioSmartResolver: RioSmartResolving {
         let context = request.context
         let hasMac = context.frontApp != nil || context.frontWindowTitle != nil || !context.runningApps.isEmpty || !context.installedApps.isEmpty
         let isWorldQuestion = request.attempt == nil && !hasMac && RioQuestionShape.isGeneralQuestion(command)
+        let language = request.spokenLanguage
         let system = isWorldQuestion
-            ? RioSmartPrompt.question(now: moment, timeZone: zone)
-            : RioSmartPrompt.system(now: moment, timeZone: zone)
-        let user = RioSmartPrompt.user(request: RioSmartRequest(command: command, context: request.context, attempt: request.attempt))
+            ? RioSmartPrompt.question(now: moment, timeZone: zone, spokenLanguage: language)
+            : RioSmartPrompt.system(now: moment, timeZone: zone, spokenLanguage: language)
+        let user = RioSmartPrompt.user(request: RioSmartRequest(
+            command: command, context: request.context, attempt: request.attempt, spokenLanguage: language
+        ))
         switch await complete(system: system, user: user) {
         case .reply(let reply):
-            let actions = RioSmartResponseParser.actions(from: reply, now: moment, timeZone: zone)
+            let parsed = RioSmartResponseParser.plan(from: reply, now: moment, timeZone: zone)
+            var actions = RioSmartPlanGuards.apply(parsed.actions, command: command)
+            // Nothing is dropped silently: a plan cut to six steps, or a command too long to send
+            // whole, is said out loud after the steps that ran.
+            if !actions.isEmpty {
+                actions += RioSmartPlanGuards.notices(planWasCut: parsed.wasCut, commandWasClipped: RioSmartPrompt.isClipped(command))
+            }
             for case .runTask(let goal) in actions {
                 plannedGoals.record(goal: goal.trimmingCharacters(in: .whitespacesAndNewlines), command: command, at: moment)
             }

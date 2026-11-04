@@ -221,6 +221,8 @@ enum RioUnderstandingRoutingTests {
             "cmd n", "cmd t", "cmd shift t", "cmd w", "cmd leftbracket", "cmd rightbracket", "cmd r", "cmd f",
             "cmd equal", "cmd minus", "cmd 0", "ctrl tab", "ctrl shift tab", "cmd backtick", "escape",
             "up", "down", "left", "right", "pageup", "pagedown", "home", "end",
+            // Round 2: private window, hard reload, command palette, previous app.
+            "cmd shift n", "cmd shift r", "cmd shift p", "cmd tab",
         ]).union((1...9).map { "cmd \($0)" })
         var passed: Set<String> = []
         for key in KeyCombo.allowedKeys {
@@ -625,7 +627,9 @@ enum RioUnderstandingRoutingTests {
     /// request); the system prompt and the per-command context must stay small.
     private static func testPromptIsCompact() {
         let system = RioSmartPrompt.system(now: now, timeZone: utc)
-        TestSupport.expect(system.count < 7_400, "system prompt stays compact (\(system.count))")
+        // Round 2 added the live-facts, chat-app, mic, "answer that" and site rules (~1.2k characters);
+        // world questions moved to the short prompt more than pay for it.
+        TestSupport.expect(system.count < 8_700, "system prompt stays compact (\(system.count))")
         let question = RioSmartPrompt.question(now: now, timeZone: utc)
         TestSupport.expect(question.count < 1_300, "the world-question prompt is short (\(question.count))")
         let many = (0..<150).map { "Installed App \($0)" }
