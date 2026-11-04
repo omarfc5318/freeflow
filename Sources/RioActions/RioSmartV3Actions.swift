@@ -332,36 +332,45 @@ enum RioSmartPlanGuards {
     }
 
     static func vettedURL(_ url: URL, command: String) -> URL? {
-        guard let host = url.host?.lowercased(), let scheme = url.scheme?.lowercased() else { return nil }
-        let commandWords = Set(words(command))
+        guard let host = url.host?.lowercased(), let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http" else { return nil }
+        // Login parts can carry data or disguise the real host (security review).
+        guard url.user == nil, url.password == nil else { return nil }
+        let spoken = tokens(command)
+        let commandWords = Set(spoken)
         let site = registrableDomain(host)
-        guard siteIsNamed(site, commandWords: commandWords, command: command) || isKnownSite(site) else { return nil }
+        guard siteIsNamed(site, spoken: spoken, command: command) || isKnownSite(site) else { return nil }
         // One of Rio's own built-in addresses (Gmail's inbox link) carries nothing the model wrote.
         if RioWebURLs.isBuiltInSiteURL(url) { return url }
-        // Security review: every host label beyond the site must be a word the owner said
-        // ("docs" in "open google docs"); otherwise the link goes to the site itself, so a
-        // hostile page can't hide data in a subdomain.
+        // Every host label beyond the site must be a word the owner said ("docs" in "open google
+        // docs") or the host of a known site he named; otherwise the link goes to the site itself.
         let bare = RioWebHostRules.bareHost(host)
         let extra = bare == site ? [] : bare.dropLast(site.count + 1).split(separator: ".").map(String.init)
         let saidHost = extra.allSatisfy({ commandWords.contains($0) }) || namedKnownHosts(command).contains(bare)
-        let www = host.hasPrefix("www.")
-        let keptHost = saidHost ? host : (www ? "www." + site : site)
-        // Path, query and fragment: every token (single letters too) must be a whole word the
-        // owner said, or the link is cut to the home page.
-        let rest = [url.path, url.query, url.fragment].compactMap { $0 }.joined(separator: " ")
-        let restTokens = tokens(rest.removingPercentEncoding ?? rest)
-        if saidHost, restTokens.allSatisfy({ commandWords.contains($0) }) { return url }
-        var origin = URLComponents()
-        origin.scheme = scheme
-        origin.host = keptHost
-        origin.port = url.port
-        origin.path = "/"
-        if restTokens.allSatisfy({ commandWords.contains($0) }), let path = URLComponents(url: url, resolvingAgainstBaseURL: false) {
-            origin.path = path.path.isEmpty ? "/" : path.path
-            origin.query = path.query
-            origin.fragment = path.fragment
+        let keptHost = saidHost ? host : (host.hasPrefix("www.") ? "www." + site : site)
+        // The link is rebuilt from checked parts only: a port only if said, query and fragment
+        // never, and the path only from the owner's words, in his order, each used no more often
+        // than he said it (security review).
+        var rebuilt = URLComponents()
+        rebuilt.scheme = scheme
+        rebuilt.host = keptHost
+        if let port = url.port, spoken.contains(String(port)) { rebuilt.port = port }
+        rebuilt.path = spokenPath(url.path, spoken: spoken) ?? "/"
+        return rebuilt.url
+    }
+
+    /// The path's segments, each exactly one spoken word (letters and digits only), appearing in
+    /// the command in the same order with no word reused; nil when any segment isn't.
+    private static func spokenPath(_ path: String, spoken: [String]) -> String? {
+        let segments = path.split(separator: "/").map { String($0).lowercased() }
+        guard !segments.isEmpty else { return nil }
+        var cursor = spoken.startIndex
+        for segment in segments {
+            guard segment.allSatisfy({ ($0.isLetter || $0.isNumber) && $0.isASCII }),
+                  let found = spoken[cursor...].firstIndex(of: segment) else { return nil }
+            cursor = spoken.index(after: found)
         }
-        return origin.url
+        return "/" + segments.joined(separator: "/")
     }
 
     /// Lowercased runs of letters and digits, any length (so the owner's "r" in "r slash swift" counts).
@@ -402,10 +411,18 @@ enum RioSmartPlanGuards {
 
     /// The owner said the site: its name ("vercel"), its domain, or a known site's spoken name
     /// ("twitter" for x.com).
-    private static func siteIsNamed(_ site: String, commandWords: Set<String>, command: String) -> Bool {
-        guard let name = site.split(separator: ".").first.map(String.init) else { return false }
-        if !commandVocabulary.contains(name), commandWords.contains(name) { return true }
-        if RioText.compact(command).contains(RioText.compact(site)) { return true }
+    /// The owner named the site: its main name as a whole spoken word (three letters or more, not
+    /// a number or a command word), its domain spoken word by word ("example dot org"), or a known
+    /// site's spoken name. No substring matching (security review).
+    private static func siteIsNamed(_ site: String, spoken: [String], command: String) -> Bool {
+        let labels = site.split(separator: ".").map(String.init)
+        guard let name = labels.first else { return false }
+        if name.count >= 3, !name.allSatisfy(\.isNumber), !commandVocabulary.contains(name), spoken.contains(name) { return true }
+        let withoutDots = spoken.filter { $0 != "dot" }
+        if labels.count <= withoutDots.count,
+           (0...(withoutDots.count - labels.count)).contains(where: { Array(withoutDots[$0..<($0 + labels.count)]) == labels }) {
+            return true
+        }
         let spoken = command.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
         for start in spoken.indices {
             for end in start..<min(spoken.count, start + 3) {

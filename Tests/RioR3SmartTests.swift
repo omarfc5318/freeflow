@@ -60,6 +60,21 @@ enum RioR3SmartTests {
         // The owner's own words survive.
         TestSupport.expect(vet("https://github.com/anthropics", "open github anthropics") == "https://github.com/anthropics", "said words kept")
         TestSupport.expect(vet("https://docs.google.com/", "open google docs") == "https://docs.google.com/", "said subdomain kept")
+        // Login parts and unsaid ports never pass (they can carry data or disguise the host).
+        TestSupport.expect(vet("https://leak@github.com/", "open github") == nil, "username refused")
+        TestSupport.expect(vet("https://a:b@github.com/", "open github") == nil, "password refused")
+        TestSupport.expect(vet("https://github.com:8443/", "open github") == "https://github.com/", "unsaid port dropped")
+        // Query and fragment are dropped; the path is rebuilt from spoken words, in spoken order,
+        // each used no more often than said.
+        TestSupport.expect(vet("https://github.com/anthropics?ref=leak#x", "open github anthropics") == "https://github.com/anthropics", "query dropped")
+        TestSupport.expect(vet("https://github.com/docs/open", "open github docs") == "https://github.com/", "out of spoken order")
+        TestSupport.expect(vet("https://github.com/docs/docs", "open github docs") == "https://github.com/", "word reused")
+        TestSupport.expect(vet("https://github.com/docs-1", "open github docs 1") == "https://github.com/", "separator not said")
+        TestSupport.expect(vet("https://reddit.com/r/swift", "open reddit r slash swift") == "https://reddit.com/r/swift", "spoken path kept")
+        // Site naming: whole words only, three letters or more.
+        TestSupport.expect(vet("https://pen.io/", "open io") == nil, "no substring site match")
+        TestSupport.expect(vet("https://qz.example/", "open qz") == nil, "too short to name a site")
+        TestSupport.expect(vet("https://example.org/docs", "open example dot org slash docs") == "https://example.org/docs", "spoken domain")
     }
 
     static func run() async {

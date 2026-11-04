@@ -4338,6 +4338,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
         // "Rio, stop" while translating stops the translator (not a timer that isn't there).
         if RioConversationCommands.isBareStop(transcript), RioTranslatorMode.shared.isOn {
+            dropPendingConversationCommand()
             RioTranslatorMode.shared.stop(.voice)
             return finishRioAction(.succeeded("Stopped translating"), transcript: transcript, actions: [.stopTranslation])
         }
@@ -4358,6 +4359,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
             self?.statusText = line
             self?.rioActionPhase = .working(line)
         }
+        // The owner declined or braked: whatever conversation mode queued behind it doesn't run.
+        if case .cancelled = outcome { dropPendingConversationCommand() }
         if RioConversationCommands.includesStopListening(coordinator.lastActions) {
             RioConversationMode.shared.stop(.stopListening)
         }
@@ -4476,7 +4479,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
     /// Silences a ringing timer and ends a running task, the live translator and Rio's own voice.
     /// True when any of them was going.
     @MainActor private func stopRioActivities() -> Bool {
-        var stoppedSomething = false
+        // A stop on any path also drops a conversation command waiting its turn (security review).
+        var stoppedSomething = dropPendingConversationCommand()
         if RioTimerCenter.shared.isRinging {
             RioTimerCenter.shared.stopRinging()
             stoppedSomething = true
@@ -4492,6 +4496,15 @@ final class AppState: ObservableObject, @unchecked Sendable {
         if RioVoice.shared.isSpeaking { stoppedSomething = true }
         RioVoice.shared.stopSpeaking()
         return stoppedSomething
+    }
+
+    /// Forgets the conversation command waiting for the current one to finish. True if there was one.
+    @MainActor @discardableResult private func dropPendingConversationCommand() -> Bool {
+        let hadOne = !rioConversationPending.isEmpty
+        rioConversationPendingCheck?.cancel()
+        rioConversationPendingCheck = nil
+        rioConversationPending.clear()
+        return hadOne
     }
 
     /// Fn + Control while offline: transcribe the recording on-device, then run it as usual.
