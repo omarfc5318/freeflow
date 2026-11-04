@@ -26,6 +26,21 @@ struct RioFollowUpContext: Equatable {
     /// Set after a command Rio couldn't work out (no brain, or it failed): "send that to Ali"
     /// must not forward an older answer as if it were the reply to that command.
     var isSendableSuppressed = false
+    /// Every action the last command ran, in order ("open Chrome and put it on the left" is two).
+    /// `lastAction` is its last element.
+    var lastChain: [RioAction] = []
+    /// `lastApp` was quit or hidden since it was named: "make it full screen" can't mean it.
+    var isLastAppGone = false
+
+    /// The query of the last search, when the last action was one: a web search, or a site's own
+    /// search page ("do the same on YouTube" opened YouTube's results).
+    var lastSearchQuery: String? {
+        switch lastAction {
+        case .webSearch(let query)?: return RioFollowUpSearch.plainQuery(query)
+        case .openURL(let url)?: return RioFollowUpSearch.query(inSiteSearch: url)
+        default: return nil
+        }
+    }
 
     /// Text "send that to Ali" can carry: the last message sent, or the last answer.
     var sendableBody: String? {
@@ -54,6 +69,13 @@ final class RioFollowUpMemory: @unchecked Sendable {
     /// A launch note older than this when `record()` runs belongs to some other command.
     static let launchNoteLifetime: TimeInterval = 10
     private var environmentProvider: (@Sendable () -> RioFollowUpEnvironment)?
+    /// True while actions recorded belong to the same command. Reading the context (the
+    /// coordinator and the parser do, once a command is heard and before it runs) or
+    /// `beginCommand()` closes it, so the next record starts a new chain.
+    private var isChainOpen = false
+    /// A record this long after the previous one never joins its chain.
+    static let chainGap: TimeInterval = 60
+    static let maxChainLength = 8
 
     init() {}
 
@@ -67,14 +89,36 @@ final class RioFollowUpMemory: @unchecked Sendable {
     func record(_ action: RioAction, now: Date = Date()) {
         lock.lock()
         defer { lock.unlock() }
+        let joinsChain = isChainOpen && recordedAt.map { abs(now.timeIntervalSince($0)) <= Self.chainGap } == true
+        let chain = (joinsChain ? context.lastChain : []) + [action]
+        context.lastChain = Array(chain.suffix(Self.maxChainLength))
+        isChainOpen = true
         context.lastAction = action
         context.lastActionAt = now
         context.isSendableSuppressed = false
         context.lastActionLaunchedApp = Self.opensApp(action)
             && pendingLaunchAt.map { abs(now.timeIntervalSince($0)) <= Self.launchNoteLifetime } == true
         pendingLaunchAt = nil
-        if let app = Self.appName(in: action) { context.lastApp = app }
+        if let app = Self.appName(in: action) {
+            context.lastApp = app
+            context.isLastAppGone = Self.closesApp(action)
+        }
         recordedAt = now
+    }
+
+    /// A new command starts: what it runs is a new chain (the coordinator may call this before
+    /// running a command; reading a snapshot does the same).
+    func beginCommand() {
+        lock.lock()
+        defer { lock.unlock() }
+        isChainOpen = false
+    }
+
+    private static func closesApp(_ action: RioAction) -> Bool {
+        switch action {
+        case .quitApp, .hideApp: return true
+        default: return false
+        }
     }
 
     /// The executor's open or switch about to be recorded started a new process (nothing of that
@@ -103,6 +147,8 @@ final class RioFollowUpMemory: @unchecked Sendable {
     /// The context, or nil once nothing has run for `lifetime` seconds.
     func snapshot(now: Date = Date()) -> RioFollowUpContext? {
         lock.lock()
+        // A command is being understood: whatever it runs is not part of the previous chain.
+        isChainOpen = false
         let provider = environmentProvider
         guard let recordedAt, context.lastAction != nil, now.timeIntervalSince(recordedAt) <= Self.lifetime else {
             lock.unlock()
@@ -121,6 +167,7 @@ final class RioFollowUpMemory: @unchecked Sendable {
         context = RioFollowUpContext()
         recordedAt = nil
         pendingLaunchAt = nil
+        isChainOpen = false
     }
 
     private static func appName(in action: RioAction) -> String? {
@@ -146,7 +193,7 @@ enum RioFollowUpRewriter {
         guard !text.isEmpty else { return nil }
         return appVerb(text, context, now: now)
             ?? window(text, context)
-            ?? sameSearchOnSite(text, last)
+            ?? sameSearchOnSite(text, context)
             ?? sameFor(text, last, strict: true)
             ?? send(text, context)
             ?? sameFor(text, last, strict: false)
@@ -156,8 +203,14 @@ enum RioFollowUpRewriter {
     /// "open Slack", so the parser resolves the name exactly as if it had been said (the known-site
     /// fallback included) instead of a sure `openApp` of an app that may not exist.
     static func commandText(_ simplified: String, context: RioFollowUpContext?) -> String? {
-        guard let last = context?.lastAction else { return nil }
+        guard let context, let last = context.lastAction else { return nil }
         let text = simplified.trimmingCharacters(in: .whitespaces)
+        // After a search, "do the same for X" searches X and "the same on GitHub" keeps the query:
+        // `rewrite` does both. Turned into "open X" it would lose the search (finding 41).
+        if context.lastSearchQuery != nil { return nil }
+        // "Open Chrome and put it on the left", then "do the same for Warp": every step, which
+        // the parser builds from `sameForChain` (finding 42).
+        if sameForChain(text, context: context) != nil { return nil }
         let verb: String
         switch last {
         // A site opened by name ("open Slack" became app.slack.com) is still "open".
@@ -287,8 +340,15 @@ enum RioFollowUpRewriter {
 
     /// Only the phrasing the window parser doesn't already own ("put it on the left" and "move it to
     /// the next screen" keep acting on the front window, as before).
+    /// "Make it bigger", "make that full screen".
+    static func isMakeItBigger(_ simplified: String) -> Bool {
+        RioText.matches(#"^make\s+(?:it|that|this)\s+(?:bigger|larger|full\s?screen|maximi[sz]ed)$"#, simplified.trimmingCharacters(in: .whitespaces))
+    }
+
     private static func window(_ text: String, _ context: RioFollowUpContext) -> RioAction? {
-        guard RioText.matches(#"^make\s+(?:it|that|this)\s+(?:bigger|larger|full\s?screen|maximi[sz]ed)$"#, text) else { return nil }
+        guard isMakeItBigger(text) else { return nil }
+        // "Quit Warp", then "make it full screen": not Warp, which is gone. The front window is meant.
+        guard !context.isLastAppGone else { return .window(WindowCommand(appName: nil, placement: .maximize)) }
         let hasWindow: Bool
         if case .window? = context.lastAction { hasWindow = true } else { hasWindow = false }
         guard context.lastApp != nil || hasWindow else { return nil }
@@ -329,11 +389,15 @@ enum RioFollowUpRewriter {
 
     /// "Do the same on YouTube" after "search for cats": the same query on that site. Only a site
     /// after "on" or "in" keeps the query; "do the same for dogs" still replaces it.
-    private static func sameSearchOnSite(_ text: String, _ last: RioAction) -> RioAction? {
-        guard case .webSearch(let query) = last else { return nil }
+    /// After YouTube's results page too ("do the same on YouTube", then "same thing on GitHub").
+    private static func sameSearchOnSite(_ text: String, _ context: RioFollowUpContext) -> RioAction? {
+        guard let query = context.lastSearchQuery else { return nil }
         let patterns = [
-            #"^(?:(?:do|run|repeat)\s+)?(?:the\s+)?same(?:\s+thing)?\s+(?:on|in)\s+(.+)$"#,
-            #"^(?:do|run|repeat|search)\s+(?:that|it|this)\s+(?:on|in)\s+(.+)$"#,
+            #"^(?:(?:do|run|repeat)\s+)?(?:the\s+)?same(?:\s+(?:thing|search))?\s+(?:on|in)\s+(.+)$"#,
+            #"^(?:do|run|repeat|search|look\s+up|google)\s+(?:that|it|this)\s+(?:on|in)\s+(.+)$"#,
+            #"^look\s+(?:that|it|this)\s+up\s+(?:on|in)\s+(.+)$"#,
+            // "search YouTube for that".
+            #"^search\s+(?:on\s+|in\s+)?(.+?)\s+for\s+(?:that|it|this)$"#,
         ]
         for pattern in patterns {
             guard let raw = RioText.firstMatch(pattern, in: text)?[1], let site = cleanTarget(raw) else { continue }
@@ -375,7 +439,13 @@ enum RioFollowUpRewriter {
         case .switchToApp: return .switchToApp(name: target)
         case .hideApp: return .hideApp(name: target)
         case .window(let command): return .window(WindowCommand(appName: target, placement: command.placement))
-        case .webSearch: return .webSearch(query: target)
+        case .webSearch(let query):
+            // "do the same for dogs" after a reddit search stays on reddit.
+            let sites = RioFollowUpSearch.siteFilters(in: query)
+            return .webSearch(query: ([target] + sites).joined(separator: " "))
+        case .openURL(let url):
+            // After YouTube's results for cats, "do the same for dogs" is YouTube's results for dogs.
+            return RioFollowUpSearch.sameSite(as: url, query: target).map(RioAction.openURL)
         case .openFile: return .openFile(query: target)
         case .revealFile: return .revealFile(query: target)
         case .sendMessage(_, let body):
@@ -383,6 +453,50 @@ enum RioFollowUpRewriter {
             return messagingApps.contains(name) ? nil : .sendMessage(to: target, body: body)
         case .weather: return .weather(place: target)
         default: return nil
+        }
+    }
+
+    // MARK: Do the same for X, every step
+
+    /// "Open Chrome and put it on the left", then "do the same for Warp": the target and the
+    /// last command's steps, when it had more than one and every step is about one app (opening,
+    /// switching to, moving, hiding or quitting it). Nil otherwise: the last step alone is used.
+    static func sameForChain(_ simplified: String, context: RioFollowUpContext?) -> (target: String, chain: [RioAction])? {
+        guard let chain = context?.lastChain, chain.count > 1, let target = sameForTargetText(simplified) else { return nil }
+        var named: String?
+        for step in chain {
+            switch step {
+            case .openApp(let name), .switchToApp(let name), .quitApp(let name), .hideApp(let name):
+                guard named == nil || named?.lowercased() == name.lowercased() else { return nil }
+                named = name
+            case .window(let command):
+                guard let name = command.appName else { continue }
+                guard named == nil || named?.lowercased() == name.lowercased() else { return nil }
+                named = name
+            default:
+                return nil
+            }
+        }
+        return named == nil ? nil : (target, chain)
+    }
+
+    /// The X of "do the same for X", "and X too", "and now X"; nil for anything else.
+    static func sameForTargetText(_ simplified: String) -> String? {
+        let text = simplified.trimmingCharacters(in: .whitespaces)
+        return sameForTarget(text, strict: true) ?? sameForTarget(text, strict: false)
+    }
+
+    /// The chain with its app replaced by `app` in every step.
+    static func substitutingApp(_ app: String, in chain: [RioAction]) -> [RioAction] {
+        chain.map { step in
+            switch step {
+            case .openApp: return .openApp(name: app)
+            case .switchToApp: return .switchToApp(name: app)
+            case .quitApp: return .quitApp(name: app)
+            case .hideApp: return .hideApp(name: app)
+            case .window(let command): return .window(WindowCommand(appName: app, placement: command.placement))
+            default: return step
+            }
         }
     }
 
@@ -405,5 +519,49 @@ enum RioFollowUpRewriter {
         let name = words.joined(separator: " ")
         guard !name.isEmpty, name.count <= 40, !notATarget.contains(name.lowercased()) else { return nil }
         return name
+    }
+}
+
+/// Search queries in follow-up memory: a web search's words, or a site's own results page.
+enum RioFollowUpSearch {
+    /// The query without its "site:" filters ("site:reddit.com keyboards" -> "keyboards").
+    static func plainQuery(_ query: String) -> String? {
+        let words = query.split(separator: " ").filter { !$0.lowercased().hasPrefix("site:") }
+        let plain = words.joined(separator: " ")
+        return plain.isEmpty ? nil : plain
+    }
+
+    static func siteFilters(in query: String) -> [String] {
+        query.split(separator: " ").map(String.init).filter { $0.lowercased().hasPrefix("site:") }
+    }
+
+    /// The search page of each site Rio searches directly, and its query parameter.
+    private static let pages: [(host: String, path: String, parameter: String, build: (String) -> URL?)] = [
+        ("youtube.com", "/results", "search_query", RioWebURLs.youtubeSearchURL(query:)),
+        ("amazon.com", "/s", "k", RioWebURLs.amazonSearchURL(query:)),
+        ("github.com", "/search", "q", RioWebURLs.githubSearchURL(query:)),
+        ("stackoverflow.com", "/search", "q", RioWebURLs.stackOverflowSearchURL(query:)),
+        ("netflix.com", "/search", "q", RioWebURLs.netflixSearchURL(query:)),
+    ]
+
+    private static func page(for url: URL) -> (parameter: String, build: (String) -> URL?)? {
+        guard let host = url.host?.lowercased() else { return nil }
+        let bare = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        return pages.first { $0.host == bare && url.path == $0.path }.map { ($0.parameter, $0.build) }
+    }
+
+    /// "https://www.youtube.com/results?search_query=swift%20actors" -> "swift actors".
+    static func query(inSiteSearch url: URL) -> String? {
+        guard let page = page(for: url),
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let value = items.first(where: { $0.name == page.parameter })?.value else { return nil }
+        let query = RioText.collapseWhitespace(value)
+        return query.isEmpty ? nil : query
+    }
+
+    /// The same site's results for `query`; nil when `url` is not a site search page.
+    static func sameSite(as url: URL, query: String) -> URL? {
+        guard Self.query(inSiteSearch: url) != nil, let page = page(for: url) else { return nil }
+        return page.build(query)
     }
 }
