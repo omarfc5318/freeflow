@@ -19,6 +19,8 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioActionHandlers.swift \
 	Sources/RioActions/RioContextMemoryPhrases.swift \
 	Sources/RioActions/RioWritingPhrases.swift \
+	Sources/RioActions/RioWritingPrompts.swift \
+	Sources/RioActions/RioWritingFlow.swift \
 	Sources/RioActions/RioAutomationPhrases.swift \
 	Sources/RioActions/RioFindPhrases.swift \
 	Sources/RioActions/RioOutsidePhrases.swift \

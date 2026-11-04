@@ -61,6 +61,7 @@ struct FreeFlowTests {
         await RioSmartResolverTests.run()
         RioMessagingTests.run()
         RioImprovePolicyTests.run()
+        await RioWritingTests.run()
         AppNameMatcherTests.run()
         RioActionArgumentsTests.run()
         RioDateTimeParserTests.run()
