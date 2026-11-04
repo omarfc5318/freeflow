@@ -262,7 +262,9 @@ final class RioTaskRunner {
             state.pendingNavigation = url
             state.pendingObservations = Self.navigationGraceObservations
         }
-        return await execute(action, narration: narration, executor: executor, state: &state)
+        // Press or fill exactly the element that was checked (no swap between check and act).
+        let bound = RioTaskTargetMapper.bind(action, to: resolution)
+        return await execute(bound, narration: narration, executor: executor, state: &state)
     }
 
     private func execute(

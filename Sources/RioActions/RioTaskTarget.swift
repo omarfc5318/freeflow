@@ -44,6 +44,22 @@ enum RioTaskTargetMapper {
         }
     }
 
+    /// Binds a checked click or fill to the element that was checked: the label becomes that
+    /// element's own text, so if the page swaps the control between the check and the press, the
+    /// executor finds no exact match and the step fails instead of pressing something else.
+    /// Ambiguous (several candidates) or unresolved steps are returned unchanged.
+    static func bind(_ action: RioAction, to resolution: RioTaskTargetResolution) -> RioAction {
+        guard case .resolved(let candidates, _) = resolution, candidates.count == 1,
+              let text = candidates[0].texts.first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else {
+            return action
+        }
+        switch action {
+        case .click(_, let ordinal): return .click(label: text, ordinal: ordinal)
+        case .fillField(_, let value): return .fillField(label: text, text: value)
+        default: return action
+        }
+    }
+
     private static func trim(_ label: String) -> String { label.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     private static func map(_ resolution: RioClickResolution) -> RioTaskTargetResolution {

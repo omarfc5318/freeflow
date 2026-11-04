@@ -12,6 +12,9 @@ enum RioWebHostRules {
         let host = host.lowercased()
         if host == "localhost" || host.hasSuffix(".local") || host.hasSuffix(".localhost") || host.hasSuffix(".internal") { return true }
         if host.contains(":") || host.contains("[") { return true }
+        // Best effort: public wildcard-DNS services that resolve to any IP written in the name
+        // (127.0.0.1.nip.io). A real DNS check would still race; these are the well-known ones.
+        if wildcardDNSSuffixes.contains(where: { host == $0 || host.hasSuffix("." + $0) }) { return true }
         guard let tld = host.split(separator: ".").last, tld.count >= 2, tld.allSatisfy({ $0.isLetter && $0.isASCII }) else {
             return true
         }
@@ -24,6 +27,19 @@ enum RioWebHostRules {
         }
     }
 
+    private static let wildcardDNSSuffixes = [
+        "nip.io", "sslip.io", "xip.io", "localtest.me", "lvh.me", "vcap.me", "traefik.me",
+        "localhost.direct", "lacolhost.com", "127.0.0.1.nip.io",
+    ]
+
+    /// Shared hosting where every customer is a separate site (alice.github.io ≠ mallory.github.io).
+    private static let sharedHostingSuffixes = [
+        "github.io", "gitlab.io", "vercel.app", "netlify.app", "pages.dev", "workers.dev", "web.app",
+        "firebaseapp.com", "herokuapp.com", "onrender.com", "fly.dev", "glitch.me", "repl.co",
+        "blogspot.com", "wordpress.com", "azurewebsites.net", "cloudfront.net", "appspot.com",
+        "s3.amazonaws.com", "notion.site", "carrd.co", "wixsite.com", "squarespace.com",
+    ]
+
     private static let secondLevelLabels: Set<String> = ["co", "com", "org", "net", "gov", "edu", "ac", "or", "ne"]
 
     /// "www.shop.example.co.uk" -> "example.co.uk". No public-suffix list: the common two-letter
@@ -32,6 +48,10 @@ enum RioWebHostRules {
         var host = host.lowercased()
         while host.hasSuffix(".") { host.removeLast() }
         let labels = host.split(separator: ".").map(String.init)
+        if let shared = sharedHostingSuffixes.first(where: { host.hasSuffix("." + $0) }) {
+            let keep = shared.split(separator: ".").count + 1
+            return labels.suffix(keep).joined(separator: ".")
+        }
         guard labels.count > 2 else { return host }
         let tld = labels[labels.count - 1], second = labels[labels.count - 2]
         let keep = (tld.count == 2 && secondLevelLabels.contains(second)) ? 3 : 2
@@ -59,7 +79,10 @@ enum RioWebHostRules {
         let lowerGoal = goal.lowercased()
         let domain = registrableDomain(host)
         if lowerGoal.contains(domain) { return true }
-        guard let name = domain.split(separator: ".").first.map(String.init), name.count >= 3 else { return false }
+        // The bare name ("amazon") only counts for its .com site; any other domain must be named in
+        // full ("amazon.ae"), so amazon.xyz or amazon.evil.io never pass as the site you meant.
+        guard let name = domain.split(separator: ".").first.map(String.init), name.count >= 3,
+              domain == name + ".com" else { return false }
         return RioText.matches(#"(?<![\p{L}\p{N}])"# + NSRegularExpression.escapedPattern(for: name) + #"(?![\p{L}\p{N}])"#, lowerGoal)
     }
 }

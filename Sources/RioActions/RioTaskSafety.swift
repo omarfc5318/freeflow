@@ -76,6 +76,8 @@ enum RioTaskSafety {
             if hasPersonalDetails(text), !goal.localizedCaseInsensitiveContains(text) {
                 return .confirm(reason: "This types personal details the page asked for, not ones you gave.")
             }
+            // Fills fail closed like clicks: an unresolved or loosely matched field asks first.
+            if case .fillField = action, let reason = resolvedClickReason(resolution) { return .confirm(reason: reason) }
         default:
             break
         }
