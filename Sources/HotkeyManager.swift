@@ -58,7 +58,8 @@ final class HotkeyManager {
         let result = ShortcutMatcher.reduce(
             state: inputState,
             event: event,
-            configuration: configuration
+            configuration: configuration,
+            now: ProcessInfo.processInfo.systemUptime
         )
         inputState = result.state
         for event in result.emittedEvents {

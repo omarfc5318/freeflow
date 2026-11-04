@@ -14,7 +14,7 @@ enum RioTranslatorSettings {
     }
 
     static var isArabicConversationEnabled: Bool {
-        UserDefaults.standard.object(forKey: arabicConversationKey) as? Bool ?? true
+        UserDefaults.standard.object(forKey: arabicConversationKey) as? Bool ?? false
     }
 
     /// The same transcription key, URL and model dictation uses (Groq Whisper by default), read
@@ -39,7 +39,7 @@ enum RioTranslatorSettings {
 /// Settings for the live translator and Arabic commands. The lead embeds this in the Settings window.
 struct RioTranslatorSettingsSection: View {
     @AppStorage(RioTranslatorSettings.otherLanguageKey) private var otherLanguage = RioTranslatorLanguage.arabic.name
-    @AppStorage(RioTranslatorSettings.arabicConversationKey) private var arabicConversation = true
+    @AppStorage(RioTranslatorSettings.arabicConversationKey) private var arabicConversation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -49,7 +49,7 @@ struct RioTranslatorSettingsSection: View {
                 ForEach(RioTranslatorLanguage.all, id: \.name) { Text($0.name).tag($0.name) }
             }
             .frame(maxWidth: 280)
-            Text("Say \"Rio, translate what is being said\" to start live subtitles next to Rio, and \"Rio, stop translating\" (or press Esc, or tap three fingers) to stop. Anything that isn't English is shown in English; English is shown in your other language. Say \"Rio, say it\" to hear the last translation.")
+            Text("Say \"Rio, translate what is being said\" to start live subtitles next to Rio, and \"Rio, stop translating\" (or press Esc, or press Fn + Control + Option together) to stop. Anything that isn't English is shown in English; English is shown in your other language. Say \"Rio, say it\" to hear the last translation.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -57,8 +57,8 @@ struct RioTranslatorSettingsSection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Toggle("Understand Arabic commands in conversation mode", isOn: $arabicConversation)
-            Text("Arabic commands (\"ريو افتح كروم\") always work with the action key. In conversation mode, when Rio hears \"Rio\" but not a command he knows, the audio of that one command is sent to your transcription provider to read it again. Plain English commands are never sent.")
+            Toggle("Understand Arabic commands in conversation mode (sends audio to your transcription provider)", isOn: $arabicConversation)
+            Text("Off by default. Arabic commands (\"ريو افتح كروم\") always work with the action key. If you turn this on, then in conversation mode, when Rio hears \"Rio\" but not a command he knows, the audio of that one command (about the last second and a half plus the command) is sent to your transcription provider to read it again. Everything else stays on this Mac, and plain English commands are never sent.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -948,7 +948,7 @@ struct SetupView: View {
                     HowToRow(icon: "keyboard", text: "Hold \(appState.holdShortcut.displayName) to record")
                 }
                 if appState.hasEnabledToggleShortcut {
-                    HowToRow(icon: "switch.2", text: "Tap \(appState.toggleShortcut.displayName) to start and stop")
+                    HowToRow(icon: "switch.2", text: "\(appState.toggleShortcut.tapPhrase.prefix(1).uppercased() + appState.toggleShortcut.tapPhrase.dropFirst()) to start and stop")
                 }
                 if appState.hasEnabledHoldShortcut && appState.hasEnabledToggleShortcut {
                     HowToRow(icon: "arrow.triangle.branch", text: "While holding, press the toggle shortcut to latch on")
@@ -999,11 +999,11 @@ struct SetupView: View {
     private var testShortcutPrompt: String {
         switch (appState.hasEnabledHoldShortcut, appState.hasEnabledToggleShortcut) {
         case (true, true):
-            return "Hold \(appState.holdShortcut.displayName) or tap \(appState.toggleShortcut.displayName)"
+            return "Hold \(appState.holdShortcut.displayName) or \(appState.toggleShortcut.tapPhrase)"
         case (true, false):
             return "Hold \(appState.holdShortcut.displayName)"
         case (false, true):
-            return "Tap \(appState.toggleShortcut.displayName)"
+            return "\(appState.toggleShortcut.tapPhrase.prefix(1).uppercased() + appState.toggleShortcut.tapPhrase.dropFirst())"
         case (false, false):
             return "Use Start Dictating from the menu bar"
         }
@@ -1224,7 +1224,7 @@ struct SetupView: View {
                     }
                 }
 
-            case .switchedToToggle:
+            case .switchedToToggle, .cancelSilently:
                 break
             }
         }

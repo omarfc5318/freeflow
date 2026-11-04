@@ -627,6 +627,8 @@ struct GeneralSettingsView: View {
                 }
                 SettingsCard("Live Translator", icon: "character.bubble") {
                     RioTranslatorSettingsSection()
+                    Divider()
+                    RioTaskSettingsSection()
                 }
                 SettingsCard("Edit Mode", icon: "pencil") {
                     commandModeSection
@@ -686,6 +688,9 @@ struct GeneralSettingsView: View {
     private var startupSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Toggle("Launch \(AppName.displayName) at login", isOn: $appState.launchAtLogin)
+            Text(RioLaunchAtLogin.crashRelaunchNote)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Toggle("Show menu bar icon", isOn: $showMenuBarIcon)
 
             if RioLaunchAtLogin.needsApproval {
@@ -2744,17 +2749,20 @@ struct VoiceMacroEditorView: View {
 }
 
 
-/// The Conversation Mode card: the three-finger-tap switch, what the mode does, and a button to
-/// start or stop it right now.
+/// The Conversation Mode card: the key chord, the trust switch, and a button to start or stop it
+/// right now.
 private struct ConversationModeSettings: View {
     @ObservedObject var appState: AppState
     @ObservedObject private var mode = RioConversationMode.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Toggle("Three-finger tap toggles conversation mode", isOn: $appState.conversationTapEnabled)
+            Text("Press left Fn + Control + Option together, then let go, and Rio keeps the microphone on, so you can keep giving commands without touching the keyboard or mouse. Press them again to turn it off. Start each command with \"Rio\" (\"Rio, open Chrome\"). Speech is recognised on this Mac and is dropped unless it starts with \"Rio\". It pauses while another app is using the microphone, such as a call, and turns itself off after 5 minutes without a command or when you say \"Rio, stop listening\".")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
-            Text("Tap the trackpad with three fingers and Rio keeps the microphone on, so you can keep giving commands without touching the keyboard or mouse. Start each one with \"Rio\" (\"Rio, open Chrome\"). Everything is recognised on this Mac and nothing leaves it until Rio hears its name. It pauses while another app is using the microphone, such as a call, and turns itself off after 5 minutes without a command or when you say \"Rio, stop listening\".")
+            Toggle("Trust conversation mode", isOn: $appState.rioTrustConversationMode)
+            Text("On: commands heard in conversation mode run like the action key. Off: anything that types, presses keys, clicks, changes a setting, quits an app, pastes the clipboard, starts a task or the translator waits for you to press Return after Rio reads it back (say \"no\" to decline; a spoken \"yes\" never approves). Anyone near your microphone can say \"Rio, ...\", so turn this off if others are around.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

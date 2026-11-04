@@ -2,6 +2,25 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
+/// Remembers when Rio last posted a synthetic key, so Rio's own confirmation panels can tell
+/// their own keystrokes from the owner's (see `RioConfirmationKeyPolicy`).
+enum RioSyntheticInput {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var lastPost = Date.distantPast
+
+    static func notePost() {
+        lock.lock()
+        lastPost = Date()
+        lock.unlock()
+    }
+
+    static var secondsSinceLastPost: TimeInterval {
+        lock.lock()
+        defer { lock.unlock() }
+        return Date().timeIntervalSince(lastPost)
+    }
+}
+
 /// Posts allow-listed key presses and scroll-wheel nudges as synthetic CGEvents (need Accessibility).
 /// Nothing here takes free-form text: a key must pass `RioKeyCombos.isAllowed` and have a key code.
 @MainActor
@@ -21,6 +40,7 @@ enum RioKeyboard {
         if RioKeyCodes.usesFunctionFlag(combo.key) { flags.insert(.maskSecondaryFn) }
         if RioKeyCodes.isArrow(combo.key) { flags.insert(.maskNumericPad) }
         let source = CGEventSource(stateID: .hidSystemState)
+        RioSyntheticInput.notePost()
         for isDown in [true, false] {
             guard let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(code), keyDown: isDown) else { return false }
             event.flags = flags

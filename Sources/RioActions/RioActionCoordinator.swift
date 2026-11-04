@@ -23,12 +23,66 @@ enum RioActionOutcome: Equatable {
     case succeeded(String)
     case failed(String)
     case cancelled
-    /// Not understood: the bear shrugs.
+    /// Not understood: the bear shrugs. The text that could not be placed is in
+    /// `RioActionCoordinator.lastUnrecognized`.
     case unknown
+}
+
+/// Where a spoken command came from. The action key (Fn + Control) proves the owner is
+/// speaking; conversation mode hears the room, so some actions need a second check there.
+enum RioCommandSource: Equatable {
+    case actionKey
+    case conversation
+}
+
+/// The "Trust conversation mode" setting. ON by default (owner decision, 2026-11-03).
+enum RioTrustSetting {
+    static let key = "rio_trust_conversation_mode"
+    static var isTrusting: Bool { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
+}
+
+extension RioAction {
+    /// Heard by conversation mode, these inject input or change state. They run straight away
+    /// while "Trust conversation mode" is on, and need a spoken "yes" (or Return) when it is off.
+    var conversationNeedsConfirmationWhenUntrusted: Bool {
+        switch self {
+        case .typeText, .pressKeys, .fillField, .click, .runTask, .systemToggle, .quitApp:
+            return true
+        case .clipboard(let command):
+            if case .pasteRecent = command { return true }
+            return false
+        default:
+            return false
+        }
+    }
+
+    /// Starting the translator sends the room's audio to a provider, so it is always confirmed
+    /// when conversation mode asked for it, trusted or not.
+    var conversationAlwaysNeedsConfirmation: Bool {
+        if case .startTranslation = self { return true }
+        return false
+    }
+}
+
+/// A confirmer that can also ask about an action that came from conversation mode (the panel
+/// accepts a spoken "yes"). The coordinator uses it when the confirmer provides it.
+@MainActor protocol RioConversationConfirming: AnyObject {
+    func confirmConversationAction(_ action: RioAction) async -> Bool
 }
 
 enum RioActionText {
     static let unknownMessage = "I don't know how to do that yet"
+    static let didntCatchMessage = "I didn't catch that"
+
+    /// What Rio says when he could not place the words: it quotes what was heard so a
+    /// mishearing ("We are hoping for a win") is obvious.
+    static func unknownMessage(heard: String) -> String {
+        let cleaned = heard.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'\u{201C}\u{201D}"))
+        guard !cleaned.isEmpty else { return unknownMessage }
+        let clipped = cleaned.count > 80 ? String(cleaned.prefix(80)) + "..." : cleaned
+        return "I heard \"\(clipped)\". Try again?"
+    }
     static let resolverFailedMessage = "I couldn't work that out"
 
     /// The short "now doing" line the corner bear and status text show.
@@ -129,14 +183,21 @@ final class RioActionCoordinator {
     private let smartResolver: RioSmartResolving?
     private let observer: RioActionObserving?
     private let confirmer: RioConfirming?
+    private let isTrustingConversation: () -> Bool
+    /// The words the last run could not place (set when it ends `.unknown`, cleared otherwise).
+    private(set) var lastUnrecognized: String?
+    /// The actions the last run parsed (or the resolver produced), for the history label.
+    private(set) var lastActions: [RioAction] = []
 
     init(
         parser: RioActionParsing,
         executor: RioActionExecuting,
         smartResolver: RioSmartResolving? = nil,
         observer: RioActionObserving? = nil,
-        confirmer: RioConfirming? = nil
+        confirmer: RioConfirming? = nil,
+        isTrustingConversation: @escaping () -> Bool = { RioTrustSetting.isTrusting }
     ) {
+        self.isTrustingConversation = isTrustingConversation
         self.parser = parser
         self.executor = executor
         self.smartResolver = smartResolver
@@ -146,7 +207,13 @@ final class RioActionCoordinator {
 
     /// Runs one spoken command. `progress` receives a line like "Opening Google Chrome" before
     /// each action starts. Never types or pastes anything on its own.
-    func run(_ transcript: String, progress: @MainActor (String) -> Void = { _ in }) async -> RioActionOutcome {
+    func run(
+        _ transcript: String,
+        source: RioCommandSource = .actionKey,
+        progress: @MainActor (String) -> Void = { _ in }
+    ) async -> RioActionOutcome {
+        lastUnrecognized = nil
+        lastActions = []
         let text = RioActionTranscript.stripName(from: transcript)
         guard !text.isEmpty else { return .nothing }
 
@@ -154,26 +221,48 @@ final class RioActionCoordinator {
         case .empty:
             return .nothing
         case .actions(let actions):
-            return await execute(actions, progress: progress)
+            return await execute(actions, source: source, progress: progress)
         case .unknown(let unrecognized):
+            lastUnrecognized = unrecognized
             guard let smartResolver else { return .unknown }
             do {
                 let actions = try await smartResolver.resolve(unrecognized)
                 guard !actions.isEmpty else { return .unknown }
-                return await execute(actions, progress: progress)
+                return await execute(actions, source: source, progress: progress)
             } catch {
                 return .failed(RioActionText.resolverFailedMessage)
             }
         }
     }
 
-    private func execute(_ actions: [RioAction], progress: @MainActor (String) -> Void) async -> RioActionOutcome {
+    /// Whether `action` must be confirmed before it runs from `source`.
+    func needsConfirmation(_ action: RioAction, source: RioCommandSource) -> Bool {
+        if action.requiresConfirmation { return true }
+        guard source == .conversation else { return false }
+        if action.conversationAlwaysNeedsConfirmation { return true }
+        return !isTrustingConversation() && action.conversationNeedsConfirmationWhenUntrusted
+    }
+
+    private func execute(
+        _ actions: [RioAction],
+        source: RioCommandSource,
+        progress: @MainActor (String) -> Void
+    ) async -> RioActionOutcome {
         var summaries: [String] = []
+        lastActions = actions
         for action in actions {
             progress(RioActionText.working(for: action))
-            if action.requiresConfirmation {
+            if needsConfirmation(action, source: source) {
                 // No confirmer means no way to ask, so never run it.
-                guard let confirmer, await confirmer.confirm(action) else { return .cancelled }
+                guard let confirmer else { return .cancelled }
+                let confirmed: Bool
+                if source == .conversation, !action.requiresConfirmation,
+                   let conversational = confirmer as? RioConversationConfirming {
+                    confirmed = await conversational.confirmConversationAction(action)
+                } else {
+                    confirmed = await confirmer.confirm(action)
+                }
+                guard confirmed else { return .cancelled }
             }
             await observer?.willExecute(action)
             let result = await executor.execute(action)

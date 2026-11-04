@@ -71,14 +71,17 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioTimerCore.swift \
 	Sources/RioActions/RioUndoPlan.swift \
 	Sources/RioActions/RioHelpCatalogue.swift \
+	Sources/RioActions/RioCommandPrompt.swift \
+	Sources/RioActions/RioHistoryPolicy.swift \
 	Sources/RioActions/RioVoiceCore.swift \
-	Sources/RioActions/TapGestureDetector.swift \
 	Sources/RioActions/WakePhraseExtractor.swift \
 	Sources/RioActions/RioConversationCore.swift \
 	Sources/RioActions/MicUsageCore.swift \
 	Sources/RioActions/WindowAppNameResolver.swift \
 	Sources/RioActions/WindowGeometry.swift \
 	Sources/APIConfigurationDraft.swift \
+	Sources/WhisperHallucinationGuard.swift \
+	Sources/AudioCallbackSlots.swift \
 	Sources/AppContextService.swift \
 	Sources/AppName.swift \
 	Sources/AppTextInsertionCore.swift \

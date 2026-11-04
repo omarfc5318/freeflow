@@ -1,16 +1,22 @@
 import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    let appState = AppState()
+    /// The duplicate-copy check runs before AppState is built, so a second copy never touches
+    /// the microphone, the hotkey tap or the history files before it leaves.
+    let appState: AppState = {
+        if AppDelegate.isDuplicateCopy() { exit(0) }
+        // Reads the crash marker first: a launchd crash loop exits here, before AppState exists.
+        _ = RioLaunchAtLogin.startup
+        return AppState()
+    }()
     var setupWindow: NSWindow?
     private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // The launch agent starts a copy at login or right after registering; if Rio is already
-        // running, that copy leaves quietly (a clean exit, so launchd does not restart it).
-        if Self.isDuplicateLaunchAgentCopy() { exit(0) }
+        // (A second copy already left in the appState initializer above.)
         // A marker left by the last run means it crashed; a clean quit removes it below.
-        let recoveredFromCrash = RioCrashMarker.standard.beginRun()
+        let start = RioLaunchAtLogin.startup
+        let recoveredFromCrash = start.recoveredFromCrash
         RioLaunchAtLogin.migrateAtLaunch()
         installTerminationSignalHandler()
         NetworkMonitor.shared.start()
@@ -20,6 +26,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Clipboard history (memory only, concealed/password copies skipped) starts with the app.
         RioClipboardHistory.shared.start()
         RioCompanionHub.shared.attach(appState)
+        if start.showLoopNotice { RioCompanionHub.shared.announceCrashLoopStopped() }
         if recoveredFromCrash { appState.rioRecoveredFromCrash = true }
         RioCompanionHub.shared.onStopPressed = { [weak self] in self?.appState.overlayManager.onStopButtonPressed?() }
 
@@ -191,9 +198,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         RioCrashMarker.standard.endRun()
     }
 
-    /// True when launchd started this process and another copy of the same app is already up.
-    private static func isDuplicateLaunchAgentCopy() -> Bool {
-        guard getppid() == 1, let bundleID = Bundle.main.bundleIdentifier else { return false }
+    /// True when another copy of the same app is already running, however this one was started
+    /// (launch agent, Terminal, `open -n`). It leaves quietly with a clean exit, so launchd does
+    /// not restart it.
+    fileprivate static func isDuplicateCopy() -> Bool {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return false }
         let me = ProcessInfo.processInfo.processIdentifier
         return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).contains { $0.processIdentifier != me }
     }

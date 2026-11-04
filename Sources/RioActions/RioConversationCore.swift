@@ -5,7 +5,7 @@ import Foundation
 /// result, and tests drive it with fixed dates.
 ///
 /// Rules:
-/// - On and off come from a three-finger tap, the menu item, "Rio, stop listening", the
+/// - On and off come from the Fn + Control + Option chord, the menu item, "Rio, stop listening", the
 ///   5-minute idle shut-off, or the listener failing to start.
 /// - While on, it is paused (microphone released) whenever another app is using the
 ///   microphone (a call) or Rio itself is dictating (Fn, Fn + Control). It resumes by itself.
@@ -16,7 +16,7 @@ struct RioConversationCore: Equatable {
     static let idleTimeout: TimeInterval = 300
 
     enum OffReason: Equatable {
-        case tap, menu, stopListening, idleTimeout, unavailable, settings
+        case chord, menu, stopListening, idleTimeout, unavailable, settings
     }
 
     enum Effect: Equatable {
@@ -100,5 +100,63 @@ enum RioConversationCommands {
         let text = RioActionTranscript.stripName(from: transcript)
         guard !text.isEmpty, case .actions(let actions) = parser.parse(text) else { return false }
         return actions == [.stopListening]
+    }
+}
+
+extension RioConversationCommands {
+    private static let bareStopPhrases: Set<String> = [
+        "stop", "stop it", "stop that", "stop please", "please stop", "cancel", "cancel that"
+    ]
+
+    /// "Rio, stop": ends whatever Rio is doing (a running task, the translator, his own voice).
+    /// Only the bare word counts, so "stop the timer" and "stop music" still reach the parser.
+    static func isBareStop(_ transcript: String) -> Bool {
+        let text = RioActionTranscript.stripName(from: transcript).lowercased()
+        let letters = text.unicodeScalars.map { CharacterSet.letters.contains($0) ? Character($0) : " " }
+        let normalized = String(letters).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return bareStopPhrases.contains(normalized)
+    }
+
+    /// True only for a spoken decline. A spoken "yes" never approves anything.
+    static func declinesBySpeech(_ transcript: String) -> Bool { spokenAnswer(transcript) == .no }
+
+    /// A spoken answer to a conversation confirmation: "Rio, yes" / "Rio, no".
+    enum SpokenAnswer: Equatable { case yes, no }
+
+    static func spokenAnswer(_ transcript: String) -> SpokenAnswer? {
+        let text = RioActionTranscript.stripName(from: transcript).lowercased()
+        let letters = text.unicodeScalars.map { CharacterSet.letters.contains($0) ? Character($0) : " " }
+        let normalized = String(letters).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        switch normalized {
+        case "yes", "yes please", "yeah", "yep", "confirm", "do it", "go ahead", "yes do it": return .yes
+        case "no", "nope", "cancel", "don't", "dont", "no thanks", "never mind", "nevermind": return .no
+        default: return nil
+        }
+    }
+}
+
+/// Which key events may answer one of Rio's own confirmation panels. A press Rio posted itself
+/// (the "Rio, press enter" command, a task's keystrokes) must never confirm a prompt that Rio
+/// raised, and a Return that lands the instant a panel appears is a stray one.
+enum RioConfirmationKeyPolicy {
+    static let returnIgnoreSeconds: TimeInterval = 0.3
+    /// How long after Rio posts a synthetic key the panel distrusts the next real-looking press.
+    static let syntheticPostWindowSeconds: TimeInterval = 0.5
+
+    static let confirmKeyCodes: Set<UInt16> = [36, 76]
+    static let cancelKeyCode: UInt16 = 53
+
+    static func accepts(
+        keyCode: UInt16,
+        eventSourcePID: Int64,
+        ownPID: Int64,
+        secondsSincePanelShown: TimeInterval,
+        secondsSinceOwnSyntheticPost: TimeInterval
+    ) -> Bool {
+        guard confirmKeyCodes.contains(keyCode) || keyCode == cancelKeyCode else { return false }
+        if eventSourcePID == ownPID { return false }
+        if secondsSinceOwnSyntheticPost < syntheticPostWindowSeconds { return false }
+        if confirmKeyCodes.contains(keyCode), secondsSincePanelShown < returnIgnoreSeconds { return false }
+        return true
     }
 }

@@ -27,6 +27,10 @@ enum WakeWordListenerStartResult: Equatable {
     private static let commandLeadSeconds = 1.5
 
     private let onCommand: @MainActor (String) -> Void
+    /// Called when the listener stops ON ITS OWN (repeated recognizer failures, the microphone
+    /// could not be reopened), with a user-facing reason, so conversation mode never keeps
+    /// claiming to listen. Not called for a stop the owner of the listener asked for.
+    var onStopped: (@MainActor (String) -> Void)?
     private let engine = AVAudioEngine()
     private let requestBox = RecognitionRequestBox()
     private var recognizer: SFSpeechRecognizer?
@@ -38,6 +42,9 @@ enum WakeWordListenerStartResult: Equatable {
     /// Where in the recent audio the command began (for the Arabic second listen).
     private var commandAudioMark: Int?
     private var consecutiveFailures = 0
+    /// Finals with no words in a row; each one doubles the wait before listening again.
+    private var consecutiveEmptyFinals = 0
+    private var lastHeardText = ""
     private var silenceTimer: Task<Void, Never>?
     private var lifetimeTimer: Task<Void, Never>?
     private var configObserver: NSObjectProtocol?
@@ -97,8 +104,15 @@ enum WakeWordListenerStartResult: Equatable {
         do {
             try startAudio()
         } catch {
-            stop()
+            stopItself("I couldn't reopen the microphone, so I stopped listening")
         }
+    }
+
+    /// Stops because something failed and says so (see `onStopped`).
+    private func stopItself(_ reason: String) {
+        guard wantsListening else { return }
+        stop()
+        onStopped?(reason)
     }
 
     // MARK: Permissions
@@ -151,7 +165,7 @@ enum WakeWordListenerStartResult: Equatable {
         do {
             try startAudio()
         } catch {
-            stop()
+            stopItself("I lost the microphone, so I stopped listening")
         }
     }
 
@@ -181,6 +195,7 @@ enum WakeWordListenerStartResult: Equatable {
         lifetimeTimer?.cancel()
         pendingCommand = nil
         commandAudioMark = nil
+        lastHeardText = ""
         task?.cancel()
         task = nil
         guard let recognizer else { return }
@@ -212,14 +227,24 @@ enum WakeWordListenerStartResult: Equatable {
         guard generation == self.generation, wantsListening, !isPaused else { return }
         if let text {
             consecutiveFailures = 0
+            if !text.isEmpty { consecutiveEmptyFinals = 0 }
             if let command = WakePhraseExtractor.command(in: text), command != pendingCommand {
                 if pendingCommand == nil { commandAudioMark = requestBox.mark(secondsBack: Self.commandLeadSeconds) }
                 pendingCommand = command
                 scheduleSilenceTimer(generation: generation)
+            } else if pendingCommand == nil, text != lastHeardText {
+                // Speech without the name: a pause ends the utterance, so the next "Rio" starts
+                // a fresh one (the name only counts at the start of an utterance).
+                scheduleSilenceTimer(generation: generation)
             }
+            lastHeardText = text
         }
         if isFinal {
-            finishCommandAndRestart()
+            if pendingCommand == nil && (text ?? "").isEmpty {
+                restartAfterEmptyFinal()
+            } else {
+                finishCommandAndRestart()
+            }
         } else if failed {
             recover()
         }
@@ -267,11 +292,27 @@ enum WakeWordListenerStartResult: Equatable {
         }
     }
 
+    /// A final result with no words (silence): back off 0.25 s, 0.5 s, 1 s ... up to 5 s instead
+    /// of restarting recognition in a tight loop.
+    private func restartAfterEmptyFinal() {
+        consecutiveEmptyFinals += 1
+        let delay = min(0.25 * pow(2, Double(consecutiveEmptyFinals - 1)), 5)
+        let current = generation
+        silenceTimer?.cancel()
+        task?.cancel()
+        task = nil
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self, current == self.generation, self.wantsListening, !self.isPaused else { return }
+            self.beginRecognitionTask()
+        }
+    }
+
     /// The recognizer failed (not by our own cancel): retry, and give up after repeated failures.
     private func recover() {
         consecutiveFailures += 1
         if consecutiveFailures > Self.maxConsecutiveFailures {
-            stop()
+            stopItself("Speech recognition kept failing, so I stopped listening")
             return
         }
         let delay = min(0.5 * Double(consecutiveFailures), 3)
@@ -294,7 +335,9 @@ private final class RecognitionRequestBox: @unchecked Sendable {
     // A short rolling copy of the microphone (mono PCM16, about 16 kHz), in memory only, so a
     // command's audio can be read again. `written` counts samples since the engine started.
     private static let recentSeconds = 12
-    private var recent: [Int16] = []
+    private var ring = [Int16](repeating: 0, count: recentSeconds * 16_000)
+    private var ringHead = 0 // next write position
+    private var ringCount = 0
     private var written = 0
     private var recentRate = 16_000
 
@@ -324,35 +367,39 @@ private final class RecognitionRequestBox: @unchecked Sendable {
     func recentAudio(since mark: Int) -> (pcm16: Data, sampleRate: Int)? {
         lock.lock()
         defer { lock.unlock() }
-        let start = max(mark, written - recent.count)
+        let start = max(mark, written - ringCount)
         let count = written - start
         guard count >= recentRate / 3 else { return nil }
         var data = Data(capacity: count * 2)
-        for sample in recent.suffix(count) {
-            withUnsafeBytes(of: sample.littleEndian) { data.append(contentsOf: $0) }
+        var index = (ringHead - count + ring.count * 2) % ring.count
+        for _ in 0..<count {
+            withUnsafeBytes(of: ring[index].littleEndian) { data.append(contentsOf: $0) }
+            index = (index + 1) % ring.count
         }
         return (data, recentRate)
     }
 
-    /// Caller holds the lock. Averages down to about 16 kHz and keeps the last few seconds.
+    /// Caller holds the lock. Averages down to about 16 kHz into a fixed ring (no shifting).
     private func keepRecent(_ buffer: AVAudioPCMBuffer) {
         guard let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return }
         let step = max(1, Int(buffer.format.sampleRate / 16_000))
         let rate = Int(buffer.format.sampleRate) / step
         if rate != recentRate {
-            recent = []
             recentRate = rate
+            ring = [Int16](repeating: 0, count: Self.recentSeconds * max(rate, 1))
+            ringHead = 0
+            ringCount = 0
         }
         let frames = Int(buffer.frameLength)
         var index = 0
         while index + step <= frames {
             var sum: Float = 0
             for offset in 0..<step { sum += channel[index + offset] }
-            recent.append(Int16(max(-1, min(1, sum / Float(step))) * 32_767))
+            ring[ringHead] = Int16(max(-1, min(1, sum / Float(step))) * 32_767)
+            ringHead = (ringHead + 1) % ring.count
+            ringCount = min(ringCount + 1, ring.count)
             index += step
             written += 1
         }
-        let limit = Self.recentSeconds * recentRate
-        if recent.count > limit { recent.removeFirst(recent.count - limit) }
     }
 }

@@ -7,7 +7,7 @@ enum RioConversationCoreTests {
     static func run() {
         testStartsOff()
         testTurnOnAndOff()
-        testTapToggles()
+        testChordToggles()
         testTurnOnTwiceAnnouncesOnce()
         testTurnOffWhileOffDoesNothing()
         testOffReasonsAreReported()
@@ -41,11 +41,11 @@ enum RioConversationCoreTests {
         TestSupport.expect(!core.isOn, "off")
     }
 
-    private static func testTapToggles() {
+    private static func testChordToggles() {
         var core = RioConversationCore()
-        TestSupport.expectEqual(core.toggle(now: at(0), offReason: .tap), [.announceOn])
+        TestSupport.expectEqual(core.toggle(now: at(0), offReason: .chord), [.announceOn])
         TestSupport.expect(core.isOn, "first tap on")
-        TestSupport.expectEqual(core.toggle(now: at(5), offReason: .tap), [.announceOff(.tap)])
+        TestSupport.expectEqual(core.toggle(now: at(5), offReason: .chord), [.announceOff(.chord)])
         TestSupport.expect(!core.isOn, "second tap off")
         TestSupport.expectEqual(core.toggle(now: at(9), offReason: .menu), [.announceOn])
         TestSupport.expectEqual(core.toggle(now: at(10), offReason: .menu), [.announceOff(.menu)])
@@ -63,7 +63,7 @@ enum RioConversationCoreTests {
     }
 
     private static func testOffReasonsAreReported() {
-        for reason in [RioConversationCore.OffReason.tap, .menu, .stopListening, .idleTimeout, .unavailable, .settings] {
+        for reason in [RioConversationCore.OffReason.chord, .menu, .stopListening, .idleTimeout, .unavailable, .settings] {
             var core = RioConversationCore()
             _ = core.turnOn(now: at(0))
             TestSupport.expectEqual(core.turnOff(reason), [.announceOff(reason)])
@@ -168,7 +168,7 @@ enum RioConversationCoreTests {
         var core = RioConversationCore()
         _ = core.turnOn(now: at(0))
         core.setOtherAppUsingMic(true, now: at(1))
-        _ = core.turnOff(.tap)
+        _ = core.turnOff(.chord)
         _ = core.turnOn(now: at(2))
         TestSupport.expect(core.isOn && core.isPaused, "the call is still tracked across off/on")
         core.setOtherAppUsingMic(false, now: at(3))
