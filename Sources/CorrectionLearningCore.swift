@@ -47,12 +47,16 @@ struct CorrectionLearningSession {
     static let minStablePolls = 2
     private let dictatedWords: [Word]
     private let isKnownWord: (String) -> Bool
+    /// True for terms already in the user's custom vocabulary: a fix that lands on one of these
+    /// is the strongest evidence there is, whatever the spell checker or sentence position says.
+    private let isVocabularyTerm: (String) -> Bool
 
     /// Finds the dictated text ending at the caret, or one whitespace before it (FreeFlow adds a
     /// space after sentence punctuation). Requiring the caret avoids latching onto an older phrase.
     init?(
         transcript: String, fieldValue: String, caretLocation: Int,
-        isKnownWord: @escaping (String) -> Bool
+        isKnownWord: @escaping (String) -> Bool,
+        isVocabularyTerm: @escaping (String) -> Bool = { _ in false }
     ) {
         let needle = Array(transcript.trimmingCharacters(in: .whitespacesAndNewlines).utf16)
         let value = Array(fieldValue.utf16)
@@ -68,6 +72,7 @@ struct CorrectionLearningSession {
         self.settledSpan = (end - needle.count)..<end
         self.dictatedWords = Self.words(in: value[span])
         self.isKnownWord = isKnownWord
+        self.isVocabularyTerm = isVocabularyTerm
         guard dictatedWords.count <= Self.maxSpanWords else { return nil }
     }
 
@@ -91,7 +96,10 @@ struct CorrectionLearningSession {
         }
         let delta = current.count - baseline.count
 
-        guard let newSpan = trackedSpan(in: current, delta: delta), !newSpan.isEmpty else {
+        // An emptied span (the whole dictation deleted) stays anchored while other text remains,
+        // so retyping it is seen; only a cleared field, focus change or timeout ends watching.
+        guard let newSpan = trackedSpan(in: current, delta: delta),
+              !(newSpan.isEmpty && current.isEmpty) else {
             isSpanLost = true
             return .finished
         }
@@ -99,6 +107,12 @@ struct CorrectionLearningSession {
         span = newSpan
         intactPollCount = 1
         return .watching
+    }
+
+    /// A Return key-down: whatever the field holds now is what is about to be sent, so settle
+    /// it before the field clears (a fix made and sent faster than two polls would be lost).
+    mutating func observeReturnKey(_ fieldValue: String) {
+        if track(fieldValue) == .watching { markSettled() }
     }
 
     /// Declares the tracked state stable (the value stopped changing).
@@ -144,6 +158,14 @@ struct CorrectionLearningSession {
         var moved: Range<Int> { (span.lowerBound + delta)..<(span.upperBound + delta) }
         var grown: Range<Int> { span.lowerBound..<(span.upperBound + delta) }
 
+        if span.isEmpty {
+            // Typing at the anchor grows the span; edits wholly before or after it just move it.
+            if changedStart == changedEnd, changedStart == span.lowerBound, delta > 0 { return grown }
+            if changedEnd <= span.lowerBound { return moved }
+            if changedStart >= span.upperBound { return span }
+            return nil
+        }
+
         // Typing glued onto the first or last dictated word ("Sara" → "Sarah") edits that word.
         if changedStart == changedEnd {
             if changedStart == span.upperBound,
@@ -184,7 +206,15 @@ struct CorrectionLearningSession {
         // "so" → "So" or "paris" → "Paris" is sentence or proper-noun casing, not vocabulary.
         let isFirstLetterCaseFix = correction.original.lowercased() == corrected.lowercased()
             && correction.original.dropFirst() == corrected.dropFirst()
-        if isFirstLetterCaseFix { return false }
+        if isFirstLetterCaseFix {
+            // Mid-sentence, a case-only fix of a word the spell checker doesn't know ("nashwa" →
+            // "Nashwa") is a name; a known word's casing is only grammar.
+            let isUnknown = !corrected.split(separator: " ").allSatisfy { isKnownWord($0.lowercased()) }
+            return isUnknown && !startsSentence
+        }
+        // A fix that lands exactly on a vocabulary term ("hollow" → "Hala", "Cloud" → "Claude")
+        // is a mishearing of that term even when both are dictionary words.
+        if isVocabularyTerm(corrected) { return true }
 
         let correctedWords = corrected.split(separator: " ").map(String.init)
         var hasStrongShape = false
@@ -198,6 +228,12 @@ struct CorrectionLearningSession {
         let hasUnknownWord = !correctedWords.allSatisfy { isKnownWord($0.lowercased()) }
         guard hasStrongShape || hasUnknownWord else { return false }
         if distance <= Self.maxDissimilarity { return true }
+
+        // A mid-sentence capital on a single word marks a name ("the hollow app" → "the Hala
+        // app"), even when the spell checker knows both words.
+        let isMidSentenceName = correctedWords.count == 1 && !startsSentence
+            && corrected.first?.isUppercase == true && correction.original.first?.isUppercase != true
+        if isMidSentenceName { return true }
 
         // Past the general cap only strong evidence passes, and never a swap between two
         // sets of ordinary dictionary words ("I went" → "We left" is a rewrite).

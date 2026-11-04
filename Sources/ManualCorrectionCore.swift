@@ -9,14 +9,16 @@ enum ManualCorrectionCore {
     static func corrections(
         original: String,
         edited: String,
-        isKnownWord: @escaping (String) -> Bool
+        isKnownWord: @escaping (String) -> Bool,
+        isVocabularyTerm: @escaping (String) -> Bool = { _ in false }
     ) -> [LearnedCorrection] {
         let before = original.trimmingCharacters(in: .whitespacesAndNewlines)
         let after = edited.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !before.isEmpty, !after.isEmpty, before != after,
               var session = CorrectionLearningSession(
                   transcript: before, fieldValue: before,
-                  caretLocation: before.utf16.count, isKnownWord: isKnownWord
+                  caretLocation: before.utf16.count, isKnownWord: isKnownWord,
+                  isVocabularyTerm: isVocabularyTerm
               ) else { return [] }
         // The whole field is the dictated span, so an edit inside it grows or shrinks that
         // span rather than crossing its boundary.

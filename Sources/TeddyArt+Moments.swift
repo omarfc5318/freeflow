@@ -10,7 +10,7 @@ extension TeddyArt {
         outfit: TeddyOutfit = .hoodie
     ) {
         switch moment {
-        case .learned:
+        case .learned, .alreadyKnown:
             drawBearHoldingCard(in: &graphics, time: time, outfit: outfit)
         case .didntCatchThat:
             drawShrug(in: &graphics, time: time, outfit: outfit)

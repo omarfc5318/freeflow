@@ -187,6 +187,11 @@ final class RioCompanionHub: RioCompanionDirecting {
         kick()
     }
 
+    func showNotice(_ text: String, seconds: TimeInterval = 6) {
+        model.noticeText = (text, RioCompanionClock.now + seconds)
+        kick()
+    }
+
     func showError(_ message: String, seconds: TimeInterval = 6) {
         model.errorText = (message, RioCompanionClock.now + seconds)
         kick()

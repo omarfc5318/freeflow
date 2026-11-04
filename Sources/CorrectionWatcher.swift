@@ -19,6 +19,10 @@ final class CorrectionWatcher {
     static let maxFieldLength = 50_000
 
     private let onLearned: ([LearnedCorrection]) -> Void
+    private let isVocabularyTerm: (String) -> Bool
+    private let onUnwatchable: (String?) -> Void
+    /// Set when the focused control can't be followed (no caret), so the locate polls stop.
+    private var hasGivenUp = false
     private var generation = UUID()
     private var transcript = ""
     private var startedAt = Date()
@@ -29,14 +33,21 @@ final class CorrectionWatcher {
     private var isPendingSettled = true
     private static var accessibilityEnabledPIDs = Set<pid_t>()
 
-    init(onLearned: @escaping ([LearnedCorrection]) -> Void) {
+    init(
+        onLearned: @escaping ([LearnedCorrection]) -> Void,
+        isVocabularyTerm: @escaping (String) -> Bool = { _ in false },
+        onUnwatchable: @escaping (String?) -> Void = { _ in }
+    ) {
         self.onLearned = onLearned
+        self.isVocabularyTerm = isVocabularyTerm
+        self.onUnwatchable = onUnwatchable
     }
 
     func start(transcript: String) {
         stop()
         guard AXIsProcessTrusted(), !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         self.transcript = transcript
+        hasGivenUp = false
         startedAt = Date()
         if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier {
             Self.enableAccessibility(processIdentifier: pid)
@@ -72,7 +83,7 @@ final class CorrectionWatcher {
         let elapsed = Date().timeIntervalSince(startedAt)
         let shouldContinue: Bool
         if session == nil {
-            shouldContinue = elapsed < Self.locateTimeout
+            shouldContinue = elapsed < Self.locateTimeout && !hasGivenUp
             if shouldContinue { locatePastedText() }
         } else {
             shouldContinue = elapsed < Self.watchDuration && watchForEdits()
@@ -82,20 +93,39 @@ final class CorrectionWatcher {
     }
 
     private func locatePastedText() {
-        guard let focused = Self.focusedElement(),
-              Self.isReadableTextControl(focused),
-              let value = Self.textValue(of: focused),
+        guard let focused = Self.focusedElement(), Self.isReadableTextControl(focused) else { return }
+        // No caret to anchor on (Warp's text area): the pasted text can never be located, so say
+        // so once instead of polling in silence. Fix Last Dictation is the way to learn there.
+        guard Self.supportsSelection(focused) else {
+            hasGivenUp = true
+            onUnwatchable(NSWorkspace.shared.frontmostApplication?.localizedName)
+            return
+        }
+        guard let value = Self.textValue(of: focused),
               value.utf16.count <= Self.maxFieldLength,
               let caret = Self.selection(of: focused), caret.length == 0 else { return }
         session = CorrectionLearningSession(
             transcript: transcript, fieldValue: value, caretLocation: caret.location,
-            isKnownWord: Self.isKnownWord
+            isKnownWord: Self.isKnownWord, isVocabularyTerm: isVocabularyTerm
         )
         if session != nil {
             element = focused
             pendingValue = nil
             isPendingSettled = true
         }
+    }
+
+    /// A Return key-down: reads the field now and settles it before a send clears it, so a fix
+    /// made and sent inside one poll interval is still learned.
+    func returnKeyPressed() {
+        guard var session, let element,
+              let value = Self.textValue(of: element),
+              value.utf16.count <= Self.maxFieldLength else { return }
+        session.observeReturnKey(value)
+        self.session = session
+        pendingValue = value
+        pendingSince = Date()
+        isPendingSettled = true
     }
 
     /// Returns false once watching should end.
@@ -164,6 +194,19 @@ final class CorrectionWatcher {
         guard let value = attribute(element, kAXValueAttribute) else { return nil }
         if let text = value as? String { return text }
         return (value as? NSAttributedString)?.string
+    }
+
+    /// True unless the control positively reports a caret-less attribute set. An empty or
+    /// unreadable list (Electron before its tree is built) is not held against the control.
+    private static func supportsSelection(_ element: AXUIElement) -> Bool {
+        var names: CFArray?
+        guard AXUIElementCopyAttributeNames(element, &names) == .success,
+              let list = names as? [String], !list.isEmpty else { return true }
+        return AppTextInsertionCore.canAnchorDictation(
+            role: attribute(element, kAXRoleAttribute) as? String,
+            subrole: attribute(element, kAXSubroleAttribute) as? String,
+            hasSelectedTextRange: list.contains(kAXSelectedTextRangeAttribute)
+        )
     }
 
     private static func selection(of element: AXUIElement) -> NSRange? {

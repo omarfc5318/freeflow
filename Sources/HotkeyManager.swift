@@ -12,6 +12,7 @@ final class HotkeyManager {
 
     var onShortcutEvent: ((ShortcutEvent) -> Void)?
     var onEscapeKeyPressed: (() -> Bool)?
+    var onReturnKeyPressed: (() -> Void)?
 
     var currentPressedModifiers: ShortcutModifiers {
         inputState.currentModifiers
@@ -30,11 +31,15 @@ final class HotkeyManager {
         backend.onEscapeKeyPressed = { [weak self] in
             self?.onEscapeKeyPressed?() ?? false
         }
+        backend.onReturnKeyPressed = { [weak self] in
+            self?.onReturnKeyPressed?()
+        }
         do {
             try backend.start()
         } catch {
             backend.onInputEvent = nil
             backend.onEscapeKeyPressed = nil
+            backend.onReturnKeyPressed = nil
             inputState = ShortcutInputState()
             throw error
         }
@@ -44,6 +49,7 @@ final class HotkeyManager {
         backend.stop()
         backend.onInputEvent = nil
         backend.onEscapeKeyPressed = nil
+        backend.onReturnKeyPressed = nil
         inputState = ShortcutInputState()
     }
 

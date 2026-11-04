@@ -48,6 +48,12 @@ enum AppTextInsertionCore {
         isSupportedTextControl(role: role, subrole: subrole)
     }
 
+    /// A control correction learning can follow: observable, and exposing a caret so the pasted
+    /// text can be located. Warp's text area has no selected range, so polling it is pointless.
+    static func canAnchorDictation(role: String?, subrole: String?, hasSelectedTextRange: Bool) -> Bool {
+        hasSelectedTextRange && canObserveDictation(role: role, subrole: subrole)
+    }
+
     /// Accepts exact expected text as inserted; prior ambiguity keeps paste fallback disabled.
     static func classifyWrite(
         originalValue: String,

@@ -34,6 +34,118 @@ enum CorrectionLearningCoreTests {
         testSettledStateIsUsedWhenWatchingTimesOut()
         testLooseCapForStrongVocabulary()
         testLooseCapStillRejectsRewrites()
+        testVocabularyTermAcceptsKnownWordSwap()
+        testVocabularyTermAcceptsSentenceInitialSwap()
+        testMidSentenceNamePastCapWithoutVocabulary()
+        testCaseOnlyFixOfUnknownWordMidSentence()
+        testRewriteStillRejectedWithVocabulary()
+        testWholeSpanDeletedThenRetypedKeepsWatching()
+        testWholeSpanDeletedThenFieldClearedFinishes()
+        testFastSendWithReturnSeenIsLearned()
+        testFastSendWithoutReturnIsStillDropped()
+    }
+
+    /// The owner's spell checker also knows these (a real account does).
+    private static let ownerKnownWords = knownWords.union([
+        "hollow", "cloud", "claude", "hala", "great", "app", "notes"
+    ])
+
+    private static func ownerSession(
+        _ transcript: String, field: String, vocabulary: Set<String> = []
+    ) -> CorrectionLearningSession? {
+        CorrectionLearningSession(
+            transcript: transcript, fieldValue: field, caretLocation: field.utf16.count,
+            isKnownWord: { ownerKnownWords.contains($0.lowercased()) },
+            isVocabularyTerm: { vocabulary.contains($0.lowercased()) }
+        )
+    }
+
+    private static func ownerLearned(
+        _ transcript: String, field: String, edits: [String], vocabulary: Set<String> = []
+    ) -> [LearnedCorrection] {
+        guard var learner = ownerSession(transcript, field: field, vocabulary: vocabulary) else { return [] }
+        for edit in edits { _ = learner.observe(edit) }
+        return learner.corrections()
+    }
+
+    private static func testVocabularyTermAcceptsKnownWordSwap() {
+        TestSupport.expectEqual(
+            ownerLearned("the hollow app", field: "the hollow app", edits: ["the Hala app"], vocabulary: ["hala"]),
+            fix("hollow", "Hala")
+        )
+    }
+
+    private static func testVocabularyTermAcceptsSentenceInitialSwap() {
+        TestSupport.expectEqual(
+            ownerLearned("Cloud is great.", field: "Cloud is great.", edits: ["Claude is great."], vocabulary: ["claude"]),
+            fix("Cloud", "Claude")
+        )
+        TestSupport.expectEqual(
+            ownerLearned("Hollow is great.", field: "Hollow is great.", edits: ["Hala is great."], vocabulary: ["hala"]),
+            fix("Hollow", "Hala")
+        )
+    }
+
+    private static func testMidSentenceNamePastCapWithoutVocabulary() {
+        TestSupport.expectEqual(
+            ownerLearned("the hollow app", field: "the hollow app", edits: ["the Hala app"]),
+            fix("hollow", "Hala")
+        )
+    }
+
+    private static func testCaseOnlyFixOfUnknownWordMidSentence() {
+        TestSupport.expectEqual(
+            ownerLearned("the nashwa app", field: "the nashwa app", edits: ["the Nashwa app"]),
+            fix("nashwa", "Nashwa")
+        )
+        // A known word, or a sentence start, is still only casing.
+        TestSupport.expectEqual(
+            ownerLearned("we ship to paris", field: "we ship to paris", edits: ["we ship to Paris"]), []
+        )
+        TestSupport.expectEqual(
+            ownerLearned("nashwa is great", field: "nashwa is great", edits: ["Nashwa is great"]), []
+        )
+    }
+
+    private static func testRewriteStillRejectedWithVocabulary() {
+        TestSupport.expectEqual(
+            ownerLearned("I went home", field: "I went home", edits: ["We left home"], vocabulary: ["hala"]), []
+        )
+    }
+
+    /// Whole dictation backspaced and retyped ("Notes: hollow" -> "Notes: " -> "Notes: Hala").
+    private static func testWholeSpanDeletedThenRetypedKeepsWatching() {
+        var learner = ownerSession("hollow", field: "Notes: hollow", vocabulary: ["hala"])!
+        TestSupport.expectEqual(learner.track("Notes: "), .watching)
+        TestSupport.expect(!learner.isSpanLost, "An emptied span stays anchored")
+        TestSupport.expectEqual(learner.track("Notes: H"), .watching)
+        TestSupport.expectEqual(learner.track("Notes: Ha"), .watching)
+        TestSupport.expectEqual(learner.track("Notes: Hala"), .watching)
+        learner.markSettled()
+        TestSupport.expectEqual(learner.finalCorrections(), fix("hollow", "Hala"))
+    }
+
+    private static func testWholeSpanDeletedThenFieldClearedFinishes() {
+        var learner = ownerSession("hollow", field: "Notes: hollow", vocabulary: ["hala"])!
+        TestSupport.expectEqual(learner.track("Notes: "), .watching)
+        TestSupport.expectEqual(learner.track(""), .finished)
+        TestSupport.expectEqual(learner.finalCorrections(), [])
+    }
+
+    /// Fix then Return inside one poll interval: the Return key-down settles the fixed value
+    /// before the field clears.
+    private static func testFastSendWithReturnSeenIsLearned() {
+        var learner = session("Meet Jon.", field: "Meet Jon.")!
+        learner.observeReturnKey("Meet John.")
+        TestSupport.expectEqual(learner.track(""), .finished)
+        TestSupport.expectEqual(learner.finalCorrections(), fix("Jon", "John"))
+    }
+
+    private static func testFastSendWithoutReturnIsStillDropped() {
+        var learner = session("Meet Jon.", field: "Meet Jon.")!
+        TestSupport.expectEqual(learner.track("Meet John."), .watching)
+        TestSupport.expectEqual(learner.track(""), .finished)
+        TestSupport.expectEqual(learner.finalCorrections(), [])
     }
 
     private static func session(_ transcript: String, field: String, caret: Int? = nil) -> CorrectionLearningSession? {
