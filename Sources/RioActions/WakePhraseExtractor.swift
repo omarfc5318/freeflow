@@ -70,7 +70,7 @@ enum WakePhraseExtractor {
 
     /// Words that may come before the name without it being mid-sentence.
     private static let leadIns: Set<String> = [
-        "hey", "hi", "hello", "yo", "yoo", "ok", "okay", "uh", "um", "so", "oh", "alright", "right", "well"
+        "hey", "hi", "hello", "yo", "yoo", "ok", "okay", "uh", "um", "so", "oh", "alright", "right", "well", "please"
     ]
 
     /// Words after "Rio" that make it a place, not the name: "Rio de Janeiro", "Rio Grande",
@@ -87,7 +87,9 @@ enum WakePhraseExtractor {
         "put", "move", "switch", "search", "google", "go", "mute", "unmute", "volume", "take", "remind",
         "remember", "undo", "help", "text", "message", "send", "type", "write", "reply", "call", "find",
         "make", "tell", "read", "answer", "translate", "lock", "skip", "next", "what", "what's", "whats",
-        "what\u{2019}s", "how", "who", "where", "when", "can", "could", "would", "please", "do", "say",
+        "what\u{2019}s", "how", "how's", "hows", "how\u{2019}s", "who", "who's", "whos", "who\u{2019}s", "where",
+        "where's", "wheres", "where\u{2019}s", "when", "when's", "whens", "when\u{2019}s", "can", "could", "would",
+        "please", "do", "say",
         "give", "forget", "minimize", "maximize", "empty", "check", "add", "new", "create",
     ]
 
@@ -105,7 +107,41 @@ enum WakePhraseExtractor {
         var last = index
         while last + 1 < words.count, isName(words[last + 1].text) { last += 1 }
         if last + 1 < words.count, placeContinuations.contains(words[last + 1].text.lowercased()) { return false }
-        return true
+        return !isTalkingAbout(after: last, in: words, text: text)
+    }
+
+    /// Words right after the name that make it the subject of a sentence about Rio (the film,
+    /// the footballer, the parrot) rather than someone speaking to him: "Rio is a 2011 animated
+    /// film", "Rio was released", "Rio 2 came out", "Rio the movie is great", "Rio Ferdinand".
+    private static let statementVerbs: Set<String> = ["is", "was", "are", "were", "has", "had", "isnt", "wasnt", "isn't", "wasn't"]
+    private static let determiners: Set<String> = ["the", "a", "an"]
+    /// After "is"/"was"/"has", these make it a question to Rio: "Rio, is it raining", "Rio has my
+    /// package arrived".
+    private static let questionSubjects: Set<String> = [
+        "it", "there", "this", "that", "my", "your", "he", "she", "they", "we", "you", "i", "anyone", "anything", "everything",
+    ]
+
+    /// True when the name at `index` (the last of any repeats) opens a statement about Rio.
+    /// Never when a command word follows. A comma or other punctuation after the name ("Rio,
+    /// Spotify", "Rio, 5 minute timer") marks him as addressed, so only the verb rule applies.
+    private static func isTalkingAbout(after index: Int, in words: [Word], text: String) -> Bool {
+        guard index + 1 < words.count else { return false }
+        let next = words[index + 1].text
+        let lowered = next.lowercased()
+        if commandStarters.contains(lowered) { return false }
+        if statementVerbs.contains(lowered) {
+            let after = index + 2 < words.count ? words[index + 2].text.lowercased() : nil
+            return !(after.map(questionSubjects.contains) ?? false)
+        }
+        let between = text[words[index].range.upperBound..<words[index + 1].range.lowerBound]
+        guard between.allSatisfy(\.isWhitespace) else { return false }
+        if determiners.contains(lowered) { return true }
+        if next.first?.isNumber == true { return true }
+        // A capitalised word that is not a command ("Rio Ferdinand scored"): a surname or title.
+        // All-caps transcripts ("RIO OPEN CHROME") and "I" are not.
+        let isFirstPerson = lowered.hasPrefix("i'") || lowered.hasPrefix("i\u{2019}")
+        if let first = next.first, first.isUppercase, next != next.uppercased(), !isFirstPerson { return true }
+        return false
     }
 
     private static func startsUtterance(at index: Int, in words: [Word], text: String) -> Bool {
@@ -154,14 +190,28 @@ enum WakeListenTiming {
     static let silenceAfterUnfinishedCommand: TimeInterval = 2.6
     /// After a bare "Rio", how long the listener waits for the command.
     static let bareNameWindow: TimeInterval = 4
-    /// Longest wait before listening again after a final result with no words.
-    static let maxEmptyFinalDelay: TimeInterval = 0.5
+    /// Wait before listening again after the first few finals with no words.
+    static let fastEmptyFinalDelay: TimeInterval = 0.5
+    /// Empty finals in a row that still get the fast restart.
+    static let fastEmptyFinals = 3
+    /// Longest wait before listening again after a final result with no words. Sustained sound
+    /// (`WakeSoundGate`) ends the wait at once, so this only costs time in a really quiet room.
+    static let maxEmptyFinalDelay: TimeInterval = 5
 
     private static let unfinishedEndings: Set<String> = [
         "that", "to", "and", "saying", "say", "the", "a", "an", "my", "for", "of", "with", "about", "is",
         "open", "text", "message", "tell", "send", "type", "write", "search", "set", "put", "move", "play",
         "if", "but", "or", "then", "so", "in", "on", "at", "from",
     ]
+
+    /// Whether a bare "Rio" heard now may open the `bareNameWindow` (the next utterance runs as
+    /// a command without the name). Never while Rio is talking or just after: his own read-out,
+    /// or room audio, ending on "Rio" must not turn the next room speech into a trusted command.
+    static func bareNameOpensWindow(isRioSpeaking: Bool, secondsSinceRioSpoke: TimeInterval?) -> Bool {
+        if isRioSpeaking { return false }
+        if let since = secondsSinceRioSpoke, since < RioConversationBargeIn.echoTailSeconds { return false }
+        return true
+    }
 
     /// How long to wait after the last new word before the utterance (or command) ends.
     static func silenceToEnd(pendingCommand: String?) -> TimeInterval {
@@ -174,8 +224,36 @@ enum WakeListenTiming {
     }
 
     /// The wait before listening again after `consecutive` finals with no words in a row:
-    /// 0.25 s, then 0.5 s at most, so the listener is never deaf for long in a quiet room.
+    /// 0.25 s, then 0.5 s for the first few, then 2 s, 4 s and 5 s at most, so a quiet room
+    /// doesn't tear the recognizer down and rebuild it all day. Sustained sound cuts any wait
+    /// short and starts the fast schedule again.
     static func emptyFinalDelay(consecutive: Int) -> TimeInterval {
-        min(0.25 * pow(2, Double(max(consecutive, 1) - 1)), maxEmptyFinalDelay)
+        let count = max(consecutive, 1)
+        guard count > fastEmptyFinals else { return min(0.25 * pow(2, Double(count - 1)), fastEmptyFinalDelay) }
+        return min(2 * pow(2, Double(count - fastEmptyFinals - 1)), maxEmptyFinalDelay)
     }
+}
+
+/// Decides when the microphone has heard real sound (someone talking), not one loud sample:
+/// a key click, a cough or a fan's tick stays below it; a spoken word crosses it.
+struct WakeSoundGate {
+    /// Root mean square level of a buffer that counts as loud.
+    static let loudLevel: Float = 0.03
+    /// How long loud buffers must follow one another.
+    static let sustainedSeconds: Double = 0.12
+
+    private var loudRun: Double = 0
+
+    /// Feeds one buffer's RMS level and length; true once loud buffers have lasted
+    /// `sustainedSeconds` in a row (and for every loud buffer after that).
+    mutating func feed(rms: Float, seconds: Double) -> Bool {
+        guard rms > Self.loudLevel else {
+            loudRun = 0
+            return false
+        }
+        loudRun += seconds
+        return loudRun >= Self.sustainedSeconds
+    }
+
+    mutating func reset() { loudRun = 0 }
 }

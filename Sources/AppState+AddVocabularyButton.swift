@@ -103,10 +103,12 @@ extension AppState {
     }
 
     /// Shows the sign now, or holds it until the next dictation closes when one is starting or
-    /// running (it would be wiped or dropped otherwise).
+    /// running (it would be wiped or dropped otherwise). A held sign that dictation doesn't show
+    /// is dropped, never shown after a later one (`HeldLearnMoment`).
     private func presentLearnFeedback(_ moment: TeddyMoment) {
         if isDeferringLearnFeedback || isRecording || isTranscribing {
-            deferredLearnMoment.defer(moment)
+            deferredLearnMoment.hold(moment, now: ProcessInfo.processInfo.systemUptime)
+            if isRecording || isTranscribing { deferredLearnMoment.sessionStarted(now: ProcessInfo.processInfo.systemUptime) }
         } else {
             showTeddyMoment(moment)
         }

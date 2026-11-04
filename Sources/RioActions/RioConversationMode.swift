@@ -77,6 +77,11 @@ import Foundation
         if !speaking { rioStoppedSpeakingAt = Date() }
     }
 
+    /// Whether Rio (or the translator's voice) is talking, and how long ago he stopped.
+    func rioSpeechState(now: Date) -> (isSpeaking: Bool, secondsSinceSpoke: TimeInterval?) {
+        (rioSpeaking, rioStoppedSpeakingAt.map { now.timeIntervalSince($0) })
+    }
+
     private func handle(command: String) {
         guard core.isOn, !core.isPaused else { return }
         let sinceSpoke = rioStoppedSpeakingAt.map { Date().timeIntervalSince($0) }
@@ -140,6 +145,15 @@ import Foundation
         listener.onBareName = { [weak self] in
             guard let self, self.core.isOn, !self.core.isPaused, !self.rioSpeaking else { return }
             self.playSound?("Tink")
+        }
+        // His own voice (or the room) saying "Rio" while he talks, or just after, must not make
+        // the next utterance a command without the name.
+        listener.bareNameMayOpenWindow = { [weak self] in
+            guard let self else { return false }
+            let speech = self.rioSpeechState(now: Date())
+            return WakeListenTiming.bareNameOpensWindow(
+                isRioSpeaking: speech.isSpeaking, secondsSinceRioSpoke: speech.secondsSinceSpoke
+            )
         }
         self.listener = listener
         Task { @MainActor [weak self] in

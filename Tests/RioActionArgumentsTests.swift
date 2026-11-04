@@ -66,6 +66,24 @@ enum RioActionArgumentsTests {
         TestSupport.expectEqual(RioPlaybackState.combine([nil]), .unknown)
         TestSupport.expectEqual(RioPlaybackState.combine(["paused", nil]), .notPlaying)
         TestSupport.expectEqual(RioPlaybackState.combine(["stopped", "Playing\n"]), .playing)
+        // Finding 92: Spotify paused while YouTube plays in a browser: "pause" and a bare "stop"
+        // still press the media key, and "play" doesn't toggle the browser off.
+        let pausedSpotifyWithBrowser = RioPlaybackState.combine(["paused"], otherAppPlaying: true)
+        TestSupport.expectEqual(pausedSpotifyWithBrowser, .playing)
+        TestSupport.expectEqual(RioMediaPlan.decide(.pause, state: pausedSpotifyWithBrowser).pressesKey, true)
+        TestSupport.expectEqual(RioMediaPlan.decide(.play, state: pausedSpotifyWithBrowser).pressesKey, false)
+        TestSupport.expectEqual(RioPlaybackState.combine([], otherAppPlaying: true), .playing)
+        // Nothing else playing: round 1's "never resume by accident" stays.
+        TestSupport.expectEqual(RioPlaybackState.combine(["paused"], otherAppPlaying: false), .notPlaying)
+        let browser = RioAudioOutputProcess(pid: 200, bundleID: "com.google.Chrome.helper", isRunningOutput: true)
+        let idleBrowser = RioAudioOutputProcess(pid: 200, bundleID: "com.google.Chrome.helper", isRunningOutput: false)
+        let spotify = RioAudioOutputProcess(pid: 300, bundleID: "com.spotify.client", isRunningOutput: true)
+        let rio = RioAudioOutputProcess(pid: 42, bundleID: "com.example.rio", isRunningOutput: true)
+        let voice = RioAudioOutputProcess(pid: 400, bundleID: "com.apple.speech.speechsynthesisd", isRunningOutput: true)
+        let daemon = RioAudioOutputProcess(pid: 500, bundleID: nil, isRunningOutput: true)
+        TestSupport.expect(RioOtherAudio.isOtherAppPlaying([browser], ownPID: 42), "a browser playing counts")
+        TestSupport.expect(!RioOtherAudio.isOtherAppPlaying([idleBrowser, spotify, rio, voice, daemon], ownPID: 42),
+                           "idle apps, the asked players, Rio, system voices and unnamed daemons don't")
         let pause = RioMediaPlan.decide(.pause, state: .notPlaying)
         TestSupport.expectEqual(pause, RioMediaPlan.Decision(pressesKey: false, summary: "Nothing is playing"))
         TestSupport.expectEqual(RioMediaPlan.decide(.pause, state: .playing), RioMediaPlan.Decision(pressesKey: true, summary: "Paused"))

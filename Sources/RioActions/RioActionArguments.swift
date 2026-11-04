@@ -47,19 +47,48 @@ enum RioMediaKey {
     }
 }
 
-/// Whether Spotify or Music is playing, as far as Rio can tell without asking for a permission.
+/// Whether something is playing, as far as Rio can tell without asking for a permission:
+/// Spotify or Music by their own `player state`, anything else (YouTube in a browser, a
+/// podcast app) by CoreAudio's per-process output flag.
 enum RioPlaybackState: Equatable {
     case playing
     case notPlaying
-    /// Neither app is running, or Rio may not ask them.
+    /// Neither app is running, or Rio may not ask them, and nothing else is known to play.
     case unknown
 
     /// Each running player's `player state` as text ("playing", "paused", "stopped"), or nil
-    /// when it could not be read. Any player playing wins.
-    static func combine(_ answers: [String?]) -> RioPlaybackState {
+    /// when it could not be read. Any player playing wins. `otherAppPlaying`: another app is
+    /// sending audio out right now, so a paused Spotify or Music is not the whole story ("pause"
+    /// must still press the media key, a bare "stop" must still pause it).
+    static func combine(_ answers: [String?], otherAppPlaying: Bool = false) -> RioPlaybackState {
         let known = answers.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-        if known.contains("playing") { return .playing }
+        if known.contains("playing") || otherAppPlaying { return .playing }
         return known.isEmpty ? .unknown : .notPlaying
+    }
+}
+
+/// One process CoreAudio lists (macOS 14+), with whether it is sending audio to an output now.
+struct RioAudioOutputProcess: Equatable {
+    let pid: Int32
+    let bundleID: String?
+    let isRunningOutput: Bool
+}
+
+enum RioOtherAudio {
+    /// Never count as "something else is playing": Rio himself (checked by pid), the players Rio
+    /// asks directly, and system voices and sounds (Rio's speech, VoiceOver, alerts).
+    private static let ignoredBundlePrefixes = [
+        "com.spotify.client", "com.apple.music",
+        "com.apple.speech", "com.apple.speechsynthesis", "com.apple.accessibility", "com.apple.voiceover",
+        "com.apple.systemsoundserver", "com.apple.coreaudio", "com.apple.audio", "com.apple.corespeech",
+    ]
+
+    static func isOtherAppPlaying(_ processes: [RioAudioOutputProcess], ownPID: Int32) -> Bool {
+        processes.contains { process in
+            guard process.isRunningOutput, process.pid != ownPID else { return false }
+            guard let bundleID = process.bundleID?.lowercased(), !bundleID.isEmpty else { return false }
+            return !ignoredBundlePrefixes.contains { bundleID.hasPrefix($0) }
+        }
     }
 }
 
