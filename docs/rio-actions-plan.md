@@ -626,6 +626,13 @@ actually working on.
 - #59 Drive Claude Code by voice: "tell Claude to fix the failing test", "approve that", "what's
   Claude doing?" against the owner's Claude Code session in Warp.
 
+- #65 Your writing style: learn the owner's phrasing, emoji use and formality from their past
+  dictations (local only) and apply it to cleanup and "write for me".
+- #70 Personal timeline search: "what was that restaurant Ali mentioned yesterday?" searches the
+  owner's own dictation history, locally (respect the M4 redaction rules; only dictation text).
+- #73 App integrations: Spotify ("play my Discover Weekly"), Notion ("add this to my Hala
+  roadmap"), Canvas (assignments), each with its own consent and token in the Keychain.
+
 ## Rules for every builder
 - Read `AGENTS.md` first and follow it. No new dependencies, no SPM/Xcode project. Swift 6.2
   toolchain, deployment target macOS 13, `-warnings-as-errors`. Use `#available` for newer APIs.
