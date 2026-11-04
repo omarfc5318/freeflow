@@ -23,6 +23,8 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioStyleProfile.swift \
 	Sources/RioActions/RioStyleProfileProvider.swift \
 	Sources/RioActions/RioWritingPhrases.swift \
+	Sources/RioActions/RioWritingPrompts.swift \
+	Sources/RioActions/RioWritingFlow.swift \
 	Sources/RioActions/RioAutomationPhrases.swift \
 	Sources/RioActions/RioAutomationModels.swift \
 	Sources/RioActions/RioScheduleCore.swift \
