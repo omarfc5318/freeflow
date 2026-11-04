@@ -34,6 +34,14 @@ enum RioAutomationPhrases {
         return !RioText.matches(#"^set\s+(?:a|an|the|my)?\s*(?:timer|alarm|reminder|countdown)\b"#, command)
     }
 
+    /// Commands whose words after the verb are a message or a prompt.
+    private static let messageVerbs: Set<String> = ["text", "message", "tell", "reply", "send", "email", "write", "type", "ask"]
+
+    private static func startsWithMessageVerb(_ command: String) -> Bool {
+        guard let first = command.split(separator: " ").first else { return false }
+        return messageVerbs.contains(String(first).lowercased().trimmingCharacters(in: .punctuationCharacters))
+    }
+
     // MARK: Splitting "<when or trigger> <command>"
 
     /// Splits at the first comma, else at the first command verb at or after `minIndex`.
@@ -83,6 +91,9 @@ enum RioAutomationPhrases {
             return make(command: parts.command, when: head)
         }
         guard startsWithVerb(body) else { return nil }
+        // "text Sarah I'll be home in 20 minutes": time words at the end belong to the message.
+        // A message is scheduled only with "schedule" or a leading time ("in 10 minutes, text mom").
+        if !hadSchedule, startsWithMessageVerb(body) { return nil }
         let pattern = hadSchedule ? trailingWhenScheduled : trailingWhenAlways
         if let groups = RioText.firstMatch(pattern, in: body), let command = groups[1], let when = groups[2] {
             return make(command: cleanCommand(command), when: when)

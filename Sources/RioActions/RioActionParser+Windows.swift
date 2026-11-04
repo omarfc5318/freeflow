@@ -116,7 +116,7 @@ extension RioActionParser {
     private func windowAppName(_ raw: String?) -> (spoken: String?, isKnown: Bool)? {
         var text = (raw ?? "").trimmingCharacters(in: .whitespaces)
         text = RioText.replacing(#"^(?:the|my)\s+"#, with: "", in: text)
-        text = RioText.replacing(#"\s+(?:window|app|application)$"#, with: "", in: text)
+        text = RioText.replacing(#"\s+(?:window|app|application|browser)$"#, with: "", in: text)
         let lowered = text.lowercased()
         let frontmost: Set<String> = ["", "this", "it", "that", "window", "current", "front", "frontmost", "active", "this app", "the app", "app", "current window"]
         if frontmost.contains(lowered) { return (nil, true) }
@@ -126,7 +126,7 @@ extension RioActionParser {
             return nil
         }
         guard Self.isPlausibleTarget(text) else { return nil }
-        if let known = AppNameMatcher.bestMatch(for: text, in: installedApps)?.name { return (known, true) }
+        if let match = AppNameMatcher.match(for: text, in: installedApps) { return (match.app.name, match.kind.isConfident) }
         return (text, false)
     }
 
@@ -182,29 +182,35 @@ extension RioActionParser {
         text = RioText.replacing(#"^(?:(?:the|my)\s+)?(?:web\s?site|site|web\s?page|page)\s+(?=\S)"#, with: "", in: text)
         let tails = [
             #"\s+(?:in|on)\s+(?:the\s+|my\s+)?(?:browser|web|internet|chrome|safari)$"#,
-            #"\s+(?:app|application|program)$"#,
+            #"\s+(?:app|application|program|(?:web\s+)?browser)$"#,
             #"\s+again$"#,
         ]
         for tail in tails { text = RioText.replacing(tail, with: "", in: text) }
         return text.trimmingCharacters(in: .whitespaces)
     }
 
+    /// "open Chrome in incognito": the mode is left to the smart resolver.
+    private static let privateModeTail = #"\s+(?:in|with)\s+(?:an?\s+)?(?:incognito|private|privacy)(?:\s+(?:mode|window|tab|browsing))?$"#
+
     /// open/launch/switch: an app wins over a website unless the app match is only a loose one.
     private func openLike(_ rawTarget: String, verb: String, requireKnown: Bool, asSwitch: Bool) -> ParsedClause? {
-        let target = cleanTarget(rawTarget)
+        var target = cleanTarget(rawTarget)
+        let wantsPrivateMode = RioText.matches(Self.privateModeTail, target)
+        if wantsPrivateMode { target = cleanTarget(RioText.replacing(Self.privateModeTail, with: "", in: target)) }
         guard Self.isPlausibleTarget(target) else { return nil }
         let verbText = verb.lowercased()
         func make(_ name: String) -> RioAction { asSwitch ? .switchToApp(name: name) : .openApp(name: name) }
 
-        if let url = RioWebURLs.domainURL(fromSpoken: target) {
+        if let url = RioWebURLs.localURL(fromSpoken: target) ?? RioWebURLs.domainURL(fromSpoken: target) {
             return ParsedClause(action: .openURL(url), verb: verbText)
         }
+        target = withoutArabicArticle(target)
         let site = RioWebURLs.knownSite(compactName: RioText.compact(target))
         if let match = AppNameMatcher.match(for: target, in: installedApps) {
             if let site, !match.kind.isStrong {
                 return ParsedClause(action: .openURL(site), verb: verbText)
             }
-            return ParsedClause(action: make(match.app.name), verb: verbText)
+            return ParsedClause(action: make(match.app.name), verb: verbText, isConfident: match.kind.isConfident && !wantsPrivateMode)
         }
         if let site { return ParsedClause(action: .openURL(site), verb: verbText) }
         if requireKnown { return nil }
@@ -213,6 +219,16 @@ extension RioActionParser {
         // Either way it is a guess, so the smart resolver gets the first say.
         guard Self.looksLikeAppName(raw: rawTarget, target: target) else { return nil }
         return ParsedClause(action: make(target), verb: verbText, isConfident: false)
+    }
+
+    /// "open el WhatsApp": the Arabic article goes only when the name without it is an app or a
+    /// known site, so "Al Jazeera" keeps its "Al".
+    private func withoutArabicArticle(_ target: String) -> String {
+        guard let rest = RioText.firstMatch(#"^(?:el|al)\s+(.+)$"#, in: target)?[1] else { return target }
+        let whole = RioText.compact(target)
+        if AppNameMatcher.match(for: target, in: installedApps) != nil || RioWebURLs.knownSite(compactName: whole) != nil { return target }
+        let isKnown = AppNameMatcher.match(for: rest, in: installedApps) != nil || RioWebURLs.knownSite(compactName: RioText.compact(rest)) != nil
+        return isKnown ? rest : target
     }
 
     /// A capitalised word ("Photoshop") or an explicit "app" suffix.
@@ -225,8 +241,8 @@ extension RioActionParser {
     private func appOnly(_ rawTarget: String, verb: String, requireKnown: Bool, build: (String) -> RioAction) -> ParsedClause? {
         let target = cleanTarget(rawTarget)
         guard Self.isPlausibleTarget(target) else { return nil }
-        if let match = AppNameMatcher.bestMatch(for: target, in: installedApps) {
-            return ParsedClause(action: build(match.name), verb: verb.lowercased())
+        if let match = AppNameMatcher.match(for: target, in: installedApps) {
+            return ParsedClause(action: build(match.app.name), verb: verb.lowercased(), isConfident: match.kind.isConfident)
         }
         if requireKnown || !Self.looksLikeAppName(raw: rawTarget, target: target) { return nil }
         return ParsedClause(action: build(target), verb: verb.lowercased(), isConfident: false)
