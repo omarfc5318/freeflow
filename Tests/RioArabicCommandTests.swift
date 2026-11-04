@@ -27,6 +27,7 @@ enum RioArabicCommandTests {
         testTimerFractionsAndBareUnits()
         testTranslateThisText()
         testQueriesKeepSpelling()
+        RioArabicRound2Tests.run()
     }
 
     private static func english(_ text: String) -> String? { RioArabicCommandTable.english(for: text) }

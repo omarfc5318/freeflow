@@ -82,6 +82,7 @@ extension RioArabicText {
     /// starts with one of these, any Arabic after it is that content and must stay Arabic.
     static let englishContentVerbs: Set<String> = [
         "type", "write", "text", "message", "reply", "tell", "send", "search", "google", "dictate",
+        "play", "remember", "remind", "note", "add", "find",
     ]
 
     /// The transcript without a leading greeting and name, in either script ("ريو stop",

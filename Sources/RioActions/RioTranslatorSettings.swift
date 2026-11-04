@@ -5,9 +5,11 @@ enum RioTranslatorSettings {
     static let otherLanguageKey = "rio_translator_other_language"
     /// Conversation mode re-listens to Arabic commands with Whisper (sends only that command's audio).
     static let arabicConversationKey = "rio_arabic_conversation_commands"
-    /// On unless turned off: without it, Arabic said after "Rio" hands-free reaches Rio as the
-    /// English recognizer's guess. The action key already sends its command audio to Whisper.
-    static let arabicConversationDefault = true
+    /// Off unless the owner turns it on: each re-listen sends audio to the transcription provider
+    /// (a call that can be billed), and turning that on by default is pending an explicit owner
+    /// decision (docs/rio-actions-plan.md). Without it, Arabic said after "Rio" hands-free reaches
+    /// Rio as the English recognizer's guess; the action key still reads Arabic commands.
+    static let arabicConversationDefault = false
 
     /// "My other language": what English is translated into. Arabic unless changed.
     static var otherLanguage: RioTranslatorLanguage {
@@ -61,7 +63,7 @@ struct RioTranslatorSettingsSection: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Toggle("Understand Arabic commands in conversation mode (sends audio to your transcription provider)", isOn: $arabicConversation)
-            Text("On by default, so Arabic commands (\"ريو افتح كروم\") work hands-free as they do with the action key. In conversation mode, when Rio hears \"Rio\" but not a command he knows, only the audio of that one command (about the last second and a half plus the command) is sent to your transcription provider to read it again. Everything else stays on this Mac, and plain English commands are never sent. Turn it off to keep conversation mode entirely on this Mac.")
+            Text("Off by default. Turn it on so Arabic commands (\"ريو افتح كروم\") work hands-free as they do with the action key. When it is on and Rio hears \"Rio\" in conversation mode but not a command he knows, only the audio of that one command (about the last second and a half plus the command) is sent to your transcription provider to read it again; each one is a provider request, which your provider may bill. Everything else stays on this Mac, and plain English commands are never sent. While it is off, conversation mode stays entirely on this Mac.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -36,11 +36,41 @@ enum RioArabicClauses {
 
     static func isClauseVerb(_ word: String) -> Bool { clauseVerbs.contains(word) }
 
+    /// Any verb that starts an Arabic command: the clause verbs, mute, search and type/send.
+    static func isCommandVerb(_ word: String) -> Bool {
+        clauseVerbs.contains(word) || muteVerbs.contains(word) || searchVerbs.contains(word) || contentVerbs.contains(word)
+    }
+
+    static func isSearchVerb(_ word: String) -> Bool { searchVerbs.contains(word) }
+
+    /// The command form of a polite second-person verb, read by its shape rather than one by one:
+    /// "تفتح" -> "فتح", "تشغل" -> "شغل", "تعلي" -> "علي", "تبحث" -> "ابحث". Nil when the word is
+    /// already a command or the shape doesn't give one ("تراجع", "ترجم", "تايمر").
+    static func secondPersonCommand(_ word: String) -> String? {
+        guard word.hasPrefix("ت"), word.count >= 3, !isCommandVerb(word) else { return nil }
+        let stem = String(word.dropFirst())
+        if isCommandVerb(stem) { return stem }
+        if isCommandVerb("ا" + stem) { return "ا" + stem }
+        return nil
+    }
+
+    /// A thing a verb acts on that can follow "و" with the verb left out ("طفي الوايفاي
+    /// والبلوتوث"): the sound, wifi, bluetooth, the light, dark mode, the screen.
+    static func isTargetWord(_ word: String) -> Bool {
+        let bare = RioArabicVocabulary.stripArticle(word).lowercased()
+        return ["صوت", "ساوند", "وايفاي", "واي", "اضاءه", "سطوع", "دارك", "داكن", "شاشه", "وضع", "wifi", "volume", "bluetooth", "brightness"]
+            .contains(bare) || bare.hasPrefix("بلوت")
+    }
+
+    /// Arabic verbs whose object is content: type it, send it.
+    private static let contentVerbs: Set<String> = ["اكتب", "اكتبي", "ارسل", "ارسلي", "ابعث", "ابعثي"]
+
     static func convert(_ tokens: [String]) -> Result? {
         guard let first = tokens.first else { return nil }
         // A second command verb means two commands the splitter couldn't separate ("شغل
         // سبوتيفاي ارفع الصوت"): reading one keyword out of it would be a confident wrong answer.
         if tokens.dropFirst().contains(where: { $0 != "علي" && clauseVerbs.contains($0) }) { return nil }
+        if let latin = latinVerbOnArabicApp(tokens) { return latin }
         let words = tokens.map(RioArabicVocabulary.stripArticle)
         let text = words.joined(separator: " ")
         if let translator = translatorCommand(tokens, words, text) { return Result(english: translator, isAppCommand: false) }
@@ -81,11 +111,13 @@ enum RioArabicClauses {
                 return "translate this to English"
             }
             let roomWords = ["ينقال", "يتقال", "يقولون", "يقوله", "يصير", "يقال", "كلام", "يسمع", "يتكلم", "حوالي", "حولي", "محادثه", "غرفه", "يدور", "يحصل"]
-            // Whole words (or a word with an ending, "يقولونه"), never a substring of another word.
-            if rest.isEmpty || rest.contains(where: { word in roomWords.contains { word.hasPrefix($0) } }) {
-                return "translate what is being said"
-            }
-            return nil
+            let glue: Set<String> = ["لي", "الي", "ما", "عم", "قاعد", "قاعدين", "هنا", "اللي"]
+            // Only the room itself starts the live microphone: every word is a room word (or a
+            // word with an ending, "يقولونه") or glue. "ترجم الكلام اللي على الشاشة" (the screen),
+            // "ترجم كلام احمد" (a message) and a bare "ترجم لي" go to the LLM instead.
+            let isRoom = !rest.isEmpty && rest.contains { word in roomWords.contains { word.hasPrefix($0) } }
+                && rest.allSatisfy { word in glue.contains(word) || roomWords.contains { word.hasPrefix($0) } }
+            return isRoom ? "translate what is being said" : nil
         }
         if hasTranslationWord {
             if startVerbs.contains(first) { return "start translating" }
@@ -93,7 +125,8 @@ enum RioArabicClauses {
         }
         let sayVerbs: Set<String> = ["قول", "قل", "انطق", "قولي"]
         let targets: Set<String> = ["ترجمه", "ذا", "هذا", "هاذا", "ها", "هيا"]
-        if ["قولها", "قولهم", "انطقها", "اسمعنيها"].contains(first) { return "say it" }
+        // Alone only: "قولهم اني جاي" (tell them I'm coming) is a message, not the last translation.
+        if ["قولها", "قولهم", "انطقها", "اسمعنيها"].contains(first), tokens.count == 1 { return "say it" }
         if sayVerbs.contains(first), words.count == 2, targets.contains(words[1]) { return "say it" }
         return nil
     }
@@ -108,7 +141,14 @@ enum RioArabicClauses {
         if words.contains("لقطه") || words.contains(where: { $0.hasPrefix("سكرين") }) || (first == "صور" && words.contains("شاشه")) {
             return "take a screenshot"
         }
-        if words.contains("كتم"), words.contains(where: { ["الغاء", "الغي", "فك", "الغ"].contains($0) }) { return "unmute" }
+        // Checked on the words as said: the article strip turns "الغي" into "غي".
+        if words.contains("كتم"), tokens.contains(where: { ["الغاء", "الغي", "فك", "الغ"].contains($0) }) { return "unmute" }
+        if tokens == ["كتم"] || tokens == ["اكتم"] { return "mute" }
+        // "ابغى اسمع اغاني": listen to music.
+        if ["اسمع", "نسمع", "اسمعني"].contains(first), tokens.count > 1,
+           words.dropFirst().allSatisfy({ musicWords.contains($0.lowercased()) }) {
+            return "play music"
+        }
         if words.contains("اغنيه") || words.contains("اغاني") || words.contains("اغنيتي") {
             if words.contains("قبل") || words.contains("سابقه") || words.contains("السابقه") { return "previous song" }
             if words.contains(where: { ["جايه", "جاي", "تاليه", "التاليه", "بعدها", "بعد"].contains($0) }) || first == "غير" || first == "تخطي" {
@@ -132,29 +172,68 @@ enum RioArabicClauses {
         case .bluetooth: return Result(english: "turn on bluetooth", isAppCommand: false)
         case .darkMode: return Result(english: "turn on dark mode", isAppCommand: false)
         case .doNotDisturb: return Result(english: "turn on do not disturb", isAppCommand: false)
-        case .app(let name): return Result(english: "open \(name)", isAppCommand: true)
+        case .app(let name):
+            // "شغل lofi": an English word that isn't a known app or site is something to play.
+            // ("افتح lofi" stays "open".)
+            if playVerbs.contains(verb), rest.allSatisfy(RioArabicCommandTable.isLatinWord), !isKnownAppOrSite(name) {
+                return Result(english: "play \(name)", isAppCommand: false)
+            }
+            return Result(english: "open \(name)", isAppCommand: true)
         case .screen, .brightness, .translation, .listening, .window: return nil
         }
     }
 
+    private static func isKnownAppOrSite(_ name: String) -> Bool {
+        let compact = RioText.compact(name)
+        return RioArabicVocabulary.apps.values.contains { RioText.compact($0) == compact } || RioWebURLs.isKnownSite(spoken: name)
+    }
+
+    /// "open سبوتيفاي", "open the كروم", "quit سفاري": an English verb on an app said in Arabic.
+    private static func latinVerbOnArabicApp(_ tokens: [String]) -> Result? {
+        let verb = tokens[0].lowercased()
+        guard ["open", "launch", "start", "quit", "close"].contains(verb) else { return nil }
+        let rest = tokens.dropFirst().filter { $0.lowercased() != "the" }
+        guard !rest.isEmpty, !rest.allSatisfy(RioArabicCommandTable.isLatinWord),
+              let app = RioArabicVocabulary.apps[RioArabicVocabulary.key(for: rest.joined(separator: " "))] else { return nil }
+        return Result(english: "\(verb) \(app)", isAppCommand: true)
+    }
+
     private static func volumeAndBrightness(_ verb: String, _ rest: [String], _ target: Target?) -> String? {
         guard let target else { return nil }
-        let words = rest.map(RioArabicVocabulary.stripArticle)
+        let words = rest.map(RioArabicVocabulary.stripArticle).map(withoutToPrefix)
+        let isUpOrDown = upVerbs.contains(verb) || downVerbs.contains(verb)
+        // "علي الصوت عشرين", "لخمسين", "للآخر", "للنص": a level after up or down is where to set it.
+        // ("اعلي" there is "higher", not "to the max".)
+        let level = number(in: isUpOrDown ? words.filter { $0 != "اعلي" } : words)
         switch target {
         case .volume:
+            if isUpOrDown || setVerbs.contains(verb), let level { return "set volume to \(level)" }
             if upVerbs.contains(verb) { return "volume up" }
             if downVerbs.contains(verb) { return "volume down" }
-            if setVerbs.contains(verb), let level = number(in: words) { return "set volume to \(level)" }
             if muteVerbs.contains(verb) { return "mute" }
             return nil
         case .brightness:
+            if isUpOrDown || setVerbs.contains(verb), let level { return "set brightness to \(level)" }
             if upVerbs.contains(verb) { return "brightness up" }
             if downVerbs.contains(verb) { return "brightness down" }
-            if setVerbs.contains(verb), let level = number(in: words) { return "set brightness to \(level)" }
             return nil
         default:
             return nil
         }
+    }
+
+    /// "لخمسين" -> "خمسين", "للآخر" -> "اخر", "للنص" -> "نص": "to" written on a level. Other
+    /// words are left as they are.
+    private static func withoutToPrefix(_ word: String) -> String {
+        for prefix in ["لل", "ل"] where word.hasPrefix(prefix) {
+            let bare = String(word.dropFirst(prefix.count))
+            let digits = bare.trimmingCharacters(in: CharacterSet(charactersIn: "%"))
+            if Int(digits) != nil || RioArabicVocabulary.maximumWords.contains(bare)
+                || RioArabicVocabulary.number(in: [bare], at: 0) != nil {
+                return bare
+            }
+        }
+        return word
     }
 
     private static func close(_ verb: String, _ rest: [String], _ target: Target?) -> Result? {
@@ -177,12 +256,20 @@ enum RioArabicClauses {
         guard !rest.isEmpty else { return nil }
         let words = rest.map(RioArabicVocabulary.stripArticle)
         let compact = words.joined().lowercased().replacingOccurrences(of: "-", with: "")
-        if words.contains("صوت") || words.contains("ساوند") { return .volume }
-        if compact.contains("وايفاي") || compact.contains("wifi") { return .wifi }
-        if words.contains(where: { $0.hasPrefix("بلوت") }) { return .bluetooth }
-        if words.contains("اضاءه") || words.contains("سطوع") { return .brightness }
-        if words.contains("داكن") || words.contains("دارك") || (words.contains("ليلي") && words.contains("وضع")) { return .darkMode }
-        if words.contains("ازعاج") || words.contains("تشويش") { return .doNotDisturb }
+        let lower = words.map { $0.lowercased() }
+        let systemTargets: [(Target, Bool)] = [
+            (.volume, lower.contains { ["صوت", "ساوند", "volume", "sound"].contains($0) }),
+            (.wifi, compact.contains("وايفاي") || compact.contains("wifi")),
+            (.bluetooth, lower.contains { $0.hasPrefix("بلوت") || $0 == "bluetooth" }),
+            (.brightness, lower.contains { ["اضاءه", "سطوع", "brightness"].contains($0) }),
+            (.darkMode, words.contains("داكن") || words.contains("دارك") || (words.contains("ليلي") && words.contains("وضع"))),
+            (.doNotDisturb, words.contains("ازعاج") || words.contains("تشويش")),
+        ]
+        let found = systemTargets.filter(\.1).map(\.0)
+        // Two things in one clause ("طفي الوايفاي البلوتوث"): doing one and dropping the other would
+        // be a confident wrong answer, so the LLM gets it.
+        if found.count > 1 { return nil }
+        if let only = found.first { return only }
         if words.contains(where: { musicWords.contains($0.lowercased()) }) {
             // Only "the music" itself: "شغل اغنية لعبادي الجوهر" names a song or an artist, which
             // the LLM turns into "play <artist>", so the table must not answer "play music".
@@ -247,6 +334,8 @@ extension RioArabicClauses {
         guard let first = tokens.first else { return nil }
         let originals = originals?.count == tokens.count ? originals ?? tokens : tokens
         let words = tokens.map(RioArabicVocabulary.stripArticle)
+        if let dismissal = dismissal(words) { return dismissal }
+        if let content = latinContent(tokens, originals) { return content }
         if let search = search(tokens, originals) { return search }
         if words.contains(where: { timerWords.contains($0) }) {
             if let status = timeLeft(first, words) { return status }
@@ -259,6 +348,44 @@ extension RioArabicClauses {
         }
         if words.first == "ايش", words.contains("اوامر") || words.contains("الاوامر") { return "what can you do" }
         if words == ["كم", "ساعه"] { return "what time is it" }
+        // "وش عندي واجبات": what homework is due (Canvas).
+        if words.contains(where: { ["واجب", "واجبات", "واجباتي"].contains($0) }),
+           words.contains(where: { questionWords.contains($0) || $0 == "عندي" }) {
+            return "what homework is due"
+        }
+        return nil
+    }
+
+    // MARK: Never mind
+
+    /// "انسى", "انسى الموضوع", "ولا شي", "خلاص ولا شي", "ماله داعي": the owner changed their mind.
+    /// "never mind" is what the coordinator turns into nothing; "انسى ان …" (forget a fact) is
+    /// not matched, so it still reaches the LLM and memory.
+    private static func dismissal(_ words: [String]) -> String? {
+        let forget: Set<String> = ["انسي", "انساها", "انساه", "انسيها", "انسيه"]
+        let nothing: Set<String> = ["شي", "شيء", "شيي"]
+        var rest = words
+        if rest.first == "خلاص", rest.count > 1 { rest.removeFirst() }
+        let isDismissal = (rest.count == 1 && forget.contains(rest[0]))
+            || (rest.count == 2 && forget.contains(rest[0]) && rest[1] == "موضوع")
+            || (rest.count == 2 && rest[0] == "ولا" && nothing.contains(rest[1]))
+            || rest == ["ماله", "داعي"] || rest == ["مو", "مهم"]
+        return isDismissal ? "never mind" : nil
+    }
+
+    // MARK: Arabic verb, English content
+
+    /// "اكتب hello", "ابحث عن pigeonhole principle", "ارسل ok": an Arabic verb on English content
+    /// is the English verb with the content unchanged (Arabic content still goes to the LLM).
+    private static func latinContent(_ tokens: [String], _ originals: [String]) -> String? {
+        guard let first = tokens.first else { return nil }
+        var start = 1
+        if searchVerbs.contains(first) { while start < tokens.count, searchGlue.contains(tokens[start]) { start += 1 } }
+        guard start < tokens.count, tokens[start...].allSatisfy(RioArabicCommandTable.isLatinWord) else { return nil }
+        let content = originals[start...].joined(separator: " ")
+        if searchVerbs.contains(first) { return "search for \(content)" }
+        if ["اكتب", "اكتبي"].contains(first) { return "type \(content)" }
+        if ["ارسل", "ارسلي", "ابعث", "ابعثي"].contains(first) { return "send \(content)" }
         return nil
     }
 
@@ -275,8 +402,29 @@ extension RioArabicClauses {
             return queryStart < tokens.count ? "search youtube for \(originals[queryStart...].joined(separator: " "))" : nil
         }
         guard start < tokens.count else { return nil }
+        let query = tokens[start...]
+        // "ابحث عن مطاعم وافتح كروم", "ابحث عن مطعم واتصل فيه": a second command after the query.
+        // The English parser would search for the whole rest, so the LLM gets it.
+        if query.dropFirst().contains(where: startsSecondCommand) { return nil }
+        // Files, mail, messages and photos are the owner's own things: never a public web search.
+        if query.contains(where: { personalWords.contains(RioArabicVocabulary.stripArticle($0)) }) { return nil }
         // The query is the user's own words, not the matching spelling ("قريبة", not "قريبه").
         return "search for \(originals[start...].joined(separator: " "))"
+    }
+
+    /// Words that make a search about the owner's own files, mail, messages or photos.
+    private static let personalWords: Set<String> = [
+        "ملف", "ملفات", "مستند", "مستندات", "ايميل", "ايميلات", "بريد", "رساله", "رسائل", "رسايل", "مسج", "مسجات",
+        "صوره", "صور", "صوري", "فايل", "واتساب", "رقم", "جهات", "محادثه",
+    ]
+
+    /// "وافتح", "واتصل", "وارسله", "وابعث", "وكلمه": "و" written on a verb starts a second command.
+    private static func startsSecondCommand(_ token: String) -> Bool {
+        guard token.hasPrefix("و"), token.count >= 3 else { return false }
+        let verb = String(token.dropFirst())
+        if isCommandVerb(verb) || secondPersonCommand(verb) != nil { return true }
+        let otherVerbs = ["اتصل", "ارسل", "ابعث", "كلم", "اكتب", "قول", "خبر", "شارك", "احفظ", "ذكرني", "حط", "سوي"]
+        return otherVerbs.contains { verb.hasPrefix($0) }
     }
 
     // MARK: Time left
@@ -284,6 +432,11 @@ extension RioArabicClauses {
     private static func timeLeft(_ first: String, _ words: [String]) -> String? {
         guard words.contains(where: { remainingWords.contains($0) }),
               !words.contains(where: { ["بطاريه", "شحن", "تحميل", "بيانات", "مساحه"].contains($0) }) else { return nil }
+        // Without a timer word, only "how much is left" itself: "كم باقي على المغرب" (prayer),
+        // "على الاجتماع" (a meeting) or "على رمضان" (a date) is a question for the LLM.
+        let hasTimerWord = words.contains { timerWords.contains($0) || ["منبه", "مؤقت"].contains($0) }
+        let timeLeftWords: Set<String> = ["كم", "وقت", "من", "لي", "ثانيه", "ثواني", "دقيقه", "دقايق", "دقائق", "ساعه", "ساعات"]
+        if !hasTimerWord, !words.allSatisfy({ remainingWords.contains($0) || timeLeftWords.contains($0) }) { return nil }
         if first == "كم" || words.contains("كم") || words.contains("وقت") { return "how much time is left" }
         return nil
     }
