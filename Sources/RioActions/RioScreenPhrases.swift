@@ -130,6 +130,11 @@ enum RioScreenPhrases {
         let lastWord = parts.label.split(separator: " ").last.map { String($0).lowercased() } ?? ""
         // "press return" and "hit enter" are keys, not clicks: those verbs need a role noun.
         if verb == "press" || verb == "hit", !roleNouns.contains(lastWord) { return nil }
+        // "press tab" is the Tab key; "press the second tab" or "press the Save button" is a click.
+        if verb == "press" || verb == "hit", parts.ordinal == nil, parts.label.split(separator: " ").count == 1,
+           RioKeyCombos.parse(s) != nil {
+            return nil
+        }
         if parts.label.isEmpty { return parts.ordinal == nil ? nil : .click(label: "", ordinal: parts.ordinal) }
         if pronounLabels.contains(parts.label.lowercased()) { return nil }
         if RioText.matches(#"\b(?:times|twice|once)$"#, parts.label) { return nil }
@@ -150,7 +155,12 @@ enum RioScreenPhrases {
             ordinalValue = value
             words.removeFirst(2)
         }
-        while let first = words.first, colorWords.contains(first.lowercased()) { words.removeFirst() }
+        var colors: [String] = []
+        while let first = words.first, colorWords.contains(first.lowercased()) { colors.append(words.removeFirst()) }
+        // "the blue button": with nothing else to go on, the colour stays as a hint for the matcher.
+        if !colors.isEmpty, words.allSatisfy({ roleNouns.contains($0.lowercased()) }), !words.isEmpty {
+            words = colors + words
+        }
         guard words.count <= maxLabelWords else { return nil }
         if normalizeBox, words.count >= 2, words[words.count - 2].lowercased() == "check", words[words.count - 1].lowercased() == "box" {
             words.replaceSubrange((words.count - 2)..., with: ["checkbox"])
@@ -191,7 +201,7 @@ enum RioScreenPhrases {
         if let groups = RioText.firstMatch(fill, in: text), let label = fieldLabel(groups[1]), let value = fieldText(groups[2]) {
             return .fillField(label: label, text: value)
         }
-        let into = #"^(?:(?:put|enter|insert|input|paste|type)\s+)(.+?)\s+(?:in|into|in to|inside)\s+(?:the|my)\s+(.+)$"#
+        let into = #"^(?:(?:put|enter|insert|input|paste|type|write)\s+)(.+?)\s+(?:in|into|in to|inside)\s+(?:the|my)\s+(.+)$"#
         if let groups = RioText.firstMatch(into, in: text), let value = fieldText(groups[1]), let label = fieldLabel(groups[2]) {
             return .fillField(label: label, text: value)
         }

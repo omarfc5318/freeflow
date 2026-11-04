@@ -31,9 +31,14 @@ enum RioDateTimeParser {
             time = single
         }
         guard let clock = time else { return nil }
-        if day == nil, dayPart.isToday { day = calendar.startOfDay(for: now) }
+        let impliedTonight = day == nil && dayPart.isToday
+        if impliedTonight { day = calendar.startOfDay(for: now) }
+        // "tonight at 12" or "at 1" after dark is just past midnight: the next calendar day.
+        if dayPart.kind == .evening, clock.hour < 5, let current = day { day = add(days: 1, to: current, calendar) }
 
-        guard let start = resolve(day: day, clock: clock, now: now, calendar: calendar) else { return nil }
+        guard var start = resolve(day: day, clock: clock, now: now, calendar: calendar) else { return nil }
+        // "tonight at 7" said at 9 PM means tomorrow night, not an event in the past.
+        if impliedTonight, dayPart.kind == .evening, start <= now, let later = add(days: 1, to: start, calendar) { start = later }
         return Result(start: start, durationMinutes: duration ?? rangeDuration, remainder: cleanRemainder(work))
     }
 
@@ -139,10 +144,29 @@ enum RioDateTimeParser {
             work += RioText.matches(#"tomorrow"#, groups[0] ?? "") ? " tomorrow" : " today"
             return part
         }
-        if let groups = take(#"\b(morning|afternoon|evening|night)\b"#, from: &work) {
-            part.kind = kind(of: groups[1])
+        if let match = bareDayPart(in: work) {
+            part.kind = kind(of: match.word)
+            // "game night Friday": the word is part of the title when a plain word comes before it.
+            if match.isTimeContext { work = RioText.collapseWhitespace(work.replacingCharacters(in: match.range, with: " ")) }
         }
         return part
+    }
+
+    private static let timeContextWords: Set<String> = [
+        "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "tomorrow", "today", "this", "next",
+        "every", "and", "at", "on", "pm", "am", "tonight", "the",
+    ]
+
+    /// A bare "morning" / "afternoon" / "evening" / "night". It counts as a part of day (and leaves
+    /// the text) only at the start or after a day or time word ("Friday night", "7 pm evening");
+    /// after any other word ("game night", "movie night") it is part of the title.
+    private static func bareDayPart(in text: String) -> (word: String, range: Range<String.Index>, isTimeContext: Bool)? {
+        guard let regex = try? NSRegularExpression(pattern: #"\b(morning|afternoon|evening|night)\b"#, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range, in: text) else { return nil }
+        let before = text[..<range.lowerBound].split(separator: " ").last.map { $0.lowercased() }
+        let isContext = before == nil || timeContextWords.contains(before!) || before!.first?.isNumber == true
+        return (String(text[range]).lowercased(), range, isContext)
     }
 
     private static func kind(of word: String?) -> DayPart.Kind {
@@ -295,7 +319,11 @@ enum RioDateTimeParser {
         }
         switch dayPart.kind {
         case .morning: return hour == 12 ? 0 : hour
-        case .afternoon, .evening: return hour == 12 ? 12 : hour + 12
+        case .afternoon: return hour == 12 ? 12 : hour + 12
+        case .evening:
+            // After dark, 12 is midnight and 1 to 4 are the small hours (the caller moves the day on).
+            if hour == 12 { return 0 }
+            return hour <= 4 ? hour : hour + 12
         case .none:
             if hour == 12 { return 12 }
             if hour <= 6 { return hour + 12 }

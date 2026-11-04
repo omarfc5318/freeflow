@@ -139,7 +139,17 @@ struct RioCalcParser {
                 default: return nil
                 }
                 index += 1
-                guard let right = unary() else { return nil }
+                guard var right = unary() else { return nil }
+                // "50% of 50% of 80": each further "of" needs a percentage or fraction before it.
+                while case .of? = current {
+                    switch right {
+                    case .percent, .number(_, true): break
+                    default: return nil
+                    }
+                    index += 1
+                    guard let next = unary() else { return nil }
+                    right = .binary("*", right, next)
+                }
                 left = .binary("*", left, right)
             } else {
                 return left

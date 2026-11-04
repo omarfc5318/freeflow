@@ -10,6 +10,9 @@ struct RioHelpCategory: Equatable {
 }
 
 enum RioHelpCatalogue {
+    /// Arabic commands (Gulf and MSA) that work with no network; the tests run them through the table.
+    static let arabicExamples = ["ريو افتح كروم", "ريو ارفع الصوت", "ريو شغل مؤقت لمدة خمس دقائق", "ريو افتح الحاسبة"]
+
     static let categories: [RioHelpCategory] = [
         RioHelpCategory(title: "Apps and websites", symbol: "square.grid.2x2", examples: [
             "open Chrome", "switch to Messages", "quit Spotify", "hide Slack", "search for best pizza near me",
@@ -32,6 +35,23 @@ enum RioHelpCatalogue {
         RioHelpCategory(title: "System", symbol: "gearshape", examples: [
             "brightness up", "turn off wifi", "dark mode on", "how much battery do I have",
         ]),
+        RioHelpCategory(title: "Screen and clicks", symbol: "eye", examples: [
+            "what's on my screen", "click the Submit button", "the second one", "fill in the name field with Omar",
+            "find me a flight to Doha",
+        ]),
+        RioHelpCategory(title: "Memory and notes", symbol: "brain.head.profile", examples: [
+            "remember my locker code is 4321", "what's my locker code", "forget my locker code", "note that I need to buy eggs",
+        ]),
+        RioHelpCategory(title: "Email and messages", symbol: "envelope", examples: [
+            "draft an email to Sam about lunch", "email Sam saying I'm running late", "text mom I'm late", "reply saying sounds good",
+        ]),
+        RioHelpCategory(title: "Maths, units and time", symbol: "function", examples: [
+            "what's 15% of 84", "5 miles in kilometers", "what time is it in Tokyo", "what's 20 percent tip on 45",
+        ]),
+        RioHelpCategory(title: "Translator", symbol: "globe", examples: [
+            "translate what's being said", "stop translating", "say it", "translate this to Arabic",
+        ]),
+        RioHelpCategory(title: "Arabic", symbol: "character.bubble", examples: arabicExamples),
         RioHelpCategory(title: "Smart help", symbol: "sparkles", examples: [
             "summarize this", "translate this to Arabic", "read me the last message", "remind me to call mom at 5",
         ]),
@@ -41,7 +61,7 @@ enum RioHelpCatalogue {
     ]
 
     /// The one line Rio says when the help sheet opens.
-    static let spokenSummary = "I can open apps, move windows, set timers, check your calendar and more. Tap anywhere to close."
+    static let spokenSummary = "I can open apps, move windows, set timers, read your screen, do maths, remember things, draft emails and more. Tap anywhere to close."
 
     /// How long the sheet stays up on its own.
     static let autoCloseSeconds: TimeInterval = 20

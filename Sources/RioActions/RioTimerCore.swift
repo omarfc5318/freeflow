@@ -299,4 +299,13 @@ struct RioTimerCountdown: Equatable {
         guard let label else { return "Timer set for \(length)" }
         return "\(label.prefix(1).uppercased() + label.dropFirst()) timer set for \(length)"
     }
+
+    /// Like `startedSummary`, and says so when it replaced a timer that was still running:
+    /// "Timer set for 10 minutes. That replaces your pasta timer, which had 3 minutes left."
+    func startedSummary(replacing previous: RioTimerCountdown?, at now: Date) -> String {
+        guard let previous, !previous.isFinished(at: now) else { return startedSummary }
+        let left = RioTimerDuration.spoken(Self.displaySeconds(previous.remaining(at: now)))
+        let name = previous.label.map { "\($0) timer" } ?? "timer"
+        return "\(startedSummary). That replaces your \(name), which had \(left) left."
+    }
 }

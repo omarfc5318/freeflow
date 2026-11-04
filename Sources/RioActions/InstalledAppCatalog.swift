@@ -10,6 +10,7 @@ enum InstalledAppCatalog {
             URL(fileURLWithPath: "/Applications/Utilities"),
             URL(fileURLWithPath: "/System/Applications"),
             URL(fileURLWithPath: "/System/Applications/Utilities"),
+            URL(fileURLWithPath: "/System/Cryptexes/App/System/Applications"),  // Safari lives here
             URL(fileURLWithPath: "/System/Library/CoreServices"),  // Finder lives here
             home.appendingPathComponent("Applications", isDirectory: true),
         ]

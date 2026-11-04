@@ -18,6 +18,8 @@ enum RioFilesPhrases {
     private static let determiner = #"^(?:my|the|that|this|a|an|our)\s+"#
 
     static func parse(simplified: String) -> RioAction? {
+        // "show desktop" means clear the windows away (the system parser's F11), not the folder.
+        if RioText.matches(#"^(?:show|reveal|go\s+to)\s+(?:me\s+)?(?:the\s+|my\s+)?desktop$"#, simplified) { return nil }
         if let groups = RioText.firstMatch("^\(openVerbs)\\s+(.+)$", in: simplified), let object = groups[1] {
             return action(for: object, reveal: false)
         }

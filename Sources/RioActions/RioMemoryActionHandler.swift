@@ -21,6 +21,7 @@ final class RioMemoryActionHandler: RioActionHandling {
     static let shared = RioMemoryActionHandler()
 
     private let store: RioMemoryStore
+    private var corruptNoticeGiven = false
 
     init(store: RioMemoryStore = .shared) {
         self.store = store
@@ -40,6 +41,13 @@ final class RioMemoryActionHandler: RioActionHandling {
 
     // MARK: Memory
 
+    /// Said once, on the first memory request after a damaged file was set aside.
+    private func takeCorruptNote() -> String {
+        guard store.recoveredCorruptFile != nil, !corruptNoticeGiven else { return "" }
+        corruptNoticeGiven = true
+        return " My memory file was damaged, so I set it aside and started fresh. The old copy is still in my memory folder."
+    }
+
     private static let memoryOff = "Memory is turned off in Settings."
 
     private func remember(_ fact: String) -> RioActionResult {
@@ -48,8 +56,9 @@ final class RioMemoryActionHandler: RioActionHandling {
         if outcome != .rejected, outcome != .alreadyKnown, store.lastSaveFailed {
             return .failed(message: "I couldn't save that to this Mac's disk.")
         }
+        let note = takeCorruptNote()
         switch outcome {
-        case .added: return .done(summary: "Got it, I'll remember that")
+        case .added: return .done(summary: "Got it, I'll remember that" + (note.isEmpty ? "" : "." + note))
         case .updated: return .done(summary: "Updated, I'll remember the new one")
         case .alreadyKnown: return .done(summary: "I already know that")
         case .rejected: return .failed(message: "I couldn't remember that. Keep it to one short sentence.")
@@ -58,6 +67,8 @@ final class RioMemoryActionHandler: RioActionHandling {
 
     private func recall(_ query: String) -> RioActionResult {
         guard RioMemorySettings.isEnabled else { return .failed(message: Self.memoryOff) }
+        let note = takeCorruptNote()
+        if !note.isEmpty { return .failed(message: note.trimmingCharacters(in: .whitespaces)) }
         let wantsEverything = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         switch store.recall(query) {
         case .facts(let facts):
@@ -67,12 +78,15 @@ final class RioMemoryActionHandler: RioActionHandling {
             return .done(summary: RioMemoryVoice.recallSentence(facts))
         case .none:
             if wantsEverything { return .done(summary: "I don't remember anything yet. Say remember, then what you want me to keep.") }
-            return .done(summary: "I don't have anything saved about \(query). Say remember, then the fact, to teach me.")
+            // A miss is not a success: nothing is journalled, and the bear says it plainly.
+            return .failed(message: "I don't have anything saved about \(query). Say remember, then the fact, to teach me.")
         }
     }
 
     private func forget(_ query: String) -> RioActionResult {
         guard RioMemorySettings.isEnabled else { return .failed(message: Self.memoryOff) }
+        let note = takeCorruptNote()
+        if !note.isEmpty { return .failed(message: note.trimmingCharacters(in: .whitespaces)) }
         switch store.forget(query) {
         case .removed:
             return store.lastSaveFailed

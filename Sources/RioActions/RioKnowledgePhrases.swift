@@ -43,6 +43,11 @@ enum RioClipboardPhrases {
         if RioText.matches(#"^paste\s+(?:my\s+|the\s+)?(?:last|previous|latest|prior|recent)\s+(?:copy|copied(?:\s+(?:thing|item|text))?|clip(?:board)?(?:\s+item)?)$"#, s) {
             return .clipboard(.pasteRecent(matching: nil))
         }
+        // "paste the link", "paste the address": the newest copied item of that kind.
+        if let groups = RioText.firstMatch(#"^paste\s+(?:in\s+)?(?:the\s+|my\s+|that\s+)?(link|url|web\s?address|address|e\s?-?\s?mail(?:\s+address)?|phone(?:\s+number)?|website)$"#, in: s),
+           let word = groups[1] {
+            return .clipboard(.pasteRecent(matching: normalizedHint(word)))
+        }
         let patterns = [
             "^paste\\s+\(article)(.+?)\\s+(?:(?:that|which)\\s+)?(?:i|ive|i\\s+have)\\s+(?:just\\s+)?copied(?:\\s+.*)?$",
             "^paste\\s+\(article)(.+?)\\s+from\\s+(?:my\\s+|the\\s+)?(?:clipboard(?:\\s+history)?|earlier|before|history|copy\\s+history)$",

@@ -34,6 +34,8 @@ enum RioCalculator {
         ] {
             text = text.replacingOccurrences(of: from, with: to)
         }
+        // ".5" is 0.5 (the dot rule below would otherwise drop it and leave 5).
+        text = RioText.replacing(#"(?<![\d.])\.(?=\d)"#, with: "0.", in: text)
         text = RioText.replacing(#"(?<=\d),(?=\d{3})"#, with: "", in: text)
         text = RioText.replacing(#"(?<=[a-z])-(?=[a-z])"#, with: " ", in: text)
         text = RioText.replacing(#"(?<=\d)\s*x\s*(?=\d)"#, with: " * ", in: text)
@@ -58,10 +60,11 @@ enum RioCalculator {
     // MARK: Formatting
 
     static func format(_ value: Double) -> String {
-        var number = (value * 1e9).rounded() / 1e9
-        if abs(number) < 1e-12 { number = 0 }
+        // Tiny results ("1 divided by 3 billion") keep their digits instead of rounding to 0.
+        var number = abs(value) < 1e-3 ? value : (value * 1e9).rounded() / 1e9
+        if abs(number) < 1e-15 { number = 0 }
         let magnitude = abs(number)
-        let decimals = magnitude >= 1 || magnitude == 0 ? 4 : min(10, 3 - Int(floor(log10(magnitude))))
+        let decimals = magnitude >= 1 || magnitude == 0 ? 4 : min(15, 3 - Int(floor(log10(magnitude))))
         let formatter = NumberFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.numberStyle = .decimal

@@ -122,7 +122,12 @@ import Foundation
     /// "Say it": speaks the newest translation in its own language, also after captions fade or
     /// translating has stopped.
     func speakLast() -> RioActionResult {
-        guard let last = board.lastTranslation else { return .failed(message: "I haven't translated anything yet") }
+        guard let last = board.lastTranslation else {
+            // No translation to repeat: "say that again" means his own last line.
+            guard let line = RioVoice.shared.lastSpokenText else { return .failed(message: "I haven't translated anything yet") }
+            RioVoice.shared.speak(line)
+            return .done(summary: "")
+        }
         if RioVoice.shared.isRioRecordingProvider() { return .failed(message: "I'm listening right now, ask again in a second") }
         switch speaker.speak(last.text, in: last.language) {
         case .speaking: return .done(summary: "Saying it in \(last.language.name)")

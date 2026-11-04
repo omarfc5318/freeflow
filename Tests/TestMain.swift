@@ -78,6 +78,7 @@ struct FreeFlowTests {
         RioEmailNotesTests.run()
         RioSmartV3Tests.run()
         RioArabicCommandTests.run()
+        RioFixCTests.run()
         RioTranslatorPhrasesTests.run()
         RioTranslatorAudioTests.run()
         await TranscriptionServiceTests.run()

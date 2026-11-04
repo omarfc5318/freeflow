@@ -28,7 +28,9 @@ import Foundation
             guard (1...RioTimerDuration.maxSeconds).contains(seconds) else {
                 return .failed(message: "I can only set timers up to 24 hours")
             }
-            return .done(summary: timers.start(seconds: seconds, label: label).startedSummary)
+            let previous = timers.countdown
+            let started = timers.start(seconds: seconds, label: label)
+            return .done(summary: started.startedSummary(replacing: previous, at: timers.now))
         case .cancelTimer:
             return cancelTimer()
         case .timerStatus:
@@ -58,7 +60,12 @@ import Foundation
                 voice.stopSpeaking()
                 return .done(summary: "Okay, quiet")
             }
-            return .failed(message: "There's no timer running")
+            // "Rio, stop" while the live translator is on means stop translating.
+            if RioTranslatorMode.shared.isOn {
+                RioTranslatorMode.shared.stop(.voice)
+                return .done(summary: "Stopped translating")
+            }
+            return .failed(message: "There's nothing to stop")
         }
     }
 

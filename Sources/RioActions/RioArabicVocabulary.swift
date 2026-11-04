@@ -19,7 +19,7 @@ enum RioArabicVocabulary {
             ("زوم", "Zoom"), ("سلاك", "Slack"), ("ديسكورد", "Discord"), ("وورد", "Word"), ("ورد", "Word"),
             ("اكسل", "Excel"), ("بوربوينت", "PowerPoint"), ("اكس كود", "Xcode"),
             ("فيجوال ستوديو كود", "Visual Studio Code"), ("في اس كود", "Visual Studio Code"),
-            ("صور", "Photos"), ("خرائط", "Maps"), ("ساعه", "Clock"), ("اله حاسبه", "Calculator"),
+            ("صور", "Photos"), ("خرائط", "Maps"), ("ساعه", "Clock"), ("اله حاسبه", "Calculator"), ("حاسبه", "Calculator"), ("كالكيوليتر", "Calculator"), ("كالكوليتر", "Calculator"),
             ("نوشن", "Notion"), ("فيغما", "Figma"), ("فيجما", "Figma"),
             ("يوتيوب", "YouTube"), ("جيميل", "Gmail"), ("نتفلكس", "Netflix"), ("انستقرام", "Instagram"),
             ("انستجرام", "Instagram"), ("تويتر", "Twitter"), ("فيسبوك", "Facebook"), ("لينكدان", "LinkedIn"),
@@ -48,6 +48,17 @@ enum RioArabicVocabulary {
         "ثمانيه": 8, "تسعه": 9, "عشره": 10, "عشرين": 20, "ثلاثين": 30, "اربعين": 40, "خمسين": 50,
         "ستين": 60, "سبعين": 70, "ثمانين": 80, "تسعين": 90, "ميه": 100, "مئه": 100, "نص": 50, "نصف": 50,
     ]
+
+    /// Number words for spoken durations, including the short feminine forms used with "دقائق".
+    static let durationNumbers: [String: Int] = {
+        var table = numbers
+        for (word, value) in [
+            ("واحده", 1), ("اثنتين", 2), ("ثلاث", 3), ("اربع", 4), ("خمس", 5), ("ست", 6), ("سبع", 7), ("ثمان", 8),
+            ("ثماني", 8), ("تسع", 9), ("عشر", 10), ("احدعش", 11), ("احداعش", 11), ("حداشر", 11), ("اثنعش", 12),
+            ("اثناعش", 12), ("طناعش", 12), ("خمستعش", 15), ("خمسطعش", 15), ("خمستاشر", 15), ("ربع", 15), ("خمسه", 5), ("وعشرين", 20), ("وثلاثين", 30),
+        ] { table[word] = value }
+        return table
+    }()
 
     /// "To the max": volume or brightness 100.
     static let maximumWords: Set<String> = ["اخير", "اخر", "اخره", "ماكس", "اقصي", "كامل", "اعلي", "كله"]

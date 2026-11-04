@@ -8,6 +8,11 @@ extension RioActionParser {
     private static let article = #"(?:(?:the|my)\s+)?"#
 
     func parseWindow(_ s: String, inherited: Bool) -> ParsedClause? {
+        // "top half", "left half of the screen": the frontmost window.
+        if let groups = RioText.firstMatch(#"^(?:the\s+)?(left|right|top|bottom)\s+half(?:\s+of\s+(?:the|my)\s+(?:screen|display|monitor))?$"#, in: s),
+           let direction = groups[1]?.lowercased() {
+            return ParsedClause(action: .window(WindowCommand(appName: nil, placement: Self.half(direction))), verb: "put")
+        }
         let verbPattern = "^(\(Self.moveVerbs)|maximi[sz]e|make|full\\s?screen|go|cent(?:er|re)|minimi[sz]e|enlarge|expand)\\b"
         guard let verb = RioText.firstMatch(verbPattern, in: s)?[1]?.lowercased() else { return nil }
 
@@ -24,14 +29,7 @@ extension RioActionParser {
         // Halves: "move Chrome to the left", "snap chrome right", "put it on top".
         let halves = "^\(Self.moveVerbs)\\s+\(Self.article)(.*?)\\s*(?:window\\s+)?(?:over\\s+)?(?:(?:to|on|at|in|into|onto)\\s+)?(?:the\\s+)?(left|right|top|bottom)(?:\\s+(?:half|side|part))?(?:\\s+of\\s+(?:the|my)\\s+(?:screen|display|monitor))?$"
         if let groups = RioText.firstMatch(halves, in: s), let direction = groups[2]?.lowercased() {
-            let placement: WindowPlacement
-            switch direction {
-            case "left": placement = .leftHalf
-            case "right": placement = .rightHalf
-            case "top": placement = .topHalf
-            default: placement = .bottomHalf
-            }
-            return windowClause(groups[1], placement, verb: verb)
+            return windowClause(groups[1], Self.half(direction), verb: verb)
         }
         if let groups = RioText.firstMatch(#"^(?:maximi[sz]e|enlarge|expand)(?:\s+(?:the|my))?(?:\s+(.*?))?(?:\s+window)?$"#, in: s) {
             return windowClause(groups[1], .maximize, verb: verb)
@@ -49,6 +47,57 @@ extension RioActionParser {
             return windowClause(groups[1], .minimize, verb: verb)
         }
         return nil
+    }
+
+    static func half(_ direction: String) -> WindowPlacement {
+        switch direction {
+        case "left": return .leftHalf
+        case "right": return .rightHalf
+        case "top": return .topHalf
+        default: return .bottomHalf
+        }
+    }
+
+    // MARK: Side by side
+
+    /// "split screen Chrome and Safari", "put Chrome and Warp side by side", and
+    /// "open Chrome and Safari and put them side by side". Two known apps only.
+    func parseSideBySide(_ body: String) -> RioActionParse? {
+        let text = body.trimmingCharacters(in: CharacterSet(charactersIn: " .!?,;"))
+        let trailing = #"^(.*?)[\s,]*(?:and\s+|then\s+)?(?:put|place|snap|tile|arrange|lay\s+out|set)\s+(?:them|those|both|the\s+two)\s+(?:up\s+)?(?:side\s+by\s+side|next\s+to\s+each\s+other|in\s+(?:a\s+)?split\s+screen)$"#
+        if let groups = RioText.firstMatch(trailing, in: text), let prefix = groups[1], !prefix.isEmpty,
+           case .actions(let actions) = parse(prefix) {
+            var names: [String] = []
+            for action in actions {
+                switch action {
+                case .openApp(let name), .switchToApp(let name): names.append(name)
+                default: break
+                }
+            }
+            guard names.count >= 2 else { return nil }
+            return .actions(actions + [Self.sideBySide(names[names.count - 2]), Self.sideBySide(names[names.count - 1], right: true)])
+        }
+        let named = [
+            #"^(?:(?:put|place|snap|tile|arrange|show|set\s+up)\s+)?(.+?)\s+and\s+(.+?)\s+(?:side\s+by\s+side|next\s+to\s+each\s+other)$"#,
+            #"^(?:split\s+(?:the\s+)?(?:screen|view)|split\s+screen)(?:\s+(?:with|between))?\s+(.+?)\s+and\s+(.+)$"#,
+            #"^(?:put|place|snap|tile|arrange)\s+(.+?)\s+and\s+(.+?)\s+in\s+(?:a\s+)?split\s+screen$"#,
+        ]
+        for pattern in named {
+            guard let groups = RioText.firstMatch(pattern, in: text), let first = groups[1], let second = groups[2],
+                  let left = knownAppName(first), let right = knownAppName(second), left != right else { continue }
+            return .actions([Self.sideBySide(left), Self.sideBySide(right, right: true)])
+        }
+        return nil
+    }
+
+    private static func sideBySide(_ name: String, right: Bool = false) -> RioAction {
+        .window(WindowCommand(appName: name, placement: right ? .rightHalf : .leftHalf))
+    }
+
+    private func knownAppName(_ spoken: String) -> String? {
+        let cleaned = cleanTarget(RioText.replacing(#"^(?:the|my)\s+"#, with: "", in: spoken))
+        guard Self.isPlausibleTarget(cleaned) else { return nil }
+        return AppNameMatcher.bestMatch(for: cleaned, in: installedApps)?.name
     }
 
     /// `rawApp` is the words between the verb and the placement; nil result means "not understood".
@@ -122,6 +171,8 @@ extension RioActionParser {
     private func cleanTarget(_ raw: String) -> String {
         var text = raw.trimmingCharacters(in: .whitespaces)
         text = RioText.replacing(#"^(?:(?:the|my|up|out)\s+)+"#, with: "", in: text)
+        // "open the website amazon dot com": the noun is not part of the name.
+        text = RioText.replacing(#"^(?:(?:the|my)\s+)?(?:web\s?site|site|web\s?page|page)\s+(?=\S)"#, with: "", in: text)
         let tails = [
             #"\s+(?:in|on)\s+(?:the\s+|my\s+)?(?:browser|web|internet|chrome|safari)$"#,
             #"\s+(?:app|application|program)$"#,
@@ -154,7 +205,16 @@ extension RioActionParser {
         }
         if let site { return ParsedClause(action: .openURL(site), verb: verbText) }
         if requireKnown { return nil }
+        // Not installed, not a known site: only a name that clearly names an app ("Photoshop",
+        // "the Photoshop app") gets "I couldn't find it". The rest goes to the smart resolver.
+        guard Self.looksLikeAppName(raw: rawTarget, target: target) else { return nil }
         return ParsedClause(action: make(target), verb: verbText)
+    }
+
+    /// A capitalised word ("Photoshop") or an explicit "app" suffix.
+    private static func looksLikeAppName(raw: String, target: String) -> Bool {
+        if RioText.matches(#"\s(?:app|application|program)$"#, raw) { return true }
+        return target.split(separator: " ").contains { $0.first?.isUppercase == true }
     }
 
     /// quit/hide: only apps, never websites.
@@ -164,7 +224,7 @@ extension RioActionParser {
         if let match = AppNameMatcher.bestMatch(for: target, in: installedApps) {
             return ParsedClause(action: build(match.name), verb: verb.lowercased())
         }
-        if requireKnown { return nil }
+        if requireKnown || !Self.looksLikeAppName(raw: rawTarget, target: target) { return nil }
         return ParsedClause(action: build(target), verb: verb.lowercased())
     }
 }

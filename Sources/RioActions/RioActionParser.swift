@@ -12,10 +12,13 @@ struct RioActionParser {
 
     func parse(_ transcript: String) -> RioActionParse {
         // "2 and a half minutes" must not split into two clauses on "and" (timers only).
-        let body = RioTimerPhrases.protectingDurations(in: Self.stripEnvelope(transcript))
+        let body = RioWebSearchRewrite.apply(to: RioTimerPhrases.protectingDurations(in: Self.stripEnvelope(transcript)))
         guard !body.isEmpty else { return .empty }
-        // Notes, memories and maths keep "and", "plus" and commas: claim the whole sentence first.
+        // Remember, notes and maths keep "and", "plus" and commas: claim the whole sentence first.
+        // Recall is not here: "what's my next class" must reach the calendar parser first.
         if let whole = RioPersonalPhrases.wholeUtterance(body) { return .actions([whole]) }
+        if let layout = parseSideBySide(body) { return layout }
+        if let task = RioTaskPhrases.wholeUtterance(body) { return .actions([task]) }
 
         var clauses = Self.splitClauses(body)
         if let last = clauses.last, !Self.startsGreedyCommand(last) {
@@ -113,15 +116,21 @@ struct RioActionParser {
         // A polite tail never belongs to the query.
         text = RioText.replacing(#"[,\s]+(?:please|bro)$"#, with: "", in: text)
 
-        let youtubePatterns = [
-            #"^(?:search|look)\s+(?:on\s+|in\s+)?(?:youtube|you\s?tube)\s+(?:for\s+)?(.+)$"#,
-            #"^(?:search|look)\s+(?:up\s+|for\s+)?(.+?)\s+(?:on|in)\s+(?:youtube|you\s?tube)$"#,
-            #"^(?:find|search)\s+(.+?)\s+on\s+(?:youtube|you\s?tube)$"#,
-            #"^(?:youtube|you\s?tube)\s+search\s+(?:for\s+)?(.+)$"#,
+        let sites: [(name: String, build: (String) -> URL?)] = [
+            (#"(?:youtube|you\s?tube)"#, RioWebURLs.youtubeSearchURL(query:)),
+            (#"amazon(?:\.com)?"#, RioWebURLs.amazonSearchURL(query:)),
         ]
-        for pattern in youtubePatterns {
-            if let groups = RioText.firstMatch(pattern, in: text), let query = Self.cleanQuery(groups[1]) {
-                return RioWebURLs.youtubeSearchURL(query: query).map(RioAction.openURL)
+        for site in sites {
+            let patterns = [
+                "^(?:search|look)\\s+(?:on\\s+|in\\s+)?\(site.name)\\s+(?:for\\s+)?(.+)$",
+                "^(?:search|look)\\s+(?:up\\s+|for\\s+)?(.+?)\\s+(?:on|in)\\s+\(site.name)$",
+                "^(?:find|search)\\s+(.+?)\\s+on\\s+\(site.name)$",
+                "^\(site.name)\\s+search\\s+(?:for\\s+)?(.+)$",
+            ]
+            for pattern in patterns {
+                if let groups = RioText.firstMatch(pattern, in: text), let query = Self.cleanQuery(groups[1]) {
+                    return site.build(query).map(RioAction.openURL)
+                }
             }
         }
         if RioText.matches(#"^google\b"#, text) {
@@ -153,16 +162,20 @@ struct RioActionParser {
 
     // MARK: Envelope: name, greetings, fillers
 
-    private static let nameVariants = "rio|ryo|reo|rhio|riyo|ryoh|rioh"
+    private static let nameVariants = "rio|ryo|reo|rhio|riyo|ryoh|rioh|ria|rea|rhea"
+    /// Mishearings that are only a name when a command verb follows ("rear open notes").
+    private static let nameBeforeVerb = "rear|real"
+    private static let commandVerbs = "open|launch|quit|close|switch|play|pause|set|turn|start|stop|put|move|search|go|show|mute|unmute|volume|hide|take|what|how|remind|remember|undo|help|text|message"
 
     /// Removes a leading name/greeting/filler ("yo Rio, can you ...") and returns the rest.
     static func stripEnvelope(_ transcript: String) -> String {
         var text = transcript.trimmingCharacters(in: CharacterSet(charactersIn: " \n\t\"\u{201C}\u{201D}"))
         let leading = [
             #"^(?:hey|yo|yoo|okay|ok|alright|all right|so|well|um|uh|erm|hmm|mm|please)\b[\s,.!?:;-]*"#,
-            "^(?:hi|hello)\\b[\\s,.!?:;-]*(?=(?:\(nameVariants))\\b)",
-            "^(?:\(nameVariants))\\b[\\s,.!?:;-]*",
-            "^yo(?:\(nameVariants))\\b[\\s,.!?:;-]*",
+            "^(?:hi|hello)\\b(?:[\\s,.!?:;]|-(?![\\d.(]))*(?=(?:\(nameVariants))\\b)",
+            "^(?:\(nameVariants))(?:['\u{2019}]?s)?\\b(?:[\\s,.!?:;]|-(?![\\d.(]))*",
+            "^(?:\(nameBeforeVerb))[\\s,.!?:;-]+(?=(?:\(commandVerbs))\\b)",
+            "^yo(?:\(nameVariants))\\b(?:[\\s,.!?:;]|-(?![\\d.(]))*",
             #"^(?:can|could|would|will)\s+you\s+(?:please\s+)?"#,
             #"^(?:i\s+(?:want|need)\s+you\s+to|i\s*(?:'|\x{2019})?d\s+like\s+you\s+to|go\s+ahead\s+and|just)\s+"#,
         ]
@@ -177,7 +190,15 @@ struct RioActionParser {
                 }
             }
         }
-        return text.trimmingCharacters(in: CharacterSet(charactersIn: " ,;:-\n\t"))
+        // A leading minus stays when a number follows ("-2^2"); a dash before words goes.
+        text = RioText.replacing(#"^-+\s+"#, with: "", in: text)
+        text = text.trimmingCharacters(in: CharacterSet(charactersIn: " ,;:\n\t"))
+        // "open uh Calculator": hesitation sounds anywhere are noise, except inside a message body.
+        if !startsGreedyCommand(text) {
+            text = RioText.replacing(#"(?:^|(?<=[\s,]))(?:uh+|um+|er+m|erm|hmm+|mhm|mm+)(?=[\s,.!?]|$)[,]?\s*"#, with: "", in: text)
+            text = RioText.collapseWhitespace(text).trimmingCharacters(in: CharacterSet(charactersIn: " ,;:\n\t"))
+        }
+        return text
     }
 
     static func stripTrailingFiller(_ text: String) -> String {
@@ -196,7 +217,7 @@ struct RioActionParser {
     // MARK: Clause splitting
 
     // Message bodies keep "and" and trailing words too: "text Ali saying I'm late and I'll call".
-    private static let greedyStart = #"^(?:type|write|search|google|look\s+up|youtube\s+search|you\s?tube\s+search|reply|tell\s+(?:them|him|her)|text|message|send\s+(?:a\s+)?(?:text|message))\b"#
+    private static let greedyStart = #"^(?:type|write|search|google|look\s+up|youtube\s+search|you\s?tube\s+search|amazon\s+search|reply|tell\s+(?:them|him|her)|text|message|send\s+(?:a\s+)?(?:text|message))\b"#
 
     static func startsGreedyCommand(_ clause: String) -> Bool {
         RioText.matches(greedyStart, clause)

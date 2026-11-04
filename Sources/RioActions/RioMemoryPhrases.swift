@@ -9,6 +9,17 @@ enum RioMemoryPhrases {
         let text = tidy(raw)
         guard !text.isEmpty else { return nil }
         return remember(text) ?? forget(text) ?? recall(text) ?? note(text)
+            ?? RioEmailPhrases.parse(text)
+            ?? RioMathPhrases.parse(raw: raw, simplified: simplified)
+    }
+
+    /// The only phrases that must see the whole sentence before it is split at "and" or a comma.
+    /// Recall is not one of them: "what's my next class" belongs to the calendar parser, which runs
+    /// first in the normal order.
+    static func parseWhole(raw: String, simplified: String) -> RioAction? {
+        let text = tidy(raw)
+        guard !text.isEmpty else { return nil }
+        return remember(text) ?? note(text) ?? RioEmailPhrases.parse(text)
             ?? RioMathPhrases.parse(raw: raw, simplified: simplified)
     }
 
@@ -24,7 +35,8 @@ enum RioMemoryPhrases {
         let pattern = #"^(?:please\s+)?(?:remember|memorize|keep\s+in\s+mind|make\s+a\s+mental\s+note)(?:\s+that)?\s*[:,]?\s+(.+)$"#
         guard let groups = RioText.firstMatch(pattern, in: text), let fact = groups[1]?.trimmingCharacters(in: .whitespaces),
               fact.count >= 3, fact.count <= RioMemoryStore.maxFactLength,
-              !RioText.matches(#"^(?:to|when|how|why|what|where|who|if|me|you|us|it|this|the\s+time|the\s+day)\b"#, fact) else { return nil }
+              !RioText.matches(#"^(?:to|when|how|why|what|where|who|if|me|you|us|it|this|the\s+time|the\s+day)\b"#, fact),
+              !RioText.matches(#"^that$"#, fact) else { return nil }
         return .remember(fact: fact)
     }
 
@@ -40,7 +52,7 @@ enum RioMemoryPhrases {
 
     // MARK: Recall
 
-    private static let systemTopics = #"^(?:battery|volume|brightness|clipboard|calendar|schedule|agenda|meetings?|next\s+meeting|next\s+event|events?|timers?|screen|wifi\s+status|bluetooth|ip|ip\s+address|location|day|week|to\s?do|reminders?|inbox|emails?|messages?|files?|downloads|desktop|resume|storage|disk|cpu|display|mic|microphone|status|last\s+message|selection|page|tabs?)(?:\s.*)?$"#
+    private static let systemTopics = #"^(?:battery|volume|brightness|clipboard|calendar|schedule|agenda|meetings?|next\s+\S+|upcoming\s+\S+|next\s+meeting|next\s+event|events?|timers?|screen|wifi\s+status|bluetooth|ip|ip\s+address|location|day|week|to\s?do|reminders?|inbox|emails?|messages?|files?|downloads|desktop|resume|storage|disk|cpu|display|mic|microphone|status|last\s+message|selection|page|tabs?)(?:\s.*)?$"#
 
     private static func recall(_ text: String) -> RioAction? {
         let s = RioText.simplify(text).lowercased()

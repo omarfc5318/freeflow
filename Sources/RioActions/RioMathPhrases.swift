@@ -26,6 +26,6 @@ enum RioMathPhrases {
 /// otherwise cut a note or a sum at "and" / "plus" / a comma).
 enum RioPersonalPhrases {
     static func wholeUtterance(_ body: String) -> RioAction? {
-        RioMemoryPhrases.parse(raw: body, simplified: RioText.simplify(body))
+        RioMemoryPhrases.parseWhole(raw: body, simplified: RioText.simplify(body))
     }
 }

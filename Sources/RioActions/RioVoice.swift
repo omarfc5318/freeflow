@@ -34,8 +34,12 @@ import Foundation
     }
 
     /// Says `text`, replacing whatever he is saying. Does nothing when silence rules apply.
+    /// What he last said, so "say that again" works when there is no translation to repeat.
+    private(set) var lastSpokenText: String?
+
     func speak(_ text: String) {
         guard let prepared = RioSpeechText.prepare(text), canSpeak(prepared) else { return }
+        lastSpokenText = prepared
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
         let utterance = AVSpeechUtterance(string: prepared)
         utterance.voice = voice

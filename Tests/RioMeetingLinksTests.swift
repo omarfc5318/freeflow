@@ -95,21 +95,21 @@ enum RioMeetingLinksTests {
         let spam = event("9", "You won a prize", d(9, 45), d(10, 45), link: "https://zoom.us/j/666", unaccepted: true)
         TestSupport.expectEqual(
             RioMeetingPicker.pick(events: [spam, later], now: now),
-            .join(later, url("https://meet.google.com/aaa-bbbb-ccc"))
+            .later(later)
         )
         // A meeting in progress is joinable.
         TestSupport.expectEqual(RioMeetingPicker.pick(events: [later, current], now: now), .join(current, url(zoom)))
         // Otherwise the next one with a link, skipping link-less events, all-day events and declined ones.
         TestSupport.expectEqual(
             RioMeetingPicker.pick(events: [lunch, later], now: now),
-            .join(later, url("https://meet.google.com/aaa-bbbb-ccc"))
+            .later(later)
         )
         let allDay = event("4", "Holiday", d(0), d(23, 59), link: zoom, allDay: true)
         let declined = event("5", "Declined call", d(11), d(12), link: zoom, declined: true)
         let past = event("6", "Earlier", d(8), d(9), link: zoom)
         TestSupport.expectEqual(
             RioMeetingPicker.pick(events: [allDay, declined, past, later], now: now),
-            .join(later, url("https://meet.google.com/aaa-bbbb-ccc"))
+            .later(later)
         )
         // Events with no link: say so for the first real event.
         TestSupport.expectEqual(RioMeetingPicker.pick(events: [lunch], now: now), .noLink(lunch))

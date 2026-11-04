@@ -101,6 +101,10 @@ enum RioWebURLs {
         searchURL(base: "https://www.youtube.com/results?search_query=", query: query)
     }
 
+    static func amazonSearchURL(query: String) -> URL? {
+        searchURL(base: "https://www.amazon.com/s?k=", query: query)
+    }
+
     private static func searchURL(base: String, query: String) -> URL? {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -120,5 +124,16 @@ enum RioWebURLs {
     private static func safeURL(string: String) -> URL? {
         guard let url = URL(string: string), isSafeWebURL(url) else { return nil }
         return url
+    }
+}
+
+/// "go to amazon and search for headphones" is one site search, not "open the site, then Google
+/// the words". Rewritten to "search amazon for headphones" before the clauses are split.
+enum RioWebSearchRewrite {
+    private static let pattern =
+        #"\b(?:go\s+to|go\s+on|open|visit|navigate\s+to|take\s+me\s+to)\s+(?:the\s+)?(youtube|you\s?tube|amazon)(?:\.com)?\s*,?\s*(?:and|then)\s+(?:then\s+)?(?:search|look)(?:\s+for|\s+up)?\s+"#
+
+    static func apply(to text: String) -> String {
+        RioText.replacing(pattern, with: "search $1 for ", in: text)
     }
 }

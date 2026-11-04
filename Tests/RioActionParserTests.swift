@@ -115,7 +115,7 @@ enum RioActionParserTests {
             ("show me Notes", a(sw("Notes"))),
             ("switch to Crome", a(sw(gc))),
             ("jump to Slack", a(sw("Slack"))),
-            ("switch to zorblax", a(sw("zorblax"))),
+            ("switch to zorblax", unk("switch to zorblax")),
             ("show me a picture of a cat", unk("show me a picture of a cat")),
             ("go to the store", unk("go to the store")),
 
@@ -213,7 +213,7 @@ enum RioActionParserTests {
             ("next track", a(.media(.next))),
             ("play the next song", a(.media(.next))),
             ("previous song", a(.media(.previous))),
-            ("go back", a(.media(.previous))),
+            ("go back", a(.browser(.back))),
             ("play taylor swift", unk("play taylor swift")),
             ("stop the music", unk("stop the music")),
 
