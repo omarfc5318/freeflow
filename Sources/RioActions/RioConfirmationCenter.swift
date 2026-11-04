@@ -51,6 +51,13 @@ final class RioConfirmationCenter: RioConfirming, RioConversationConfirming {
         case .quitApp(let name): detail = "Quit \(name)"
         case .startTranslation:
             detail = "Your microphone's sound will be sent to your transcription provider until you stop it."
+        // Show exactly what will be sent or set up, never a generic line (security review).
+        case .claudeCode(.send(let text)): detail = "Send to Claude Code: \(text)"
+        case .scheduleCommand(let command, let when): detail = "Schedule \"\(command)\" \(when)"
+        case .addTrigger(let command, let trigger): detail = "\(trigger), \(command)"
+        case .runMacro(let name): detail = "Run the macro \"\(name)\""
+        case .recordMacro(let name): detail = "Start recording a macro called \"\(name)\""
+        case .removeAutomation(let name): detail = "Remove \"\(name)\""
         default: detail = RioActionText.working(for: action)
         }
         return RioConfirmationContent(
