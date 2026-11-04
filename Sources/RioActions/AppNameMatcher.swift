@@ -38,6 +38,11 @@ enum AppNameMatcher {
         "appstore": "App Store", "photo": "Photos", "note": "Notes", "reminder": "Reminders",
         "iterm": "iTerm", "iterm2": "iTerm", "warpterminal": "Warp",
         "activitymonitor": "Activity Monitor",
+        // Whisper hears "Claude" as "cloud" (owner report, 2026-11-03).
+        "claude": "Claude", "cloud": "Claude", "clawed": "Claude", "claud": "Claude", "clod": "Claude",
+        "cloude": "Claude", "claudeai": "Claude", "cloudai": "Claude", "claudedesktop": "Claude",
+        "clouddesktop": "Claude", "claudeapp": "Claude", "cloudapp": "Claude",
+        "claudecode": "Claude", "cloudcode": "Claude",
     ]
 
     static func bestMatch(for spoken: String, in apps: [InstalledApp]) -> InstalledApp? {

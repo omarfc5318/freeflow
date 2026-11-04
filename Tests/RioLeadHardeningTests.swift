@@ -9,6 +9,24 @@ enum RioLeadHardeningTests {
         sharedHostingSuffixesAreSeparateSites()
         wildcardDNSHostsAreLocal()
         phoneRefusesRiskyActions()
+        claudeMishearings()
+    }
+
+    /// Whisper hears "Claude" as "cloud" (owner report, 2026-11-03): "go to the cloud window".
+    private static func claudeMishearings() {
+        let apps = [
+            InstalledApp(name: "Claude", bundleIdentifier: "com.anthropic.claudefordesktop", url: URL(fileURLWithPath: "/Applications/Claude.app")),
+            InstalledApp(name: "Warp", bundleIdentifier: "dev.warp.Warp-Stable", url: URL(fileURLWithPath: "/Applications/Warp.app")),
+        ]
+        for spoken in ["cloud", "Cloud", "clawed", "claud", "Cloud Code", "claude code", "cloud desktop", "Claude AI"] {
+            TestSupport.expectEqual(AppNameMatcher.bestMatch(for: spoken, in: apps)?.name, "Claude")
+        }
+        // Whether "go to the cloud window" is parsed locally or handed to the smart resolver, it
+        // must never become "I couldn't find an app called Cloud".
+        let parsed = RioActionParser(installedApps: apps).parse("Go to the cloud window.")
+        if case .actions(let actions) = parsed, case .switchToApp(let name)? = actions.first {
+            TestSupport.expectEqual(AppNameMatcher.bestMatch(for: name, in: apps)?.name, "Claude")
+        }
     }
 
     /// From the iPhone, nothing that would need a confirmation runs (no one can press Return).
