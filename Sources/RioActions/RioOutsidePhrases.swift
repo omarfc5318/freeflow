@@ -67,18 +67,24 @@ enum RioNewsPhrases {
 }
 
 enum RioMusicPhrases {
-    private static let notMusic = #"^(?:it|that|this|them|again|something|anything|music|songs?|a\s+song|some\s+music|the\s+music|something\s+else|pause|resume|continue)$"#
+    private static let notMusic = #"^(?:it|that|this|them|again|something|anything|music|songs?|a\s+song|some\s+music|the\s+music|something\s+else|pause|resume|continue|spotify|apple\s+music|itunes|(?:the\s+)?music\s+app|youtube(?:\s+music)?)$"#
     /// "that again", "it one more time", "this song again": a replay, not a song called "that again".
     private static let replay = #"^(?:(?:it|that|this|them)(?:\s+(?:song|track|one|tune|video))?(?:\s+(?:again|one\s+more\s+time|once\s+more|over))?|again|one\s+more\s+time|once\s+more)$"#
     private static let controlWord = #"^(?:next|previous|prior|last|back|forward|pause|resume|continue|the\s+rest)\b"#
     private static let notASong = #"^(?:video|videos|game|games|movie|film|episode|show|clip|recording|audio|podcast|sound|message|voice\s+message)\b"#
+    /// Study content is never a song, wherever it sits: "the lecture at 1.5x", "khan academy
+    /// integration by parts", "my MAT108 class recording". ("of course" is a phrase, not a course.)
+    private static let studyContent = #"\b(?:lectures?|lessons?|tutorials?|(?<!of\s)courses?|course\s?work|khan\s+academy|class(?:es)?|seminars?|webinars?|crash\s+course|office\s+hours)\b"#
+    /// A playback speed is about a video or a recording: "at 1.5x", "at double speed", "2x speed".
+    private static let playbackSpeed = #"\b(?:at\s+(?:\d+(?:\.\d+)?\s?x|(?:double|half|normal|\d+(?:\.\d+)?)\s+(?:speed|times))|(?:double|half|\d+(?:\.\d+)?\s?x)\s+speed)\b"#
     private static let otherService = #"\bon\s+(?:youtube|netflix|twitch|hulu|disney|prime|amazon|max|tiktok|instagram|chrome|safari|vlc|quicktime)\b"#
 
     static func parse(_ s: String) -> RioAction? {
         guard var query = firstGroup(#"^(?:play|listen\s+to)\s+(.+)$"#, in: s) else { return nil }
         query = RioText.replacing(#"\s+(?:on|in|using|with|through)\s+(?:my\s+)?(?:spotify|apple\s+music|music|itunes)$"#, with: "", in: query)
         let bare = RioText.replacing(#"^(?:the|a|an)\s+"#, with: "", in: query)
-        if RioText.matches(controlWord, bare) || RioText.matches(notASong, bare) || RioText.matches(otherService, query) { return nil }
+        if RioText.matches(controlWord, bare) || RioText.matches(notASong, bare) || RioText.matches(otherService, query)
+            || RioText.matches(studyContent, query) || RioText.matches(playbackSpeed, query) { return nil }
         query = RioText.replacing(#"^(?:me\s+)?(?:some\s+)?"#, with: "", in: query)
         query = RioText.replacing(#"^(?:the\s+)?(?:song|track|album|playlist|artist|band)\s+(?:called\s+|named\s+)?"#, with: "", in: query)
         query = RioText.collapseWhitespace(query)
@@ -149,15 +155,33 @@ enum RioCanvasPhrases {
         "hour", "min", "top", "last", "next", "this", "set", "rio", "its", "it", "are", "was", "item", "task", "step",
     ]
 
-    static func parse(_ s: String) -> RioAction? {
+    /// Work Canvas lists, for a question with no "due" in it ("what assignments are coming up").
+    private static let assignmentNoun = #"\b(?:assignments?|homework|homeworks|hw|quiz(?:zes)?|exams?|midterms?|finals|final\s+exams?|projects?|essays?|problem\s+sets?|psets?)\b"#
+    /// Words that ask what is still ahead: "coming up", "left", "do I have", "tonight", "next".
+    private static let upcomingCue = #"\b(?:coming\s+up|upcoming|left|remaining|pending|have|got|tonight|today|tomorrow|next|this\s+week|next\s+week|soon)\b"#
+    /// A question, not a task ("help me with my homework tonight" is not a Canvas lookup).
+    private static let questionLead = #"^(?:what|whats|which|when|whens|do|does|is|are|any|anything|how\s+many|have\s+i|got|show|list|tell\s+me|read)\b"#
+    /// Things a due-date list can't answer: grades, submissions, announcements.
+    private static let notDueQuestion = #"\b(?:submitted|turned\s+in|grades?|graded|scores?|announcements?|feedback)\b"#
+
+    static func parse(_ raw: String) -> RioAction? {
+        // "what's do this week": speech-to-text hears "due" as "do" after "what's" or "anything".
+        let s = RioText.replacing(#"^((?:whats|what\s+is|is\s+anything|anything|is\s+there\s+anything))\s+do\b(?=\s+(?:today|tonight|tomorrow|this|next|soon|on|for|in)\b|$)"#, with: "$1 due", in: raw)
         // "open Canvas", "check Canvas": the owner's own Canvas site, never a generic one.
         if RioText.matches(openCanvas, s), let base = RioCanvasConfig.configuredBase { return .openURL(base) }
+        // "check canvas for ECS 120": that course's work.
+        if let named = firstGroup(#"^(?:check|look\s+at|search)\s+(?:my\s+|the\s+)?canvas\s+for\s+(.+)$"#, in: s),
+           let course = course(in: named) {
+            return .canvasDue(range: course)
+        }
         guard !RioText.matches(otherVerbs, s) else { return nil }
         let mentionsCanvas = RioText.matches(#"\bcanvas\b"#, s) && RioText.matches(#"\b(?:assignments?|homework|coursework|quiz(?:zes)?|deadlines?|due|upcoming|to\s?do)\b"#, s)
         let asksDue = RioText.matches(workWords, s) && RioText.matches(#"\bdue\b"#, s)
-        let bareDue = RioText.matches(#"^(?:whats|what\s+is)\s+due(?:\s+(?:today|tomorrow|this\s+week|next\s+week|soon))?$"#, s)
+        let bareDue = RioText.matches(#"^(?:whats|what\s+is)\s+due(?:\s+(?:today|tonight|tomorrow|this\s+week|next\s+week|soon))?$"#, s)
         let assignmentsOnly = RioText.matches(#"^(?:check|show|read)\s+(?:me\s+)?(?:my\s+)?(?:assignments?|homework)$"#, s)
-        guard mentionsCanvas || asksDue || bareDue || assignmentsOnly else { return nil }
+        let asksUpcoming = RioText.matches(questionLead, s) && RioText.matches(assignmentNoun, s) && RioText.matches(upcomingCue, s)
+        guard mentionsCanvas || asksDue || bareDue || assignmentsOnly || asksUpcoming else { return nil }
+        if RioText.matches(notDueQuestion, s) { return nil }
         // "when is the ECS119 project due" after "remember that the ECS119 project is due December 5th".
         if let thing = firstGroup(#"^when\s+(?:is|are|was|were)\s+(?:my\s+|the\s+|our\s+)?(.+?)\s+due\b"#, in: s),
            RioRememberedFacts.knows(thing) {

@@ -103,11 +103,36 @@ enum RioContactChoice: Equatable {
 }
 
 enum RioContactChooser {
+    /// Case, accents and the Arabic spellings speech-to-text varies on (أ/ا, ة/ه, ى/ي) folded.
     private static func fold(_ text: String) -> String {
-        RioText.collapseWhitespace(text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil))
+        RioArabicText.normalize(text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil))
     }
 
+    /// Family words a contact is commonly saved under, in both scripts: a Gulf speaker says
+    /// "أمي" for a card saved as "Mom", or "Mom" for one saved as "الوالدة".
+    private static let familyWords: [Set<String>] = [
+        ["mom", "mum", "mother", "mama", "mommy", "mummy", "ma", "امي", "ماما", "الوالده", "والدتي", "يما", "يمه", "امي الحبيبه", "ام"],
+        ["dad", "father", "baba", "papa", "daddy", "abba", "ابوي", "ابي", "بابا", "الوالد", "والدي", "يبه", "يبا", "ابويه"],
+    ].map { Set($0.map { fold($0) }) }
+
+    /// The contact for a spoken name. When nobody matches a family word ("أمي"), its other
+    /// spellings are tried ("Mom", "الوالدة"); if they find more than one person, the user picks.
     static func choose(spoken: String, from candidates: [RioContactCandidate]) -> RioContactChoice {
+        let direct = chooseExactly(spoken: spoken, from: candidates)
+        guard direct == .notFound else { return direct }
+        let wanted = fold(spoken)
+        guard let family = familyWords.first(where: { $0.contains(wanted) }) else { return .notFound }
+        let exactTiers: [(RioContactCandidate, String) -> Bool] = [
+            { fold($0.fullName) == $1 || fold("\($0.givenName) \($0.familyName)") == $1 },
+            { fold($0.givenName) == $1 || fold($0.nickname) == $1 },
+        ]
+        let matches = candidates.filter { candidate in
+            family.contains { word in word != wanted && exactTiers.contains { $0(candidate, word) } }
+        }
+        return matches.isEmpty ? .notFound : decide(matches)
+    }
+
+    private static func chooseExactly(spoken: String, from candidates: [RioContactCandidate]) -> RioContactChoice {
         let wanted = fold(spoken)
         guard !wanted.isEmpty else { return .notFound }
         let tokens = wanted.split(separator: " ").map(String.init)
