@@ -72,8 +72,17 @@ extension RioAction {
     /// Starting the translator sends the room's audio to a provider, so it is always confirmed
     /// when conversation mode asked for it, trusted or not.
     var conversationAlwaysNeedsConfirmation: Bool {
-        if case .startTranslation = self { return true }
-        return false
+        switch self {
+        case .startTranslation:
+            return true
+        // Automations later run with automation trust, so creating, changing or running one from an
+        // untrusted channel would launder that trust: always ask in conversation mode, and (via
+        // `RioCommandSource.refuses`) never from the phone.
+        case .scheduleCommand, .addTrigger, .recordMacro, .runMacro, .removeAutomation:
+            return true
+        default:
+            return false
+        }
     }
 }
 

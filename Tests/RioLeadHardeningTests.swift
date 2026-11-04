@@ -10,6 +10,23 @@ enum RioLeadHardeningTests {
         wildcardDNSHostsAreLocal()
         phoneRefusesRiskyActions()
         claudeMishearings()
+        automationsCantBeLaundered()
+    }
+
+    /// Automations run later with automation trust, so creating or running one is refused from the
+    /// phone and always confirmed in conversation mode (review finding, 2026-11-03).
+    private static func automationsCantBeLaundered() {
+        let risky: [RioAction] = [
+            .scheduleCommand(command: "empty the trash", when: "in 5 minutes"),
+            .addTrigger(command: "open Safari", trigger: "when my AirPods connect"),
+            .recordMacro(name: "x"), .runMacro(name: "x"), .removeAutomation(name: "x"),
+        ]
+        for action in risky {
+            TestSupport.expect(RioCommandSource.phone.refuses(action), "phone refuses \(action)")
+            TestSupport.expect(action.conversationAlwaysNeedsConfirmation, "conversation confirms \(action)")
+            TestSupport.expect(!RioCommandSource.actionKey.refuses(action), "the action key may \(action)")
+        }
+        TestSupport.expect(!RioAction.listAutomations.conversationAlwaysNeedsConfirmation, "listing is harmless")
     }
 
     /// Whisper hears "Claude" as "cloud" (owner report, 2026-11-03): "go to the cloud window".
