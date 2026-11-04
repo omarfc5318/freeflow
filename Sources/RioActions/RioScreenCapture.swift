@@ -21,7 +21,9 @@ enum RioScreenCapture {
     static var hasPermission: Bool { CGPreflightScreenCaptureAccess() }
 
     /// The frontmost normal window that isn't Rio's.
-    static func capture() throws -> Data {
+    /// `maxDimension` and `quality` default to the picture sent to the AI provider; on-device text
+    /// reading (builder Q) asks for a bigger, sharper one that never leaves the Mac.
+    static func capture(maxDimension: CGFloat? = nil, quality: Double? = nil) throws -> Data {
         guard hasPermission else { throw Failure.noPermission }
         guard let target = targetWindow() else { throw Failure.noWindow }
         let bundleID = NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier
@@ -30,7 +32,7 @@ enum RioScreenCapture {
             throw Failure.sensitiveWindow
         }
         guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, target.id, [.bestResolution, .boundsIgnoreFraming]),
-              let jpeg = encode(image) else { throw Failure.captureFailed }
+              let jpeg = encode(image, maxDimension: maxDimension ?? Self.maxDimension, quality: quality ?? jpegQuality) else { throw Failure.captureFailed }
         return jpeg
     }
 
@@ -62,9 +64,9 @@ enum RioScreenCapture {
     }
 
     /// Downscaled to at most `maxDimension` on the long side, JPEG-encoded, kept under `maxBytes`.
-    private static func encode(_ image: CGImage) -> Data? {
+    private static func encode(_ image: CGImage, maxDimension: CGFloat, quality startQuality: Double) -> Data? {
         var limit = maxDimension
-        for quality in [jpegQuality, 0.45, 0.3] {
+        for quality in [startQuality, startQuality * 0.75, startQuality * 0.5] {
             guard let scaled = scaled(image, maxDimension: limit) else { return nil }
             let rep = NSBitmapImageRep(cgImage: scaled)
             if let data = rep.representation(using: .jpeg, properties: [.compressionFactor: quality]), data.count <= maxBytes {
