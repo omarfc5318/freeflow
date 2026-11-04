@@ -77,7 +77,15 @@ enum RioMemoryPhrases {
 
     // MARK: Notes
 
+    /// "to my MAT108 notes saying ..." / "to my ECS119 notes: ...": the named note, then the text.
+    private static let namedNote = #"^(?:to|in|into|on)\s+(?:my\s+|the\s+)?((?:[\p{L}\p{N}]+\s+){0,3}?[\p{L}\p{N}]+)\s+notes?\s*(?:[:,\-]\s*|\s+(?:saying|that\s+says|that)\s+)(.+)$"#
+
     private static func note(_ text: String) -> RioAction? {
+        // "add to my ECS119 notes that pandas groupby returns a dataframe".
+        if let groups = RioText.firstMatch(#"^(?:add|put|write|jot(?:\s+down)?)\s+(?:this\s+)?(.+)$"#, in: text),
+           let rest = groups[1], let named = namedNoteText(rest) {
+            return named
+        }
         let patterns = [
             #"^(?:take|make|add|jot)\s+(?:a\s+)?note\b(?:\s+to\s+self)?(?:\s+(?:that|down))?\s*[:,\-]?\s*(.+)$"#,
             #"^note\s+to\s+self\s*[:,\-]?\s*(.+)$"#,
@@ -89,10 +97,37 @@ enum RioMemoryPhrases {
         ]
         for pattern in patterns {
             guard let groups = RioText.firstMatch(pattern, in: text), var body = groups[1] else { continue }
+            // "add a note to my MAT108 notes saying review chapter 3": the destination is not the text.
+            if let named = namedNoteText(body) { return named }
             body = body.trimmingCharacters(in: CharacterSet(charactersIn: " .!\n\t"))
             guard !body.isEmpty, body.count <= RioNotesScripts.maxLength else { continue }
             return .addNote(text: body.prefix(1).uppercased() + body.dropFirst())
         }
         return nil
+    }
+
+    /// "to my MAT108 notes: review chapter 3" -> "MAT108: review chapter 3"; nil when no note is named.
+    private static func namedNoteText(_ rest: String) -> RioAction? {
+        guard let groups = RioText.firstMatch(namedNote, in: rest), let name = groups[1], let raw = groups[2] else { return nil }
+        let body = raw.trimmingCharacters(in: CharacterSet(charactersIn: " .!\n\t"))
+        guard !body.isEmpty else { return nil }
+        let text = RioText.matches(#"^(?:my|the)$"#, name) ? body : "\(name): \(body)"
+        guard text.count <= RioNotesScripts.maxLength else { return nil }
+        return .addNote(text: text.prefix(1).uppercased() + text.dropFirst())
+    }
+}
+
+/// What Rio remembers, as the phrase parsers see it: "where is my MAT108 midterm" and "when is the
+/// ECS119 project due" are answered from memory when a remembered fact is about them, before file
+/// search or Canvas claim them. Empty until the app installs the live store, so tests and the pure
+/// parsers never read the owner's memory file.
+enum RioRememberedFacts {
+    nonisolated(unsafe) static var provider: () -> [String] = { [] }
+
+    /// True when a remembered fact matches the spoken thing ("MAT108 midterm").
+    static func knows(_ thing: String) -> Bool {
+        let facts = provider()
+        guard !facts.isEmpty, !RioMemoryMatcher.tokens(thing).isEmpty else { return false }
+        return !RioMemoryMatcher.best(query: thing, facts: facts, limit: 1).isEmpty
     }
 }

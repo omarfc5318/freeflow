@@ -2,7 +2,9 @@ import Foundation
 
 /// Where builder S's integrations read their switches and credentials. Secrets (the Spotify
 /// refresh token, the Notion and Canvas tokens) live in the app's private settings store
-/// (`AppSettingsStorage`, a 0600 file), never in UserDefaults and never in a log.
+/// (`AppSettingsStorage`, a 0600 file next to the provider API key), never in UserDefaults and
+/// never in a log. Not the Keychain: the app moved its secrets out of the Keychain on purpose
+/// (`AppSettingsStorage.migrateFromKeychainIfNeeded`), and the settings section says so.
 enum RioOutsideSettings {
     static let weatherEnabledKey = "rio_weather_enabled"
     static let weatherPlaceKey = "rio_weather_default_place"
@@ -13,7 +15,7 @@ enum RioOutsideSettings {
     static let notionEnabledKey = "rio_notion_enabled"
     static let notionPageKey = "rio_notion_default_page"
     static let canvasEnabledKey = "rio_canvas_enabled"
-    static let canvasBaseKey = "rio_canvas_base_url"
+    static let canvasBaseKey = RioCanvasConfig.baseKey
     static let phoneEnabledKey = "rio_phone_texting_enabled"
     static let phoneHandlesKey = "rio_phone_owner_handles"
     static let phoneLastRowKey = "rio_phone_last_rowid"

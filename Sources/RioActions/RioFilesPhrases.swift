@@ -17,16 +17,41 @@ enum RioFilesPhrases {
     private static let brandPrefix = #"^(?:google|microsoft|apple|adobe|office|ms)\b"#
     private static let determiner = #"^(?:my|the|that|this|a|an|our)\s+"#
 
+    /// "a new Google Doc" is a new web document, never a file search for "new google".
+    private static let newGoogleFile = #"^(?:(?:a|an|the)\s+)?(?:new|blank|fresh)\s+(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|presentations?|decks?|forms?)$"#
+    /// Questions memory may answer ("where's my midterm" after "remember my midterm is in Wellman 2").
+    private static let memoryQuestion = #"^(?:where(?:s|\s+is|\s+are)|where\s+did\s+i\s+(?:put|leave))\s+(.+)$"#
+
     static func parse(simplified: String) -> RioAction? {
         // "show desktop" means clear the windows away (the system parser's F11), not the folder.
         if RioText.matches(#"^(?:show|reveal|go\s+to)\s+(?:me\s+)?(?:the\s+|my\s+)?desktop$"#, simplified) { return nil }
+        if let groups = RioText.firstMatch(memoryQuestion, in: simplified), let object = groups[1] {
+            let thing = RioText.replacing(determiner, with: "", in: RioText.collapseWhitespace(object))
+            if RioRememberedFacts.knows(thing) { return .recall(query: thing) }
+        }
         if let groups = RioText.firstMatch("^\(openVerbs)\\s+(.+)$", in: simplified), let object = groups[1] {
+            if let groups = RioText.firstMatch(newGoogleFile, in: RioText.collapseWhitespace(object)), let kind = groups[2] {
+                // Without "Google" ("a new presentation") it may be Keynote or Word: the resolver decides.
+                guard groups[1] != nil else { return nil }
+                return newGoogleFileURL(kind).map { .openURL($0) }
+            }
             return action(for: object, reveal: false)
         }
         if let groups = RioText.firstMatch("^\(revealVerbs)\\s+(.+)$", in: simplified), let object = groups[1] {
             return action(for: object, reveal: true)
         }
         return nil
+    }
+
+    /// docs.new, sheets.new, slides.new, forms.new: Google's own "new file" addresses.
+    private static func newGoogleFileURL(_ kind: String) -> URL? {
+        let word = kind.lowercased()
+        let host: String
+        if word.hasPrefix("doc") { host = "docs.new" }
+        else if word.hasPrefix("sheet") || word.hasPrefix("spreadsheet") { host = "sheets.new" }
+        else if word.hasPrefix("form") { host = "forms.new" }
+        else { host = "slides.new" }
+        return URL(string: "https://\(host)")
     }
 
     private static func action(for rawObject: String, reveal initialReveal: Bool) -> RioAction? {
@@ -53,7 +78,8 @@ enum RioFilesPhrases {
         object = object.trimmingCharacters(in: CharacterSet(charactersIn: " .,"))
         guard !object.isEmpty, !RioText.matches(brandPrefix, object) else { return nil }
 
-        if spokenDot, !hasDeterminer { return nil }
+        // "hw 6 dot pdf" is a file: a spoken domain has no space before its dot.
+        if spokenDot, !hasDeterminer, !RioText.matches(#"\s\S+\.(?:\#(extensions))\b"#, object) { return nil }
         guard claims(object, hasDeterminer: hasDeterminer) else { return nil }
         return reveal ? .revealFile(query: object) : .openFile(query: object)
     }

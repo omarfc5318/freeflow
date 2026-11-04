@@ -15,13 +15,23 @@ final class RioMeetingCopilot: ObservableObject {
     enum StartFailure: Error, Equatable {
         case needsScreenRecording
         case captureFailed
+        /// No other app is using the microphone (macOS 14 and later can tell): there is no call.
+        case noCall
     }
 
     /// Drives the bear's "listening" badge.
     @Published private(set) var isRecording = false
 
-    /// Called after the copilot stops by itself (the call ended, or two hours passed).
+    /// Called after the copilot stops by itself (the call ended, two hours passed, or the
+    /// capture stream stopped on its own: permission revoked, display change).
     var onAutoStopped: ((RioMeetingStopReason) -> Void)?
+
+    /// True while `start()` waits for the capture stream, so a second start can't open a second
+    /// stream and a stop in that window isn't lost.
+    private var isStarting = false
+    private var stopRequestedWhileStarting = false
+    /// Which capture a stream callback belongs to: a late callback from an old stream must not stop a new one.
+    private var session = 0
 
     private let buffers = RioMeetingBuffers(seconds: RioMeetingCopilot.bufferSeconds)
     private var systemCapture: RioSystemAudioCapture?
@@ -36,21 +46,34 @@ final class RioMeetingCopilot: ObservableObject {
     }
 
     func start() async throws {
-        guard !isRecording else { return }
+        guard !isRecording, !isStarting else { return }
+        // A call means some other app is using the mic. macOS 13 can't tell (nil): the two-hour cap applies.
+        if Self.otherAppUsingMic() == false { throw StartFailure.noCall }
         guard CGPreflightScreenCaptureAccess() else {
             _ = CGRequestScreenCaptureAccess()
             throw StartFailure.needsScreenRecording
         }
+        isStarting = true
+        stopRequestedWhileStarting = false
+        defer { isStarting = false }
+        session += 1
+        let current = session
         let buffers = buffers
         buffers.wipe()
         let system = RioSystemAudioCapture(
             onAudio: { buffers.appendSystem($0) },
-            onStopped: { Task { @MainActor in RioMeetingCopilot.shared.stop() } }
+            onStopped: { Task { @MainActor in RioMeetingCopilot.shared.captureStoppedItself(session: current) } }
         )
         do {
             try await system.start()
         } catch {
             throw StartFailure.captureFailed
+        }
+        // "Stop" arrived while the stream was starting: honour it instead of recording anyway.
+        if stopRequestedWhileStarting {
+            system.stop()
+            buffers.wipe()
+            return
         }
         systemCapture = system
         // The owner's side of the call. Skipped (system audio only) unless the mic is already allowed.
@@ -67,6 +90,7 @@ final class RioMeetingCopilot: ObservableObject {
 
     /// Stops listening and wipes the audio.
     func stop() {
+        if isStarting { stopRequestedWhileStarting = true }
         timer?.invalidate()
         timer = nil
         systemCapture?.stop()
@@ -76,6 +100,13 @@ final class RioMeetingCopilot: ObservableObject {
         autoStop = nil
         buffers.wipe()
         isRecording = false
+    }
+
+    /// The stream ended without being asked to: stop, and tell the owner rather than vanish quietly.
+    private func captureStoppedItself(session stopped: Int) {
+        guard stopped == session, isRecording else { return }
+        stop()
+        onAutoStopped?(.callEnded)
     }
 
     /// The last `seconds` of the call, mixed. Empty when not recording.

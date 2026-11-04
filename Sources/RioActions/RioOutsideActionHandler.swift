@@ -9,7 +9,12 @@ import Foundation
 /// Nothing is logged or stored from any answer.
 @MainActor
 final class RioOutsideActionHandler: RioActionHandling {
-    static let shared = RioOutsideActionHandler()
+    /// Built once at startup by the wiring, so this is also where the pure phrase parsers get
+    /// the live memory store ("where is my midterm" answers from memory when Rio was told).
+    static let shared: RioOutsideActionHandler = {
+        RioRememberedFacts.provider = { RioMemoryStore.shared.facts.map(\.text) }
+        return RioOutsideActionHandler()
+    }()
 
     private let fetch: RioFetch
     private let openURL: @MainActor (URL) -> Bool
@@ -108,7 +113,7 @@ final class RioOutsideActionHandler: RioActionHandling {
                 case .playing(let summary): return .done(summary: summary)
                 case .noDevice(let target):
                     // Nothing is open to play on: open it in Spotify so one tap starts it.
-                    if let url = URL(string: target.uri), openURL(url) {
+                    if let url = RioSpotifyLink.safeURL(target.uri), openURL(url) {
                         return .done(summary: "Opened \(target.spoken) in Spotify. Press play there.")
                     }
                     return .failed(message: "Open Spotify on a device first, then ask again")

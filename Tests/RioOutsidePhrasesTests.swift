@@ -38,7 +38,19 @@ enum RioOutsidePhrasesTests {
             ("what's the temperature outside", .weather(place: nil)),
             ("what's the forecast", .weather(place: nil)),
             ("forecast for Seattle", .weather(place: "Seattle")),
+            // The LLM's English for "ريو كم درجة الحرارة في الدوحة", and other place-first wordings.
+            ("What's the temperature in Doha?", .weather(place: "Doha")),
+            ("temperature in Doha tomorrow", .weather(place: "Doha")),
+            ("what's the temperature like in Davis today", .weather(place: "Davis")),
+            ("how hot is it in Doha", .weather(place: "Doha")),
+            ("how cold is it in Davis right now", .weather(place: "Davis")),
+            ("how hot is it outside", .weather(place: nil)),
+            ("what's the temperature", .weather(place: nil)),
+            ("what's the forecast like in Dubai", .weather(place: "Dubai")),
         ])
+        for notWeather in ["what's the temperature in Fahrenheit", "temperature of the oven", "how hot is it in here", "temp folder"] {
+            TestSupport.expect(parse(notWeather) == nil, "not a weather question: \(notWeather) -> \(String(describing: parse(notWeather)))")
+        }
     }
 
     private static func news() {
@@ -63,6 +75,18 @@ enum RioOutsidePhrasesTests {
             ("listen to lo fi beats", .playMusic(query: "lo fi beats")),
             ("play Blinding Lights by The Weeknd", .playMusic(query: "Blinding Lights by The Weeknd")),
         ])
+        // A replay is not a song called "that again".
+        for replay in ["play that again", "Rio, play that again.", "play it again", "play this again", "play that song again",
+                       "play it one more time", "play that one again"] {
+            let text = RioActionParser.stripEnvelope(replay)
+            TestSupport.expect(parse(text) == nil, "replay is not a search: \(replay) -> \(String(describing: parse(text)))")
+        }
+        TestSupport.expectEqual(RioSpotifyLink.safeURL("spotify:track:4uLU6hMCjMI75M1A2tKUQC")?.absoluteString, "spotify:track:4uLU6hMCjMI75M1A2tKUQC")
+        TestSupport.expectEqual(RioSpotifyLink.safeURL("spotify:playlist:37i9dQZF1DXcBWIGoYBM5M")?.scheme, "spotify")
+        for unsafe in ["file:///Applications/Calculator.app", "https://evil.example/x", "spotify:track:../../etc", "javascript:alert(1)",
+                       "spotify:user:abc", "spotify:track:abc def", "x-apple.systempreferences:com.apple.preference", ""] {
+            TestSupport.expect(RioSpotifyLink.safeURL(unsafe) == nil, "unsafe Spotify URI must be refused: \(unsafe)")
+        }
     }
 
     private static func notion() {
@@ -86,11 +110,35 @@ enum RioOutsidePhrasesTests {
             ("do I have any homework due today", .canvasDue(range: "today")),
             ("what's due next week on Canvas", .canvasDue(range: "next week")),
             ("any assignments due", .canvasDue(range: nil)),
+            // The course named filters what's read out.
+            ("rio, whats due for mat108", .canvasDue(range: "MAT108")),
+            ("when is my ECS119 homework due?", .canvasDue(range: "ECS119")),
+            ("what's due on canvas for MAT108?", .canvasDue(range: "MAT108")),
+            ("what's due next week for ECS 119?", .canvasDue(range: "next week ECS119")),
+            ("is homework 6 due tomorrow", .canvasDue(range: "tomorrow")),
+            ("when is quiz 3 due", .canvasDue(range: nil)),
         ])
+        // "open/check Canvas" opens the owner's own Canvas, never a generic one.
+        let savedBase = RioCanvasConfig.configuredText
+        defer { RioCanvasConfig.configuredText = savedBase }
+        RioCanvasConfig.configuredText = { "" }
+        let ucd = URL(string: "https://canvas.ucdavis.edu")!
+        for phrase in ["open Canvas", "Open canvas.", "check canvas", "go to Canvas", "open Canvas for me", "pull up my canvas"] {
+            TestSupport.expectEqual(parse(phrase), .openURL(ucd), file: #filePath, line: #line)
+        }
+        RioCanvasConfig.configuredText = { "canvas.example.edu" }
+        TestSupport.expectEqual(parse("open canvas"), .openURL(URL(string: "https://canvas.example.edu")!))
+        RioCanvasConfig.configuredText = { "http://insecure.example.edu" }
+        TestSupport.expectEqual(parse("open canvas"), .openURL(ucd))
+        RioCanvasConfig.configuredText = { "" }
+        let parser = RioActionParser(installedApps: [])
+        TestSupport.expectEqual(parser.parse("Rio open canvas."), .actions([.openURL(ucd)]))
+        TestSupport.expectEqual(parser.parse("Rio, open Canvas for me"), .actions([.openURL(ucd)]))
+        TestSupport.expectEqual(parser.parse("check my canvas assignments"), .actions([.canvasDue(range: nil)]))
     }
 
     private static let leftAlone = [
-        "open Chrome", "open Notion", "open Canvas", "open Spotify", "what's on my calendar", "what's next",
+        "open Chrome", "open Notion", "open Spotify", "what's on my calendar", "what's next",
         "set a timer for 5 minutes", "volume up", "next song", "play", "pause", "play it", "play that",
         "play the next song", "play the video", "play the video on YouTube", "play the game", "search for best pizza",
         "what's on my screen", "text Ali I'm late", "what time is it", "add milk to my shopping list",

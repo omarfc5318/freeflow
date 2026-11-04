@@ -299,7 +299,9 @@ enum RioOutsideIntegrationsTests {
         TestSupport.expectEqual(request.url?.host, "canvas.example.edu")
         TestSupport.expectEqual(request.url?.path, "/api/v1/planner/items")
         TestSupport.expectEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
-        TestSupport.expect(query(request)["start_date"]?.hasPrefix("2026-11-01") == true, "start date is the week start: \(String(describing: query(request)["start_date"]))")
+        // "This week" starts now, not last Sunday: work due Monday is overdue, not "due this week".
+        TestSupport.expect(query(request)["start_date"]?.hasPrefix("2026-11-03T14:05") == true, "start date is now: \(String(describing: query(request)["start_date"]))")
+        TestSupport.expect(!week.contains(Date(timeIntervalSince1970: 1_793_714_709 - 86_400)), "yesterday is not due this week")
         TestSupport.expectEqual(query(request)["per_page"], "50")
 
         let items = RioCanvasParser.items(from: Data(plannerFixture.utf8), interval: week)
@@ -318,9 +320,44 @@ enum RioOutsideIntegrationsTests {
             "You have 1 thing due today: Reading response today at 11:00 PM."
         )
         TestSupport.expectEqual(RioCanvasSpeech.sentence(items: [], range: "today", now: now, calendar: utc), "Nothing due today on Canvas.")
+        canvasCoursesAndOverdue()
         let many = (0..<6).map { RioCanvasItem(title: "Task \($0)", course: nil, due: now.addingTimeInterval(Double($0) * 3_600)) }
         let spoken = RioCanvasSpeech.sentence(items: many, range: nil, now: now, calendar: utc)
         TestSupport.expect(spoken.hasPrefix("You have 6 things due in the next 7 days:") && spoken.hasSuffix("and 2 more."), spoken)
+    }
+
+    private static func canvasCoursesAndOverdue() {
+        // The range string carries a course code; plain ranges work as before.
+        TestSupport.expect(RioCanvasRange.parts("next week MAT108") == ("next week", "MAT108"), "range + course")
+        TestSupport.expect(RioCanvasRange.parts("MAT108") == (nil, "MAT108"), "course only")
+        TestSupport.expect(RioCanvasRange.parts("today") == ("today", nil), "range only")
+        TestSupport.expect(RioCanvasRange.parts(nil) == (nil, nil), "nil")
+        TestSupport.expect(RioCanvasRange.parts("whenever you like") == (nil, nil), "unknown range is ignored")
+        TestSupport.expectEqual(RioCanvasRange.label(for: "this week ECS119"), "this week")
+        TestSupport.expectEqual(RioCanvasRange.interval(for: "MAT108", now: now, calendar: utc).duration, 7 * 86_400)
+
+        let homework = RioCanvasItem(title: "Homework 6", course: "MAT 108 A01 Fall 2026", due: now.addingTimeInterval(2 * 86_400))
+        let quiz = RioCanvasItem(title: "Quiz 3", course: "ECS 119", due: now.addingTimeInterval(3_600))
+        TestSupport.expect(RioCanvasRange.item(homework, isFor: "MAT108"), "MAT108 matches MAT 108 A01")
+        TestSupport.expect(RioCanvasRange.item(homework, isFor: "mat 108"), "spaces and case ignored")
+        TestSupport.expect(!RioCanvasRange.item(homework, isFor: "MAT10"), "MAT10 is not MAT108")
+        TestSupport.expect(!RioCanvasRange.item(quiz, isFor: "MAT108"), "ECS 119 is not MAT108")
+        TestSupport.expect(!RioCanvasRange.item(RioCanvasItem(title: "x", course: nil, due: now), isFor: "MAT108"), "no course, no match")
+        TestSupport.expectEqual(
+            RioCanvasSpeech.sentence(items: [homework], range: "MAT108", now: now, calendar: utc),
+            "For MAT108 you have 1 thing due in the next 7 days: Homework 6 Thursday at 2:05 PM."
+        )
+        TestSupport.expectEqual(
+            RioCanvasSpeech.sentence(items: [], range: "this week MAT108", now: now, calendar: utc),
+            "Nothing due this week for MAT108 on Canvas."
+        )
+        // Past items are overdue, never "today at".
+        let late = RioCanvasItem(title: "Homework 5", course: "MAT 108", due: now.addingTimeInterval(-2 * 86_400))
+        let earlier = RioCanvasItem(title: "Reading", course: nil, due: now.addingTimeInterval(-3_600))
+        TestSupport.expectEqual(
+            RioCanvasSpeech.sentence(items: [late, earlier], range: "today", now: now, calendar: utc),
+            "You have 2 things due today: Homework 5 for MAT 108 overdue since Sunday at 2:05 PM, Reading overdue since 1:05 PM today."
+        )
     }
 
     private static func canvasService() async {
@@ -328,6 +365,8 @@ enum RioOutsideIntegrationsTests {
         let service = RioCanvasService(fetch: network.fetch, base: URL(string: "https://canvas.example.edu")!, token: "tok")
         let answer = try? await service.due(range: "this week", now: now, calendar: utc)
         TestSupport.expect(answer?.hasPrefix("You have 3 things due this week") == true, "got \(String(describing: answer))")
+        let mat = try? await service.due(range: "this week MAT108", now: now, calendar: utc)
+        TestSupport.expectEqual(mat, "For MAT108 you have 1 thing due this week: Homework 6 Thursday at 7:59 AM.")
         let rejected = RioFakeNetwork([RioFakeNetwork.rule("/api/v1/planner/items", 401, #"{"errors":[{"message":"Invalid access token."}]}"#)])
         do {
             _ = try await RioCanvasService(fetch: rejected.fetch, base: URL(string: "https://canvas.example.edu")!, token: "bad").due(range: nil, now: now, calendar: utc)

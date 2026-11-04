@@ -184,27 +184,41 @@ enum RioMeetingTests {
             ("Tell Claude to run the build.", "run the build"),
             ("tell Claude Code to add a README", "add a README"),
             ("ask Claude to refactor the parser", "refactor the parser"),
-            ("ask Claude why the build failed", "why the build failed"),
-            ("ask Claude what the plan is?", "what the plan is?"),
+            ("ask Claude Code why the build failed", "why the build failed"),
+            ("ask Claude Code what the plan is?", "what the plan is?"),
             ("ask Claude Code about the tests", "about the tests"),
             ("tell Claude that the API key is in the env file", "the API key is in the env file"),
+            // "cloud" is how speech-to-text often hears "Claude".
+            ("tell cloud to fix the failing test", "fix the failing test"),
+            ("tell cloud code to fix the failing test", "fix the failing test"),
+            ("ask cloud code to summarize this repo", "summarize this repo"),
+            ("tell claude no, use supabase instead", "no, use supabase instead"),
         ]
         for (phrase, text) in sends {
             TestSupport.expectEqualNamed(parse(phrase), .claudeCode(.send(text)), phrase)
         }
         for phrase in ["approve that", "Approve it.", "approve this", "approve Claude's request", "approve the permission",
-                       "say yes to Claude"] {
+                       "say yes to Claude", "Claude, approve", "yes approve it", "approve cloud", "yes, approve that",
+                       "cloud code approve"] {
             TestSupport.expectEqualNamed(parse(phrase), .claudeCode(.approve), phrase)
         }
         for phrase in ["deny that", "Deny it", "reject that", "decline that", "deny the permission", "tell Claude no",
-                       "say no to Claude"] {
+                       "say no to Claude", "no, don't approve that", "don't approve it", "deny it", "tell cloud no"] {
             TestSupport.expectEqualNamed(parse(phrase), .claudeCode(.deny), phrase)
         }
         for phrase in ["what's Claude doing", "What is Claude doing?", "what's Claude Code doing", "what is Claude up to",
-                       "how's Claude doing", "check on Claude", "is Claude done"] {
+                       "how's Claude doing", "check on Claude", "is Claude done", "check on cloud", "is Claude done yet?",
+                       "what is Claude asking me?", "what's cloud code doing", "is Claude waiting"] {
             TestSupport.expectEqualNamed(parse(phrase), .claudeCode(.status), phrase)
         }
         TestSupport.expect(parse("approve that").map { $0.requiresConfirmation } == true, "approve confirms")
+        // A plain question to Claude is for the Claude app or the resolver, never typed into a
+        // tool-using Claude Code session.
+        for phrase in ["ask Claude what a monoid is", "Rio, ask Claude what a monoid is", "ask Claude why the sky is blue",
+                       "ask cloud what a monoid is"] {
+            TestSupport.expect(RioMeetingPhrases.parse(raw: RioActionParser.stripEnvelope(phrase), simplified: RioText.simplify(RioActionParser.stripEnvelope(phrase))) == nil,
+                               "a question to Claude must not reach Claude Code: \(phrase)")
+        }
     }
 
     private static func testPhrasesDontSteal() {
@@ -223,6 +237,8 @@ enum RioMeetingTests {
         let parser = RioActionParser(installedApps: [])
         TestSupport.expectEqual(parser.parse("Rio, tell Claude to fix the tests"), .actions([.claudeCode(.send("fix the tests"))]))
         TestSupport.expectEqual(parser.parse("Rio approve that"), .actions([.claudeCode(.approve)]))
+        TestSupport.expectEqual(parser.parse("Rio tell cloud to fix the failing test"), .actions([.claudeCode(.send("fix the failing test"))]))
+        TestSupport.expectEqual(parser.parse("Rio check on cloud"), .actions([.claudeCode(.status)]))
         TestSupport.expectEqual(parser.parse("Rio, recap the meeting"), .actions([.meeting(.recap)]))
         TestSupport.expectEqual(parser.parse("Rio stop listening"), .actions([.stopListening]))
     }

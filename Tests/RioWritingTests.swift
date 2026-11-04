@@ -23,6 +23,9 @@ import Foundation
 
     private static func testEditPhrases() {
         let cases: [(String, String)] = [
+            ("fix the grammar", "fix the grammar"), ("fix the spelling in that", "fix the spelling"), ("fix my spelling", "fix the spelling"),
+            ("rewrite it", "rewrite it"), ("polish it", "polish it"), ("proofread this", "proofread it"), ("clean that up", "clean it up"),
+            ("rewrite that please", "rewrite it"),
             ("make that more formal", "make it more formal"),
             ("Make it shorter.", "make it shorter"),
             ("make that sound friendlier", "make it friendlier"),
@@ -79,16 +82,17 @@ import Foundation
     /// Phrases that belong to someone else or to nobody must not be claimed.
     private static func testNotOurs() {
         let notOurs = [
-            "improve this", "fix the grammar", "fix the grammar in that", "rewrite that better", "rewrite it",
-            "polish it", "proofread this", "translate this to French", "translate that to Arabic",
+            "translate this to French", "translate that to Arabic", "improve the selection", "rewrite this paragraph",
+            "rewrite this paragraph to sound more confident", "fix the grammar in the selected text", "make this paragraph shorter",
             "reply saying thanks", "summarize this", "explain this", "make it bigger", "make it louder",
             "make that full screen", "make it brighter", "add milk to my shopping list",
             "add lunch with Sarah Friday at 1", "add to the end of my list", "change it to dark mode",
-            "edit that", "redo that", "rewrite that please", "paste", "paste it", "paste that here",
+            "edit that", "redo that", "paste", "paste it", "paste that here",
             "paste as plain text", "paste without formatting", "paste the link", "paste my last copy",
             "paste the url I copied", "write a poem about the sea", "write me an email", "write me a poem", "write me a joke", "write down milk", "write an email to Sam about lunch",
             "type hello", "write hello world", "open Chrome", "say it", "say that again", "text Ali I'm late",
-            "draft an email to Sam about lunch", "compose an email", "what's on my clipboard", "undo",
+            "draft an email to Sam about lunch", "compose an email", "draft a follow up email to the Falak team",
+            "write a thank you email to Sam", "what's on my clipboard", "undo",
             "send that to Ali", "shorten the timer", "fix my last problem", "write a note to self",
         ]
         for input in notOurs {
@@ -103,9 +107,20 @@ import Foundation
         func extra(_ raw: String) -> RioAction? {
             RioExtraPhrases.parse(raw: raw, simplified: RioText.simplify(raw))
         }
-        ETest.eq(extra("improve this"), .selectionTask(.improve))
-        ETest.eq(extra("fix the grammar"), .selectionTask(.improve))
-        ETest.eq(extra("rewrite that better"), .selectionTask(.improve))
+        // One rule (#44): this/that/it, or no referent, is the last dictation; a named selection is E's.
+        ETest.eq(extra("improve this"), .editLastDictation(instruction: "improve it"))
+        ETest.eq(extra("fix the grammar"), .editLastDictation(instruction: "fix the grammar"))
+        ETest.eq(extra("fix the grammar of that"), .editLastDictation(instruction: "fix the grammar"))
+        ETest.eq(extra("rewrite that"), .editLastDictation(instruction: "rewrite it"))
+        ETest.eq(extra("rewrite that better"), .editLastDictation(instruction: "rewrite it better"))
+        ETest.eq(extra("make it shorter"), .editLastDictation(instruction: "make it shorter"))
+        ETest.eq(extra("add a thank you at the end"), .editLastDictation(instruction: "add a thank you at the end"))
+        ETest.eq(extra("improve the selection"), .selectionTask(.improve))
+        ETest.eq(extra("fix the grammar in the selected text"), .selectionTask(.improve))
+        ETest.eq(extra("rewrite this paragraph"), .selectionTask(.improve))
+        // The selection with an instruction the selection task can't carry: the resolver decides,
+        // never a garbled "paragraph to sound more confident" edit.
+        ETest.eq(extra("rewrite this paragraph to sound more confident"), nil)
         ETest.eq(extra("translate this to French"), .selectionTask(.translate(language: "French")))
         ETest.eq(extra("reply saying sounds good"), .replyInConversation(body: "sounds good"))
         ETest.eq(extra("make that more formal"), .editLastDictation(instruction: "make it more formal"))

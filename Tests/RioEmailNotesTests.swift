@@ -10,6 +10,44 @@ enum RioEmailNotesTests {
         mailScript()
         recipients()
         notesScript()
+        emailPhrases()
+    }
+
+    /// Recipient, subject and body come apart on common wordings; a purpose instead of words
+    /// goes to the resolver, which writes the whole draft.
+    private static func emailPhrases() {
+        func parse(_ text: String) -> RioAction? { RioEmailPhrases.parse(text) }
+        let drafts: [(String, RioAction)] = [
+            ("email Naif and say thanks for the call, I'll send the deck tomorrow",
+             .draftEmail(to: "Naif", subject: nil, body: "Thanks for the call, I'll send the deck tomorrow")),
+            ("send an email to ali@haladiscover.com subject launch, body we're live",
+             .draftEmail(to: "ali@haladiscover.com", subject: "Launch", body: "We're live")),
+            ("email Sam subject lunch body see you at noon", .draftEmail(to: "Sam", subject: "Lunch", body: "See you at noon")),
+            ("draft a follow up email to the Falak team", .draftEmail(to: "the Falak team", subject: "Follow up", body: "")),
+            ("draft a quick email to professor Kim", .draftEmail(to: "professor Kim", subject: nil, body: "")),
+            ("email Sam saying I'm running late", .draftEmail(to: "Sam", subject: nil, body: "I'm running late")),
+            ("draft an email to Sam about lunch", .draftEmail(to: "Sam", subject: "Lunch", body: "")),
+            ("email Sam saying lunch and dinner are on", .draftEmail(to: "Sam", subject: nil, body: "Lunch and dinner are on")),
+            ("write an email to john at example dot com subject hello saying see you soon",
+             .draftEmail(to: "john@example.com", subject: "Hello", body: "See you soon")),
+            ("email that I'm out today", .draftEmail(to: nil, subject: nil, body: "I'm out today")),
+        ]
+        for (input, expected) in drafts { ETest.eq(parse(input), expected, input) }
+        for purpose in [
+            "draft an email to my TA asking for an extension on homework 6", "email my TA asking for an extension",
+            "draft an email to professor Kim requesting an extension",
+            "draft an email to Naif thanking him for the call and saying I'll send the deck",
+            "write an email to the investors with our monthly update", "email the team letting them know I'm out",
+        ] {
+            ETest.eq(parse(purpose), nil, "a purpose is composed by the resolver: \(purpose)")
+        }
+        let parser = RioActionParser(installedApps: [])
+        if case .actions(let list) = parser.parse("Rio, email my TA asking for an extension") {
+            TestSupport.expect(false, "must not be a sure parse: \(list)")
+        }
+        // "... email to X" is a mail draft, not text typed into the focused field.
+        ETest.eq(parser.parse("draft a follow up email to the Falak team"),
+                 .actions([.draftEmail(to: "the Falak team", subject: "Follow up", body: "")]))
     }
 
     private static func routing() {
