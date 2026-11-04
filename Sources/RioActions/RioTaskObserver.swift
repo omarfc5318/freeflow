@@ -57,7 +57,7 @@ final class RioTaskObserver: RioTaskObserving {
             appName: app.localizedName, windowTitle: title, outline: read.text,
             focusedField: Self.focusedField(of: appElement), imageDataURL: image,
             pageURL: read.pageURL, focusedInWebArea: focus.inWebArea, focusedIsAddressField: focus.isAddressField,
-            processID: app.processIdentifier
+            processID: app.processIdentifier, isBrowser: RioTaskObservationPolicy.isBrowser(bundleID: app.bundleIdentifier)
         )
     }
 

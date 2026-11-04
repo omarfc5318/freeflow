@@ -11,32 +11,44 @@ struct RioActionParser {
     }
 
     func parse(_ transcript: String) -> RioActionParse {
+        analyze(transcript).parse
+    }
+
+    /// The parse plus how sure it is (understanding-first routing, see RioSmartRouting.swift).
+    /// A parse is a guess when an app or window target did not resolve to an installed app.
+    func analyze(_ transcript: String) -> RioParseAnalysis {
         // "2 and a half minutes" must not split into two clauses on "and" (timers only).
         let body = RioWebSearchRewrite.apply(to: RioTimerPhrases.protectingDurations(in: Self.stripEnvelope(transcript)))
-        guard !body.isEmpty else { return .empty }
+        func sure(_ parse: RioActionParse) -> RioParseAnalysis {
+            RioParseAnalysis(parse: parse, isConfident: true, resolverText: unknownText(body, lastWasGreedy: false))
+        }
+        guard !body.isEmpty else { return sure(.empty) }
         // Remember, notes and maths keep "and", "plus" and commas: claim the whole sentence first.
         // Recall is not here: "what's my next class" must reach the calendar parser first.
-        if let whole = RioPersonalPhrases.wholeUtterance(body) { return .actions([whole]) }
+        if let whole = RioPersonalPhrases.wholeUtterance(body) { return sure(.actions([whole])) }
         if let layout = parseSideBySide(body) { return layout }
-        if let task = RioTaskPhrases.wholeUtterance(body) { return .actions([task]) }
+        if let task = RioTaskPhrases.wholeUtterance(body) { return sure(.actions([task])) }
 
         var clauses = Self.splitClauses(body)
         if let last = clauses.last, !Self.startsGreedyCommand(last) {
             let trimmed = Self.stripTrailingFiller(last)
             if trimmed.isEmpty { clauses.removeLast() } else { clauses[clauses.count - 1] = trimmed }
         }
-        guard !clauses.isEmpty else { return .empty }
+        guard !clauses.isEmpty else { return sure(.empty) }
 
+        let resolverText = unknownText(body, lastWasGreedy: clauses.last.map(Self.startsGreedyCommand) ?? false)
         var actions: [RioAction] = []
+        var isConfident = true
         var inheritedVerb: String?
         for clause in clauses {
             guard let parsed = parseClause(clause, inheritedVerb: inheritedVerb) else {
-                return .unknown(unknownText(body, lastWasGreedy: clauses.last.map(Self.startsGreedyCommand) ?? false))
+                return RioParseAnalysis(parse: .unknown(resolverText), isConfident: false, resolverText: resolverText)
             }
             actions.append(parsed.action)
+            isConfident = isConfident && parsed.isConfident
             inheritedVerb = parsed.verb
         }
-        return .actions(actions)
+        return RioParseAnalysis(parse: .actions(actions), isConfident: isConfident, resolverText: resolverText)
     }
 
     /// The text handed to the smart resolver: the command without the name or trailing filler.
@@ -51,6 +63,9 @@ struct RioActionParser {
         let action: RioAction
         /// The verb a following verb-less clause may reuse ("open Chrome and Spotify").
         let verb: String?
+        /// False when the target is only a guess (not an installed app, a known site or the
+        /// front window): the smart resolver is asked first.
+        var isConfident = true
     }
 
     private func parseClause(_ raw: String, inheritedVerb: String?) -> ParsedClause? {

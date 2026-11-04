@@ -120,7 +120,7 @@ enum RioSmartResolverTests {
             #"{"action":"createEvent","title":"t","start":"2026-11-05T10:00:00"}"#,
             #"{"action":"clipboard","command":"showHistory"}"#, #"{"action":"browser","command":"newTab"}"#,
             #"{"action":"systemToggle","setting":"wifi","isOn":false}"#, #"{"action":"brightness","mode":"up"}"#,
-            #"{"action":"batteryStatus"}"#,
+            #"{"action":"batteryStatus"}"#, #"{"action":"pressKeys","key":"n","modifiers":["command"]}"#,
             #"{"action":"describeScreen"}"#, #"{"action":"click","label":"Save"}"#,
             #"{"action":"fillField","label":"Email","text":"a@b.com"}"#, #"{"action":"runTask","goal":"rename my files"}"#,
             #"{"action":"remember","fact":"my pin is 99"}"#, #"{"action":"recall","query":"pin"}"#,
@@ -133,7 +133,9 @@ enum RioSmartResolverTests {
             ETest.eq(result.count, 1, "valid example dropped: \(example)")
         }
         ETest.eq(RioSmartResponseParser.allowedActionNames.count, examples.count)
-        for blocked in ["typeText", "stopListening", "pressKeys", "emptyTrash"] {
+        // pressKeys left this list with understanding-first routing (owner, 2026-11-03); the keys it
+        // may press are tested in RioUnderstandingRoutingTests.
+        for blocked in ["typeText", "stopListening", "emptyTrash"] {
             TestSupport.expect(!RioSmartResponseParser.allowedActionNames.contains(blocked), "\(blocked) must stay out of the schema")
         }
     }
@@ -259,7 +261,7 @@ enum RioSmartResolverTests {
         for name in RioSmartResponseParser.allowedActionNames {
             TestSupport.expect(system.contains("\"\(name)\""), "prompt must document \(name)")
         }
-        for forbidden in ["typeText", "stopListening", "pressKeys", "emptyTrash"] {
+        for forbidden in ["typeText", "stopListening", "emptyTrash"] {
             TestSupport.expect(!system.contains(forbidden), "prompt must not mention \(forbidden)")
         }
         TestSupport.expect(system.contains("at most 2 sentences"), "answer length rule")

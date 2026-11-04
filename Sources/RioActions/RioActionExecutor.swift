@@ -11,6 +11,8 @@ final class RioActionExecutor {
     private let typeText: @MainActor (String) async -> Bool
     private let handlers: [RioActionHandling]
     private var cachedApps: [InstalledApp]?
+    /// The app the last open/switch brought forward, for `settleFocus()`.
+    private var lastFocusedApp: InstalledApp?
 
     init(
         windowController: WindowControlling,
@@ -135,6 +137,7 @@ final class RioActionExecutor {
         if let message = launch.errorMessage {
             return .failed(message: "I couldn't open \(app.name): \(message)")
         }
+        lastFocusedApp = app
         return .done(summary: "\(verb) \(app.name)")
     }
 
@@ -293,6 +296,27 @@ private final class LaunchState {
             app.activate()
         } else {
             app.activate(options: [.activateIgnoringOtherApps])
+        }
+    }
+}
+
+// MARK: Focus settling
+
+extension RioActionExecutor: RioFocusSettling {
+    private static let settleTimeout: TimeInterval = 1.2
+    private static let settlePollNanoseconds: UInt64 = 50_000_000
+
+    /// Waits (briefly) until the app the last open/switch activated is really frontmost, so a
+    /// following key press or click lands in it. Returns at once when it already is.
+    func settleFocus() async {
+        guard let app = lastFocusedApp else { return }
+        let deadline = Date().addingTimeInterval(Self.settleTimeout)
+        while Date() < deadline {
+            if let front = NSWorkspace.shared.frontmostApplication {
+                if let id = app.bundleIdentifier, front.bundleIdentifier == id { return }
+                if front.bundleURL == app.url { return }
+            }
+            try? await Task.sleep(nanoseconds: Self.settlePollNanoseconds)
         }
     }
 }

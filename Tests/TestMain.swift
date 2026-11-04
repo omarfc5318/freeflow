@@ -60,6 +60,7 @@ struct FreeFlowTests {
         RioVoiceCoreTests.run()
         RioContextPhrasesTests.run()
         await RioSmartResolverTests.run()
+        await RioUnderstandingRoutingTests.run()
         RioMessagingTests.run()
         RioImprovePolicyTests.run()
         await RioWritingTests.run()

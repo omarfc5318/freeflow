@@ -86,9 +86,13 @@ final class RioCatalogParser: RioActionParsing, @unchecked Sendable {
     init(apps: RioInstalledApps = .shared) { self.apps = apps }
 
     func parse(_ transcript: String) -> RioActionParse {
-        let current = currentParser()
-        let result = current.parse(transcript)
-        if case .unknown = result { apps.rescanInBackground() }
+        analyze(transcript).parse
+    }
+
+    func analyze(_ transcript: String) -> RioParseAnalysis {
+        let result = currentParser().analyze(transcript)
+        // Not understood, or a guess at an app name: maybe the app was just installed.
+        if !result.isConfident { apps.rescanInBackground() }
         return result
     }
 
@@ -137,6 +141,7 @@ enum RioActionsWiring {
                 ]
             ),
             smartResolver: RioSmartResolverFactory.make(),
+            smartContext: RioSmartLiveContext(),
             observer: RioUndoJournal.shared,
             confirmer: RioConfirmationCenter.shared
         )

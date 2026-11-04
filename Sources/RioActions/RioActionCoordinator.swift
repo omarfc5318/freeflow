@@ -5,6 +5,16 @@ import Foundation
 
 protocol RioActionParsing {
     func parse(_ transcript: String) -> RioActionParse
+    /// The parse plus how sure it is. Parsers that can't tell are always sure of `.actions`.
+    func analyze(_ transcript: String) -> RioParseAnalysis
+}
+
+extension RioActionParsing {
+    func analyze(_ transcript: String) -> RioParseAnalysis {
+        let parse = parse(transcript)
+        if case .unknown(let text) = parse { return RioParseAnalysis(parse: parse, isConfident: false, resolverText: text) }
+        return RioParseAnalysis(parse: parse, isConfident: true, resolverText: transcript)
+    }
 }
 
 @MainActor protocol RioActionExecuting: AnyObject {
@@ -15,6 +25,19 @@ protocol RioActionParsing {
 /// return members of the closed `RioAction` set.
 protocol RioSmartResolving {
     func resolve(_ text: String) async throws -> [RioAction]
+    /// Understanding-first routing: the command with context (and, when re-planning, the step
+    /// that failed). Never throws; an unavailable brain says why.
+    func resolve(_ request: RioSmartRequest) async -> RioSmartResolution
+}
+
+extension RioSmartResolving {
+    func resolve(_ request: RioSmartRequest) async -> RioSmartResolution {
+        do {
+            return .actions(try await resolve(request.command))
+        } catch {
+            return .failed(RioActionText.resolverFailedMessage)
+        }
+    }
 }
 
 enum RioActionOutcome: Equatable {
@@ -106,6 +129,12 @@ enum RioActionText {
         return "I heard \"\(clipped)\". Try again?"
     }
     static let resolverFailedMessage = "I couldn't work that out"
+
+    /// After the first plan and every re-plan failed: what went wrong, said plainly.
+    static func couldNotFinish(_ reason: String) -> String {
+        let trimmed = reason.trimmingCharacters(in: CharacterSet(charactersIn: " ."))
+        return "I tried a few ways but couldn't finish that. \(trimmed)."
+    }
 
     /// The short "now doing" line the corner bear and status text show.
     static func working(for action: RioAction) -> String {
@@ -224,32 +253,45 @@ final class RioActionCoordinator {
     private let parser: RioActionParsing
     private let executor: RioActionExecuting
     private let smartResolver: RioSmartResolving?
+    private let smartContext: RioSmartContextProviding?
     private let observer: RioActionObserving?
     private let confirmer: RioConfirming?
     private let isTrustingConversation: () -> Bool
+    private let now: () -> Date
     /// The words the last run could not place (set when it ends `.unknown`, cleared otherwise).
     private(set) var lastUnrecognized: String?
     /// The actions the last run parsed (or the resolver produced), for the history label.
     private(set) var lastActions: [RioAction] = []
+    /// The previous command and what it did, so the resolver can follow "do that again".
+    private var previous: (command: String, actions: [String], at: Date)?
 
     init(
         parser: RioActionParsing,
         executor: RioActionExecuting,
         smartResolver: RioSmartResolving? = nil,
+        smartContext: RioSmartContextProviding? = nil,
         observer: RioActionObserving? = nil,
         confirmer: RioConfirming? = nil,
-        isTrustingConversation: @escaping () -> Bool = { RioTrustSetting.isTrusting }
+        isTrustingConversation: @escaping () -> Bool = { RioTrustSetting.isTrusting },
+        now: @escaping () -> Date = Date.init
     ) {
         self.isTrustingConversation = isTrustingConversation
         self.parser = parser
         self.executor = executor
         self.smartResolver = smartResolver
+        self.smartContext = smartContext
         self.observer = observer
         self.confirmer = confirmer
+        self.now = now
     }
 
     /// Runs one spoken command. `progress` receives a line like "Opening Google Chrome" before
     /// each action starts. Never types or pastes anything on its own.
+    ///
+    /// Understanding-first routing: a sure local parse runs straight away; a guess ("open another
+    /// Chrome window") and anything not understood go to the smart resolver with context, and its
+    /// plan is re-planned up to twice when a step fails. With no brain available a guess still runs
+    /// as the parser read it.
     func run(
         _ transcript: String,
         source: RioCommandSource = .actionKey,
@@ -259,21 +301,34 @@ final class RioActionCoordinator {
         lastActions = []
         let text = RioActionTranscript.stripName(from: transcript)
         guard !text.isEmpty else { return .nothing }
+        defer { rememberCommand(text) }
 
-        switch parser.parse(text) {
+        let analysis = parser.analyze(text)
+        switch analysis.parse {
         case .empty:
             return .nothing
         case .actions(let actions):
-            return await execute(actions, source: source, progress: progress)
+            guard !analysis.isConfident, let smartResolver else {
+                return await executeLocal(actions, source: source, progress: progress)
+            }
+            let request = await makeRequest(analysis.resolverText)
+            if case .actions(let plan) = await smartResolver.resolve(request), !plan.isEmpty {
+                return await runPlan(plan, request: request, resolver: smartResolver, source: source, progress: progress)
+            }
+            // Offline, off, too slow or no idea: do what the words most plainly said.
+            return await executeLocal(actions, source: source, progress: progress)
         case .unknown(let unrecognized):
             lastUnrecognized = unrecognized
             guard let smartResolver else { return .unknown }
-            do {
-                let actions = try await smartResolver.resolve(unrecognized)
-                guard !actions.isEmpty else { return .unknown }
-                return await execute(actions, source: source, progress: progress)
-            } catch {
-                return .failed(RioActionText.resolverFailedMessage)
+            let request = await makeRequest(unrecognized)
+            switch await smartResolver.resolve(request) {
+            case .actions(let plan):
+                guard !plan.isEmpty else { return .unknown }
+                return await runPlan(plan, request: request, resolver: smartResolver, source: source, progress: progress)
+            case .unavailable(let message):
+                return await executeLocal([.answer(message)], source: source, progress: progress)
+            case .failed(let message):
+                return .failed(message)
             }
         }
     }
@@ -286,21 +341,105 @@ final class RioActionCoordinator {
         return !isTrustingConversation() && action.conversationNeedsConfirmationWhenUntrusted
     }
 
-    private func execute(
-        _ actions: [RioAction],
-        source: RioCommandSource,
-        progress: @MainActor (String) -> Void
+    // MARK: Context
+
+    private func makeRequest(_ command: String) async -> RioSmartRequest {
+        RioSmartRequest(command: command, context: await currentContext())
+    }
+
+    private func currentContext() async -> RioSmartContext {
+        var context = await smartContext?.currentContext() ?? RioSmartContext()
+        if let previous, now().timeIntervalSince(previous.at) <= RioSmartContextLimits.previousCommandLifetime {
+            context.previousCommand = previous.command
+            context.previousActions = previous.actions
+        }
+        return context
+    }
+
+    private func rememberCommand(_ command: String) {
+        guard !lastActions.isEmpty else { return }
+        let steps = lastActions.prefix(RioSmartContextLimits.maxPreviousActions).map(RioSmartPlanText.describe)
+        previous = (command, Array(steps), now())
+    }
+
+    // MARK: Running
+
+    /// How one pass over a list of steps ended.
+    private enum StepsResult {
+        case finished(summaries: [String])
+        /// Cancelled, refused or confirmed away: the run is over, never re-planned.
+        case stopped(RioActionOutcome)
+        case failed(index: Int, message: String, summaries: [String])
+    }
+
+    /// A local parse: runs as before, first failure ends the run.
+    private func executeLocal(
+        _ actions: [RioAction], source: RioCommandSource, progress: @MainActor (String) -> Void
     ) async -> RioActionOutcome {
-        var summaries: [String] = []
         lastActions = actions
-        for action in actions {
-            progress(RioActionText.working(for: action))
-            if source.refuses(action) {
-                return .failed("I won't do that from your phone. Do it on your Mac.")
+        switch await runSteps(actions, planned: false, source: source, progress: progress) {
+        case .finished(let summaries): return Self.outcome(summaries)
+        case .stopped(let outcome): return outcome
+        case .failed(_, let message, _): return .failed(message)
+        }
+    }
+
+    /// A resolver plan: a failed step is fed back (with what already ran) for a new plan, at most
+    /// `RioSmartRouting.maxReplans` times; steps that already ran are not repeated.
+    private func runPlan(
+        _ plan: [RioAction], request: RioSmartRequest, resolver: RioSmartResolving,
+        source: RioCommandSource, progress: @MainActor (String) -> Void
+    ) async -> RioActionOutcome {
+        var current = plan
+        var attempted: [RioAction] = []
+        var summaries: [String] = []
+        var completed: [String] = []
+        var round = 0
+        while true {
+            let result = await runSteps(current, planned: true, source: source, progress: progress)
+            switch result {
+            case .finished(let done):
+                lastActions = attempted + current
+                return Self.outcome(summaries + done)
+            case .stopped(let outcome):
+                lastActions = attempted + current
+                return outcome
+            case .failed(let index, let message, let done):
+                attempted += current.prefix(index + 1)
+                lastActions = attempted
+                summaries += done
+                completed += current.prefix(index).map(RioSmartPlanText.describe)
+                guard round < RioSmartRouting.maxReplans else { return .failed(RioActionText.couldNotFinish(message)) }
+                round += 1
+                var retry = request
+                retry.context = await currentContext()
+                retry.attempt = RioSmartAttempt(
+                    completed: completed, failedStep: RioSmartPlanText.describe(current[index]), failure: message, round: round
+                )
+                progress("Trying another way")
+                guard case .actions(let next) = await resolver.resolve(retry), !next.isEmpty else {
+                    return .failed(RioActionText.couldNotFinish(message))
+                }
+                current = next
             }
-            if needsConfirmation(action, source: source) {
+        }
+    }
+
+    /// `planned` is true for the resolver's steps (not the owner's own words), where a risky click
+    /// or fill asks first (`RioSmartRouting.plannedStepNeedsConfirmation`).
+    private func runSteps(
+        _ actions: [RioAction], planned: Bool, source: RioCommandSource, progress: @MainActor (String) -> Void
+    ) async -> StepsResult {
+        var summaries: [String] = []
+        for (index, action) in actions.enumerated() {
+            progress(RioActionText.working(for: action))
+            let riskyPlannedStep = planned && RioSmartRouting.plannedStepNeedsConfirmation(action)
+            if source.refuses(action) || (riskyPlannedStep && source == .phone) {
+                return .stopped(.failed("I won't do that from your phone. Do it on your Mac."))
+            }
+            if riskyPlannedStep || needsConfirmation(action, source: source) {
                 // No confirmer means no way to ask, so never run it.
-                guard let confirmer else { return .cancelled }
+                guard let confirmer else { return .stopped(.cancelled) }
                 let confirmed: Bool
                 if source == .conversation, !action.requiresConfirmation,
                    let conversational = confirmer as? RioConversationConfirming {
@@ -308,7 +447,12 @@ final class RioActionCoordinator {
                 } else {
                     confirmed = await confirmer.confirm(action)
                 }
-                guard confirmed else { return .cancelled }
+                guard confirmed else { return .stopped(.cancelled) }
+            }
+            // "Switch to Chrome, then press command N": the keys must land in Chrome.
+            if index > 0, RioSmartRouting.focusesApp(actions[index - 1]), RioSmartRouting.actsOnFrontApp(action),
+               let settling = executor as? RioFocusSettling {
+                await settling.settleFocus()
             }
             await observer?.willExecute(action)
             let result = await executor.execute(action)
@@ -319,11 +463,15 @@ final class RioActionCoordinator {
                 RioFollowUpMemory.shared.record(action)
                 summaries.append(summary)
             case .failed(let message):
-                return .failed(message)
+                return .failed(index: index, message: message, summaries: summaries)
             case .cancelled:
-                return .cancelled
+                return .stopped(.cancelled)
             }
         }
-        return summaries.isEmpty ? .nothing : .succeeded(summaries.joined(separator: ", "))
+        return .finished(summaries: summaries)
+    }
+
+    private static func outcome(_ summaries: [String]) -> RioActionOutcome {
+        summaries.isEmpty ? .nothing : .succeeded(summaries.joined(separator: ", "))
     }
 }

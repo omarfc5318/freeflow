@@ -615,6 +615,26 @@ unaffected (the key itself proves it was the owner).
   re-plan.
   (4) Requests that need looking at the screen escalate to the task agent, generalised beyond
   the browser.
+  BUILT (builder U, 2026-11-03): `RioActionParser.analyze` marks a parse a guess when an app or
+  window target does not resolve (AppNameMatcher over the installed apps); `parse()` is
+  unchanged. The coordinator sends guesses and unknown text to `RioSmartResolver.resolve(request)`
+  with `RioSmartContext` (front app + focused window title via `RioSmartLiveContext`, never for
+  blocked apps or privacy panes, `RioSmartContextPolicy`; running apps <= 30; installed names
+  <= 150; the previous command for 15 min). Plans are up to 6 closed-set steps; `pressKeys` is
+  allowed only through `RioSmartKeyPolicy`, an ALLOWLIST of navigation combos (security review:
+  Cmd-N/T/Shift-T/W/R/F, Cmd-1..9, Cmd-[ ], Cmd-= - 0, Ctrl-Tab, Ctrl-Shift-Tab, Cmd-`, Escape,
+  arrows, Page Up/Down, Home/End; nothing that types, submits, deletes, pastes or quits). The
+  front window title is untrusted: sent only when the command is about "this/the window, tab or
+  page", in a fenced UNTRUSTED block, at most 80 characters; typeText, stopListening and emptyTrash stay local-only. A failed step is
+  re-planned at most twice (`RioSmartAttempt`, done steps never repeat; cancels and phone refusals
+  never re-plan), then "I tried a few ways but couldn't finish that. <reason>." Offline/off/slow,
+  a guess still runs as parsed. The model call races a 6 s timer ("My brain took too long...");
+  optional faster model `rio_smart_resolver_model` (UserDefaults, no UI). After an app switch the
+  coordinator waits for it to be frontmost (<= 1.2 s) before keys/clicks. The task agent works in
+  any app: browser-chrome rules apply only when `RioTaskObservation.isBrowser`; all other safety
+  rules (risky-step confirmation, secure fields, app/origin pinning) are unchanged. Settings
+  disclosure updated. Tests: Tests/RioUnderstandingRoutingTests.swift. Not done: menu-bar items
+  are only clickable when the click walker reaches them (it walks the focused window).
 
 ## Wave 4 (after this build is tested and shipped)
 

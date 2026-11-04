@@ -252,7 +252,9 @@ final class RioTaskRunner {
         if case .confirm(let reason) = RioTaskSafety.risk(
             of: action, targetLabel: target, narration: narration, modelFlagged: flagged, goal: goal,
             resolution: resolution, currentPage: state.pageURL,
-            focusInWebArea: observation.focusedInWebArea, focusIsAddressField: observation.focusedIsAddressField
+            // Outside a browser the app's own content counts as "the page".
+            focusInWebArea: observation.isBrowser ? observation.focusedInWebArea : true,
+            focusIsAddressField: observation.isBrowser && observation.focusedIsAddressField
         ) {
             let detail = context(observation) + description
             guard await confirm(title: reason, detail: detail, state: &state) else { return .cancelled }

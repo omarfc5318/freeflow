@@ -27,6 +27,17 @@ enum RioTaskObservationPolicy {
 
     static let maxFieldValueCharacters = 24
 
+    private static let chromiumBundlePrefixes = [
+        "com.google.chrome", "com.brave.browser", "com.microsoft.edgemac", "company.thebrowser", "com.vivaldi", "com.operasoftware",
+    ]
+    private static let browserBundleIDs: Set<String> = ["com.apple.safari", "com.apple.safaritechnologypreview", "org.mozilla.firefox"]
+
+    /// Whether the front app is a web browser, so the browser-chrome rules apply to it.
+    static func isBrowser(bundleID: String?) -> Bool {
+        guard let id = bundleID?.lowercased() else { return false }
+        return browserBundleIDs.contains(id) || chromiumBundlePrefixes.contains { id.hasPrefix($0) }
+    }
+
     /// The value of a text field as it may appear in the outline: never for a secure or sensitive
     /// field, never anything that looks like a card, password or personal detail, and short.
     static func fieldValue(label: String?, isSecure: Bool, isAddressField: Bool, value: String?) -> String? {

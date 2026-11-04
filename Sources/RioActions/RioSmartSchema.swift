@@ -83,18 +83,20 @@ enum RioSmartDates {
 }
 
 enum RioSmartResponseParser {
-    static let maxActions = 5
+    /// A plan of at most six steps ("switch to Chrome, press command N, ...").
+    static let maxActions = 6
     static let maxBodyCharacters = 2_000
 
-    /// Every action the model may produce: all of `RioAction` except typeText, stopListening,
-    /// pressKeys and emptyTrash.
+    /// Every action the model may produce: all of `RioAction` except typeText, stopListening and
+    /// emptyTrash. pressKeys is allowed since the understanding-first change (owner decision,
+    /// 2026-11-03), but only keys `RioSmartKeyPolicy` permits.
     static let allowedActionNames: [String] = [
         "openApp", "quitApp", "switchToApp", "hideApp", "openURL", "webSearch",
         "volume", "media", "lockScreen", "screenshot", "doNotDisturb", "window",
         "sendMessage", "createReminder", "selectionTask", "replyInConversation", "readAloud", "answer",
         "startTimer", "cancelTimer", "timerStatus", "undoLast", "showHelp",
         "openFile", "revealFile", "calendarAgenda", "joinNextMeeting", "createEvent", "clipboard",
-        "browser", "systemToggle", "brightness", "batteryStatus",
+        "browser", "systemToggle", "brightness", "batteryStatus", "pressKeys",
         // Wave 3 (validated in RioSmartV3Actions).
         "describeScreen", "click", "fillField", "runTask", "remember", "recall", "forget", "draftEmail", "addNote",
         "calculate", "startTranslation", "stopTranslation", "speakLastTranslation",
@@ -250,8 +252,30 @@ enum RioSmartResponseParser {
                   let isOn = boolean(object["isOn"]) else { return nil }
             return .systemToggle(setting, isOn: isOn)
         case "batteryStatus": return .batteryStatus
+        case "pressKeys": return keyPress(object)
         default: return RioSmartV3Actions.action(kind: kind, object: object, now: now, timeZone: timeZone)
         }
+    }
+
+    /// `{"key":"n","modifiers":["command"]}`: one allow-listed key, each modifier at most once, and
+    /// nothing `RioSmartKeyPolicy` refuses (quit, delete, Return, a bare Space, force quit).
+    private static func keyPress(_ object: [String: Any]) -> RioAction? {
+        guard let rawKey = object["key"] as? String else { return nil }
+        let key = rawKey.trimmingCharacters(in: .whitespaces).lowercased()
+        var modifiers: [String] = []
+        if isPresent(object["modifiers"]) {
+            guard let list = object["modifiers"] as? [Any], list.count <= 4 else { return nil }
+            for item in list {
+                guard let name = (item as? String)?.trimmingCharacters(in: .whitespaces).lowercased(),
+                      RioSmartKeyPolicy.modifierNames.contains(name), !modifiers.contains(name) else { return nil }
+                modifiers.append(name)
+            }
+        }
+        let combo = KeyCombo(
+            key: key, command: modifiers.contains("command"), shift: modifiers.contains("shift"),
+            option: modifiers.contains("option"), control: modifiers.contains("control")
+        )
+        return RioSmartKeyPolicy.isAllowed(combo) ? .pressKeys(combo) : nil
     }
 
     private static func volumeChange(_ object: [String: Any], allowMute: Bool) -> VolumeChange? {

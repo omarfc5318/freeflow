@@ -62,11 +62,11 @@ extension RioActionParser {
 
     /// "split screen Chrome and Safari", "put Chrome and Warp side by side", and
     /// "open Chrome and Safari and put them side by side". Two known apps only.
-    func parseSideBySide(_ body: String) -> RioActionParse? {
+    func parseSideBySide(_ body: String) -> RioParseAnalysis? {
         let text = body.trimmingCharacters(in: CharacterSet(charactersIn: " .!?,;"))
         let trailing = #"^(.*?)[\s,]*(?:and\s+|then\s+)?(?:put|place|snap|tile|arrange|lay\s+out|set)\s+(?:them|those|both|the\s+two)\s+(?:up\s+)?(?:side\s+by\s+side|next\s+to\s+each\s+other|in\s+(?:a\s+)?split\s+screen)$"#
         if let groups = RioText.firstMatch(trailing, in: text), let prefix = groups[1], !prefix.isEmpty,
-           case .actions(let actions) = parse(prefix) {
+           case let opened = analyze(prefix), case .actions(let actions) = opened.parse {
             var names: [String] = []
             for action in actions {
                 switch action {
@@ -75,7 +75,8 @@ extension RioActionParser {
                 }
             }
             guard names.count >= 2 else { return nil }
-            return .actions(actions + [Self.sideBySide(names[names.count - 2]), Self.sideBySide(names[names.count - 1], right: true)])
+            let layout = actions + [Self.sideBySide(names[names.count - 2]), Self.sideBySide(names[names.count - 1], right: true)]
+            return RioParseAnalysis(parse: .actions(layout), isConfident: opened.isConfident, resolverText: text)
         }
         let named = [
             #"^(?:(?:put|place|snap|tile|arrange|show|set\s+up)\s+)?(.+?)\s+and\s+(.+?)\s+(?:side\s+by\s+side|next\s+to\s+each\s+other)$"#,
@@ -85,7 +86,9 @@ extension RioActionParser {
         for pattern in named {
             guard let groups = RioText.firstMatch(pattern, in: text), let first = groups[1], let second = groups[2],
                   let left = knownAppName(first), let right = knownAppName(second), left != right else { continue }
-            return .actions([Self.sideBySide(left), Self.sideBySide(right, right: true)])
+            return RioParseAnalysis(
+                parse: .actions([Self.sideBySide(left), Self.sideBySide(right, right: true)]), isConfident: true, resolverText: text
+            )
         }
         return nil
     }
@@ -103,11 +106,14 @@ extension RioActionParser {
     /// `rawApp` is the words between the verb and the placement; nil result means "not understood".
     private func windowClause(_ rawApp: String?, _ placement: WindowPlacement, verb: String) -> ParsedClause? {
         guard let name = windowAppName(rawApp) else { return nil }
-        return ParsedClause(action: .window(WindowCommand(appName: name.spoken, placement: placement)), verb: verb)
+        return ParsedClause(
+            action: .window(WindowCommand(appName: name.spoken, placement: placement)), verb: verb, isConfident: name.isKnown
+        )
     }
 
-    /// Outer nil rejects the phrase; `spoken == nil` means the frontmost window.
-    private func windowAppName(_ raw: String?) -> (spoken: String?, accepted: Bool)? {
+    /// Outer nil rejects the phrase; `spoken == nil` means the frontmost window. `isKnown` is
+    /// false when the name is not an installed app (only a guess).
+    private func windowAppName(_ raw: String?) -> (spoken: String?, isKnown: Bool)? {
         var text = (raw ?? "").trimmingCharacters(in: .whitespaces)
         text = RioText.replacing(#"^(?:the|my)\s+"#, with: "", in: text)
         text = RioText.replacing(#"\s+(?:window|app|application)$"#, with: "", in: text)
@@ -120,7 +126,8 @@ extension RioActionParser {
             return nil
         }
         guard Self.isPlausibleTarget(text) else { return nil }
-        return (appDisplayName(for: text), true)
+        if let known = AppNameMatcher.bestMatch(for: text, in: installedApps)?.name { return (known, true) }
+        return (text, false)
     }
 
     // MARK: App verbs
@@ -182,10 +189,6 @@ extension RioActionParser {
         return text.trimmingCharacters(in: .whitespaces)
     }
 
-    private func appDisplayName(for spoken: String) -> String {
-        AppNameMatcher.bestMatch(for: spoken, in: installedApps)?.name ?? spoken
-    }
-
     /// open/launch/switch: an app wins over a website unless the app match is only a loose one.
     private func openLike(_ rawTarget: String, verb: String, requireKnown: Bool, asSwitch: Bool) -> ParsedClause? {
         let target = cleanTarget(rawTarget)
@@ -207,8 +210,9 @@ extension RioActionParser {
         if requireKnown { return nil }
         // Not installed, not a known site: only a name that clearly names an app ("Photoshop",
         // "the Photoshop app") gets "I couldn't find it". The rest goes to the smart resolver.
+        // Either way it is a guess, so the smart resolver gets the first say.
         guard Self.looksLikeAppName(raw: rawTarget, target: target) else { return nil }
-        return ParsedClause(action: make(target), verb: verbText)
+        return ParsedClause(action: make(target), verb: verbText, isConfident: false)
     }
 
     /// A capitalised word ("Photoshop") or an explicit "app" suffix.
@@ -225,6 +229,6 @@ extension RioActionParser {
             return ParsedClause(action: build(match.name), verb: verb.lowercased())
         }
         if requireKnown || !Self.looksLikeAppName(raw: rawTarget, target: target) { return nil }
-        return ParsedClause(action: build(target), verb: verb.lowercased())
+        return ParsedClause(action: build(target), verb: verb.lowercased(), isConfident: false)
     }
 }

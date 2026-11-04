@@ -24,6 +24,9 @@ struct RioTaskObservation: Equatable {
     var processID: Int32?
     /// A window Rio must not read (password manager, privacy pane): nothing was collected.
     var isRestricted = false
+    /// The front app is a web browser. The browser-chrome rules (no typing into the address bar
+    /// or toolbar) apply only then; in any other app its own fields are the content.
+    var isBrowser = true
 }
 
 struct RioTaskHistoryEntry: Equatable {
@@ -39,7 +42,7 @@ enum RioTaskPrompt {
 
     static let system = """
     You are Rio, a careful assistant that completes a job on the user's Mac one small step at a time, \
-    mostly in the web browser. Each turn you get the user's GOAL, your recent steps, and what is on screen. \
+    in any app or the web browser. Each turn you get the user's GOAL, your recent steps, and what is on screen. \
     You reply with exactly ONE next step as a single JSON object and nothing else.
 
     Steps (use only these):
@@ -103,7 +106,7 @@ enum RioTaskPrompt {
             let label = sanitizePageText(focused.label ?? "unlabelled", maxLength: 60)
             lines.append("Focused field: \(label)\(focused.isSecure ? " (private, do not type)" : "")")
         }
-        if observation.focusedIsAddressField || !observation.focusedInWebArea {
+        if observation.isBrowser, observation.focusedIsAddressField || !observation.focusedInWebArea {
             lines.append("Keyboard focus: the browser's own toolbar, not the page (do not type or press Return)")
         }
         lines.append("Controls:")

@@ -152,6 +152,8 @@ enum RioTaskSafety {
     static func chromeHandBackReason(
         for action: RioAction, observation: RioTaskObservation, target: RioTaskTargetResolution
     ) -> String? {
+        // Only a browser has chrome around its content; in any other app the fields are the app's own.
+        guard observation.isBrowser else { return nil }
         let chrome = "That's part of the browser, not the page, so please do that one yourself."
         switch action {
         case .fillField:
