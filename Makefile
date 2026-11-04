@@ -22,6 +22,14 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioAutomationPhrases.swift \
 	Sources/RioActions/RioFindPhrases.swift \
 	Sources/RioActions/RioOutsidePhrases.swift \
+	Sources/RioActions/RioOutsideHTTP.swift \
+	Sources/RioActions/RioWeatherCore.swift \
+	Sources/RioActions/RioNewsCore.swift \
+	Sources/RioActions/RioSpotifyCore.swift \
+	Sources/RioActions/RioNotionCore.swift \
+	Sources/RioActions/RioCanvasCore.swift \
+	Sources/RioActions/RioPhoneCore.swift \
+	Sources/RioActions/RioChatDB.swift \
 	Sources/RioActions/RioMeetingPhrases.swift \
 	Sources/RioActions/RioTranslatorPhrases.swift \
 	Sources/RioActions/RioTranslatorLanguages.swift \
