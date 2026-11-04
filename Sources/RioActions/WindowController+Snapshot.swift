@@ -65,7 +65,8 @@ extension WindowController {
 
     private func snapshotApp(named spoken: String?) -> NSRunningApplication? {
         guard let spoken, !spoken.trimmingCharacters(in: .whitespaces).isEmpty else {
-            return NSWorkspace.shared.frontmostApplication
+            // The same app `apply` will move, so undo puts back the window that really moved.
+            return Self.recentTarget() ?? NSWorkspace.shared.frontmostApplication
         }
         let candidates = NSWorkspace.shared.runningApplications.filter {
             $0.activationPolicy == .regular && $0.localizedName != nil

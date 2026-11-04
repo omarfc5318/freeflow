@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import CoreServices
 import Foundation
 
 /// Thin wrappers over the system calls Rio Actions needs. Nothing here takes free-form user
@@ -25,7 +26,8 @@ enum MacControls {
         runScript(muted ? RioVolume.muteScript : RioVolume.unmuteScript) != nil
     }
 
-    /// Only ever called with the fixed strings and the Int-built script from `RioVolume`.
+    /// Only ever called with the fixed strings, the Int-built script from `RioVolume` and the
+    /// fixed player scripts from `RioMediaPlan`.
     private static func runScript(_ source: String) -> NSAppleEventDescriptor? {
         var error: NSDictionary?
         guard let script = NSAppleScript(source: source) else { return nil }
@@ -56,6 +58,28 @@ enum MacControls {
             event?.flags = [.maskCommand, .maskControl]
             event?.post(tap: .cghidEventTap)
         }
+    }
+
+    // MARK: Playback state (Spotify and Music only, never prompting)
+
+    /// Asks only players that are running and that Rio is already allowed to automate: an
+    /// Automation permission prompt is never raised from here. The scripts are fixed strings.
+    static func playbackState() -> RioPlaybackState {
+        var answers: [String?] = []
+        for bundleIdentifier in RioMediaPlan.players {
+            guard !NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).isEmpty,
+                  mayAutomate(bundleIdentifier),
+                  let source = RioMediaPlan.stateScript(bundleIdentifier: bundleIdentifier) else { continue }
+            answers.append(runScript(source)?.stringValue)
+        }
+        return RioPlaybackState.combine(answers)
+    }
+
+    /// True only when macOS already allows Rio to send Apple Events to the app. Asks nobody.
+    private static func mayAutomate(_ bundleIdentifier: String) -> Bool {
+        let target = NSAppleEventDescriptor(bundleIdentifier: bundleIdentifier)
+        guard let desc = target.aeDesc else { return false }
+        return AEDeterminePermissionToAutomateTarget(desc, typeWildCard, typeWildCard, false) == noErr
     }
 
     // MARK: Screenshots and Shortcuts (fixed executables, fixed arguments)

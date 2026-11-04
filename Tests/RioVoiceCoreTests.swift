@@ -97,7 +97,7 @@ enum RioVoiceCoreTests {
     private static func testUndoAndStopPhrases() {
         let undo = [
             "undo", "undo that", "undo it", "Undo the last thing", "undo the last action", "put it back",
-            "put that back", "never mind", "nevermind", "revert that", "take that back", "oops undo",
+            "put that back", "revert that", "take that back", "oops undo",
             "undo the last command", "reverse that",
         ]
         for text in undo {
@@ -108,6 +108,8 @@ enum RioVoiceCoreTests {
         let notUndo = [
             "undo typing", "undo that typing", "press command z", "undo my typing", "undo the typing",
             "never mind the timer", "undo send", "undo changes in Word", "go back",
+            // "Never mind" means do nothing (the coordinator drops it), never undo (F13/K20).
+            "never mind", "nevermind",
         ]
         for text in notUndo {
             TestSupport.expect(

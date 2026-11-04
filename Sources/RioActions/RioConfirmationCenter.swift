@@ -11,6 +11,10 @@ final class RioConfirmationCenter: RioConfirming, RioConversationConfirming {
     private var panel: RioConfirmationPanel?
     private var continuation: CheckedContinuation<Bool, Never>?
     private var timeout: Task<Void, Never>?
+    /// The last action the owner approved, so a handler that would ask again for the very same
+    /// action (Claude Code send in auto-accept mode) can see it was just approved.
+    private var lastApproval: (action: RioAction, at: Date)?
+    static let approvalReuseWindow: TimeInterval = 15
 
     /// True while a question is on screen.
     var isShowing: Bool { panel != nil }
@@ -19,7 +23,7 @@ final class RioConfirmationCenter: RioConfirming, RioConversationConfirming {
         // Only one question at a time; a newer one cancels the older.
         finish(false)
         guard let content = content(for: action) else { return false }
-        return await ask(content)
+        return noteApproval(of: action, await ask(content))
     }
 
     /// Conversation mode with "Trust conversation mode" off (or any translator start from it):
@@ -28,7 +32,19 @@ final class RioConfirmationCenter: RioConfirming, RioConversationConfirming {
         finish(false)
         let content = RioConfirmationCenter.conversationContent(for: action)
         RioVoice.shared.speak("\(RioActionText.working(for: action)). Press Return to confirm, or say no.")
-        return await ask(content)
+        return noteApproval(of: action, await ask(content))
+    }
+
+    /// True once when `action` was approved in the last few seconds; the approval is used up.
+    func consumeRecentApproval(of action: RioAction, now: Date = Date()) -> Bool {
+        guard let approval = lastApproval else { return false }
+        lastApproval = nil
+        return approval.action == action && now.timeIntervalSince(approval.at) <= Self.approvalReuseWindow
+    }
+
+    private func noteApproval(of action: RioAction, _ approved: Bool) -> Bool {
+        lastApproval = approved ? (action, Date()) : nil
+        return approved
     }
 
     /// "Rio, no" / "Rio, cancel" while a question is up declines it. Speech never approves:
@@ -41,28 +57,7 @@ final class RioConfirmationCenter: RioConfirming, RioConversationConfirming {
     }
 
     static func conversationContent(for action: RioAction) -> RioConfirmationContent {
-        let detail: String
-        switch action {
-        case .typeText(let text): detail = text
-        case .fillField(let label, let text): detail = "\(label): \(text)"
-        case .click(let label, _): detail = "Click \(label)"
-        case .runTask(let goal): detail = goal
-        case .pressKeys(let combo): detail = "Press \(combo.key)"
-        case .quitApp(let name): detail = "Quit \(name)"
-        case .startTranslation:
-            detail = "Your microphone's sound will be sent to your transcription provider until you stop it."
-        // Show exactly what will be sent or set up, never a generic line (security review).
-        case .claudeCode(.send(let text)): detail = "Send to Claude Code: \(text)"
-        case .scheduleCommand(let command, let when): detail = "Schedule \"\(command)\" \(when)"
-        case .addTrigger(let command, let trigger): detail = "\(trigger), \(command)"
-        case .runMacro(let name): detail = "Run the macro \"\(name)\""
-        case .recordMacro(let name): detail = "Start recording a macro called \"\(name)\""
-        case .removeAutomation(let name): detail = "Remove \"\(name)\""
-        default: detail = RioActionText.working(for: action)
-        }
-        return RioConfirmationContent(
-            title: "Run this from conversation mode?", detail: detail, confirmLabel: "Run it"
-        )
+        RioConfirmationContent.conversation(for: action)
     }
 
     private func ask(_ content: RioConfirmationContent) async -> Bool {

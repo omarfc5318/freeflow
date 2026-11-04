@@ -16,7 +16,9 @@ enum RioVoicePhrases {
 
     private static let undoPatterns = [
         #"^(?:(?:oops|ok|okay|sorry)\s+)?(?:undo|revert|reverse)(?:\s+(?:that|it|this|the last (?:thing|action|one|command)))?$"#,
-        #"^(?:put\s+(?:it|that|this)\s+back|take\s+(?:it|that)\s+back|never\s?mind)$"#,
+        // Never "never mind": that means "do nothing", not "reverse what you just did" (the
+        // coordinator drops it, see RioActionTranscript.isDismissal).
+        #"^(?:put\s+(?:it|that|this)\s+back|take\s+(?:it|that)\s+back)$"#,
     ]
 
     private static let helpPatterns = [

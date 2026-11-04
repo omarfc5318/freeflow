@@ -15,7 +15,7 @@ enum RioContextMemoryPhrases {
     static func parse(raw: String, simplified: String, context: RioFollowUpContext?, now: Date) -> RioAction? {
         let text = simplified.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return nil }
-        return history(text) ?? RioFollowUpRewriter.rewrite(text, context: context)
+        return history(text) ?? RioFollowUpRewriter.rewrite(text, context: context, now: now)
     }
 
     // MARK: History

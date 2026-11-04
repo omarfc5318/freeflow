@@ -25,6 +25,8 @@ struct RioUndoSnapshot: Equatable {
     var timerRemaining: Int?
     var timerLabel: String?
     var created: RioCreatedItem?
+    /// Whether Spotify or Music was playing before a play or pause (nil when unknown).
+    var wasPlaying: Bool?
 }
 
 enum RioUndoInverse: Equatable {
@@ -98,6 +100,10 @@ enum RioUndoPlan {
             case .playPause: return .reversible(.actions([.media(.playPause)]))
             case .next: return .reversible(.actions([.media(.previous)]))
             case .previous: return .reversible(.actions([.media(.next)]))
+            // A pause that found nothing playing (or a play that found music playing) changed
+            // nothing, so it must not hide an earlier action.
+            case .pause: return snapshot.wasPlaying == false ? .ignore : .reversible(.actions([.media(.play)]))
+            case .play: return snapshot.wasPlaying == true ? .ignore : .reversible(.actions([.media(.pause)]))
             }
         case .doNotDisturb(let isOn):
             return .reversible(.actions([.doNotDisturb(isOn: !isOn)]))
@@ -190,6 +196,8 @@ enum RioUndoPlan {
         case .brightness(.set(let level)): return "brightness back to \(level) percent"
         case .cancelTimer: return "timer cancelled"
         case .startTimer: return "timer is back"
+        case .media(.pause): return "paused again"
+        case .media(.play): return "playing again"
         case .media: return "flipped it back"
         case .doNotDisturb(let isOn): return "Do Not Disturb back \(isOn ? "on" : "off")"
         case .systemToggle(let setting, let isOn): return "\(settingName(setting)) back \(isOn ? "on" : "off")"

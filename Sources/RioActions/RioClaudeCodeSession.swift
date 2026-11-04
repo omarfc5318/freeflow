@@ -26,6 +26,8 @@ final class RioClaudeCodeSession {
         static let standingOnly = "Claude is only offering a standing permission here, so please answer it yourself."
         static let noDeny = "I couldn't find a No option, so please answer it yourself."
         static let promptChanged = "That prompt changed, so I didn't approve it. Ask again."
+        static let tooLong = "That request is too long for me to show you in full, so please approve it in the terminal yourself."
+        static let notClaudePane = "The pane in front isn't Claude Code, so I didn't type anything."
     }
 
     /// How long a confirmed prompt may wait before the approval is refused.
@@ -49,6 +51,13 @@ final class RioClaudeCodeSession {
             confirmed = nil
             return nil
         }
+        // Cut short, the panel can't show the whole request, so it can't be approved from here.
+        guard prompt.isFullyShown else {
+            confirmed = nil
+            return RioConfirmationContent(
+                title: "Too long to show in full. Approve it in the terminal.", detail: prompt.detail, confirmLabel: "OK"
+            )
+        }
         confirmed = (prompt.fingerprint, Date())
         return RioConfirmationContent(title: "Approve Claude Code's request?", detail: prompt.detail, confirmLabel: "Approve")
     }
@@ -63,14 +72,22 @@ final class RioClaudeCodeSession {
         if RioClaudeScreen.permissionPrompt(in: found.candidate.text) != nil {
             return .failed(message: Message.waitingForPermission)
         }
-        // Auto-accept / bypass mode: Claude Code may act without asking, so the owner confirms.
-        if RioClaudeScreen.isAutoAcceptMode(found.candidate.text) {
+        // Auto-accept / bypass mode: Claude Code may act without asking, so the owner confirms,
+        // unless conversation mode's panel approved this very send a moment ago.
+        if RioClaudeScreen.isAutoAcceptMode(found.candidate.text),
+           !RioConfirmationCenter.shared.consumeRecentApproval(of: .claudeCode(.send(text))) {
             guard await RioConfirmationCenter.shared.confirm(.claudeCode(.send(prompt))) else { return .cancelled }
         }
         guard await focus(found) else { return .failed(message: Message.couldntFocus) }
         let fresh = Self.visibleText(of: found.window)
         guard RioClaudeScreen.looksLikeClaudeCode(fresh), RioClaudeScreen.permissionPrompt(in: fresh) == nil else {
             return .failed(message: Message.changed)
+        }
+        // The paste lands in the focused pane, so that pane itself must be Claude Code.
+        guard RioClaudePaneCheck.allowsSend(
+            focusedText: Self.focusedPaneText(of: found.app), windowText: fresh, paneCount: Self.paneCount(of: found.window)
+        ) else {
+            return .failed(message: Message.notClaudePane)
         }
         guard await RioAX.paste(prompt, into: found.app), isFrontmost(found.app), press("return") else {
             return .failed(message: Message.changed)
@@ -88,6 +105,10 @@ final class RioClaudeCodeSession {
             return .failed(message: approve ? Message.standingOnly : Message.noDeny)
         }
         if approve {
+            guard prompt.isFullyShown else {
+                confirmed = nil
+                return .failed(message: Message.tooLong)
+            }
             // Fails closed: without the owner's confirmation of this exact prompt, nothing is pressed.
             let ok = confirmed.map {
                 $0.fingerprint == prompt.fingerprint && Date().timeIntervalSince($0.date) < Self.confirmationLifetime
@@ -159,6 +180,31 @@ final class RioClaudeCodeSession {
         }
         walk(window, depth: 0)
         return parts.joined(separator: "\n").components(separatedBy: .newlines).suffix(screenLines).joined(separator: "\n")
+    }
+
+    /// The focused element's own text (the pane that will receive the paste), last screenful only.
+    private static func focusedPaneText(of app: NSRunningApplication) -> String? {
+        guard let element = RioAX.focusedElement(of: app),
+              RioAX.string(element, kAXSubroleAttribute as String) != "AXSecureTextField",
+              let value = RioAX.string(element, kAXValueAttribute as String) else { return nil }
+        return value.components(separatedBy: .newlines).suffix(screenLines).joined(separator: "\n")
+    }
+
+    /// How many terminal text areas (panes) the window holds.
+    private static func paneCount(of window: AXUIElement) -> Int {
+        var count = 0
+        var budget = 300
+        func walk(_ element: AXUIElement, depth: Int) {
+            guard budget > 0, depth < 10 else { return }
+            budget -= 1
+            if RioAX.role(element) == "AXTextArea" {
+                count += 1
+                return
+            }
+            for child in RioAX.children(element) { walk(child, depth: depth + 1) }
+        }
+        walk(window, depth: 0)
+        return count
     }
 
     private func focus(_ found: Found) async -> Bool {

@@ -12,7 +12,7 @@ struct RioPhoneSettingsSection: View {
                 .font(.headline)
             Toggle("Let me text Rio from my iPhone", isOn: $enabled)
                 .onChange(of: enabled) { _ in texting.applySettings() }
-            Text("Off by default. When on, Rio looks at new messages in the Messages database on this Mac (read-only, locally). It acts only on a text you send to yourself that starts with \"Rio\", like \"Rio what's due on Canvas\". It ignores everyone else, groups, and your texts to other people, and it replies only to your own number or email. Anything that needs a confirmation on this Mac, like sending a message or quitting an app, is refused from your phone. Nothing is stored or sent anywhere.")
+            Text("Off by default. When on, Rio looks at new messages in the Messages database on this Mac (read-only, locally). It acts only on a text you send to yourself that starts with \"Rio\", like \"Rio what's due on Canvas\". It ignores everyone else, groups, and your texts to other people, and it replies only to your own number or email. Anything that needs a confirmation on this Mac, like sending a message or quitting an app, is refused from your phone, and so is anything that would read your screen, selection, clipboard, history, memories or a call back to you. Rio's replies are ordinary iMessages: they stay in Messages and sync through iCloud to your devices like any other message.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
