@@ -33,6 +33,14 @@ struct RioClaudePrompt: Equatable {
 
 /// Reads Claude Code's terminal UI from plain text. Pure.
 enum RioClaudeScreen {
+    /// Claude Code is auto-accepting edits or bypassing permissions, so a prompt may make it run
+    /// commands without asking: Rio confirms before sending.
+    static func isAutoAcceptMode(_ screen: String) -> Bool {
+        let tail = screen.suffix(2000).lowercased()
+        return tail.contains("bypass permissions on") || tail.contains("accept edits on")
+            || tail.contains("auto-accept edits on")
+    }
+
     private static let boxCharacters = CharacterSet(charactersIn: "│┃╭╮╰╯─━┌┐└┘├┤┬┴┼═║╔╗╚╝")
     private static let glyphStarts: [Character] = ["⏺", "✻", "⎿", "✳", "●", ">"]
     private static let standingPhrases = [

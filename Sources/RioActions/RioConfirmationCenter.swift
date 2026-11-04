@@ -75,6 +75,12 @@ final class RioConfirmationCenter: RioConfirming, RioConversationConfirming {
         // Code permission prompt being approved).
         if case .organizeDownloads = action { return RioDownloadsOrganizer.shared.confirmationContent() }
         if case .claudeCode(.approve) = action { return RioClaudeCodeSession.shared.confirmationContent() }
+        if case .claudeCode(.send(let text)) = action {
+            return RioConfirmationContent(
+                title: "Send this to Claude Code? It may run commands without asking.",
+                detail: text, confirmLabel: "Send"
+            )
+        }
         var recipient: String?
         if case .sendMessage(let to, _) = action { recipient = RioContactsLookup.resolvedName(spoken: to) }
         let appName = RioMessagingApps.info(for: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)?.name

@@ -63,6 +63,10 @@ final class RioClaudeCodeSession {
         if RioClaudeScreen.permissionPrompt(in: found.candidate.text) != nil {
             return .failed(message: Message.waitingForPermission)
         }
+        // Auto-accept / bypass mode: Claude Code may act without asking, so the owner confirms.
+        if RioClaudeScreen.isAutoAcceptMode(found.candidate.text) {
+            guard await RioConfirmationCenter.shared.confirm(.claudeCode(.send(prompt))) else { return .cancelled }
+        }
         guard await focus(found) else { return .failed(message: Message.couldntFocus) }
         let fresh = Self.visibleText(of: found.window)
         guard RioClaudeScreen.looksLikeClaudeCode(fresh), RioClaudeScreen.permissionPrompt(in: fresh) == nil else {

@@ -65,6 +65,13 @@ enum RioCommandSource: Equatable {
 
     /// Whether this source refuses `action` outright.
     func refuses(_ action: RioAction) -> Bool {
+        // Claude Code can run commands: an automation never drives or approves it.
+        if self == .automation, case .claudeCode(let command) = action {
+            switch command {
+            case .send, .approve: return true
+            case .deny, .status: return false
+            }
+        }
         guard self == .phone else { return false }
         return action.requiresConfirmation || action.conversationAlwaysNeedsConfirmation
             || action.conversationNeedsConfirmationWhenUntrusted
@@ -102,6 +109,10 @@ extension RioAction {
         // untrusted channel would launder that trust: always ask in conversation mode, and (via
         // `RioCommandSource.refuses`) never from the phone.
         case .scheduleCommand, .addTrigger, .recordMacro, .runMacro, .removeAutomation:
+            return true
+        // "Tell Claude to …" drives a tool-capable agent (security review): always ask here, and
+        // never from the phone.
+        case .claudeCode(.send):
             return true
         default:
             return false

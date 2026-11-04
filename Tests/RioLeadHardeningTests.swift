@@ -13,6 +13,21 @@ enum RioLeadHardeningTests {
         automationsCantBeLaundered()
         plannedClicksResolveBeforeDeciding()
         addressBarGuardFailsClosed()
+        claudeCodeSendIsGuarded()
+    }
+
+    /// "Tell Claude to …" drives a tool-capable agent: never from the phone or an automation,
+    /// always confirmed in conversation mode, and confirmed when Claude Code auto-accepts edits.
+    private static func claudeCodeSendIsGuarded() {
+        let send = RioAction.claudeCode(.send("run the tests"))
+        TestSupport.expect(RioCommandSource.phone.refuses(send), "phone can't drive Claude Code")
+        TestSupport.expect(RioCommandSource.automation.refuses(send), "automations can't drive Claude Code")
+        TestSupport.expect(RioCommandSource.automation.refuses(.claudeCode(.approve)), "automations can't approve")
+        TestSupport.expect(send.conversationAlwaysNeedsConfirmation, "conversation mode always asks")
+        TestSupport.expect(!RioCommandSource.actionKey.refuses(send), "the action key may")
+        TestSupport.expect(RioClaudeScreen.isAutoAcceptMode("…\n⏵⏵ bypass permissions on (shift+tab to cycle)"), "bypass mode")
+        TestSupport.expect(RioClaudeScreen.isAutoAcceptMode("⏵⏵ accept edits on (shift+tab to cycle)"), "accept-edits mode")
+        TestSupport.expect(!RioClaudeScreen.isAutoAcceptMode("? for shortcuts"), "normal mode")
     }
 
     /// A click or fill the AI planned is judged on the element it really resolves to.
