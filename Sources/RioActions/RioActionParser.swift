@@ -28,6 +28,8 @@ struct RioActionParser {
             RioParseAnalysis(parse: parse, isConfident: true, resolverText: unknownText(body, lastWasGreedy: false))
         }
         guard !body.isEmpty else { return sure(.empty) }
+        // "open Chrome... actually never mind" takes the whole thing back.
+        if Self.cancelsItself(body) { return sure(.empty) }
         // Remember, notes and maths keep "and", "plus" and commas: claim the whole sentence first.
         // Recall is not here: "what's my next class" must reach the calendar parser first.
         if let whole = RioPersonalPhrases.wholeUtterance(body) { return sure(.actions([whole])) }
@@ -35,39 +37,71 @@ struct RioActionParser {
         if let task = RioTaskPhrases.wholeUtterance(body) { return sure(.actions([task])) }
         if let whole = wholeSentence(body) { return sure(.actions(whole)) }
 
-        var clauses = Self.splitClauses(Self.normalizingKeyCombos(body))
-        if let last = clauses.last, !Self.startsGreedyCommand(last) {
-            let trimmed = Self.stripTrailingFiller(last)
-            if trimmed.isEmpty { clauses.removeLast() } else { clauses[clauses.count - 1] = trimmed }
+        var parts = Self.splitClauseParts(Self.normalizingKeyCombos(body))
+        if let last = parts.last, !Self.startsGreedyCommand(last.text) {
+            let trimmed = Self.stripTrailingFiller(last.text)
+            if trimmed.isEmpty { parts.removeLast() } else { parts[parts.count - 1].text = trimmed }
         }
-        guard !clauses.isEmpty else { return sure(.empty) }
+        // "open Chrome, thanks Rio, quit Xcode": a filler clause in the middle is not a command.
+        parts = parts.filter { Self.startsGreedyCommand($0.text) || !Self.stripTrailingFiller($0.text).isEmpty }
+        guard !parts.isEmpty else { return sure(.empty) }
 
-        let resolverText = unknownText(body, lastWasGreedy: clauses.last.map(Self.startsGreedyCommand) ?? false)
-        var actions: [RioAction] = []
-        var isConfident = true
-        var inheritedVerb: String?
-        var lastApp: String?
-        for clause in clauses {
-            guard let parsed = parseClause(clause, inheritedVerb: inheritedVerb) else {
+        let resolverText = unknownText(body, lastWasGreedy: parts.last.map { Self.startsGreedyCommand($0.text) } ?? false)
+        var state = ClauseState()
+        for part in parts {
+            let before = part.isCorrection ? state.undoingLast() : state
+            guard let parsed = parseClause(part.text, state: before) else {
                 return RioParseAnalysis(parse: .unknown(resolverText), isConfident: false, resolverText: resolverText)
             }
-            let action = Self.targeting(parsed.action, app: lastApp)
-            actions.append(action)
-            actions.append(contentsOf: parsed.more)
-            isConfident = isConfident && parsed.isConfident
-            inheritedVerb = parsed.verb
-            switch action {
-            case .openApp(let name), .switchToApp(let name): lastApp = name
-            case .window: break
-            default: lastApp = nil
-            }
+            state = before.adding(parsed)
         }
-        return RioParseAnalysis(parse: .actions(Self.mergingSiteSearches(actions)), isConfident: isConfident, resolverText: resolverText)
+        return RioParseAnalysis(parse: .actions(Self.mergingSiteSearches(state.actions)), isConfident: state.isConfident, resolverText: resolverText)
+    }
+
+    /// What the clauses so far have done. A self-correction ("open Chrome, I mean Safari")
+    /// undoes the last clause and parses the new one in its place.
+    struct ClauseState {
+        var actions: [RioAction] = []
+        var isConfident = true
+        /// The verb a following verb-less clause may reuse ("open Chrome and Spotify").
+        var inheritedVerb: String?
+        /// The app "it" means in a later clause ("open Chrome and put it on the left").
+        var lastApp: String?
+        /// True once a clause opened an app, a site or a tab ("open Chrome, new tab, github.com").
+        var hasOpened = false
+        private var previous: [ClauseState] = []
+
+        /// The state before the last clause, keeping that clause's verb: "open Chrome, I mean
+        /// Safari" opens Safari instead.
+        func undoingLast() -> ClauseState {
+            guard var before = previous.last else { return self }
+            before.inheritedVerb = inheritedVerb
+            return before
+        }
+
+        func adding(_ parsed: ParsedClause) -> ClauseState {
+            var next = self
+            next.previous = previous + [self]
+            let action = RioActionParser.targeting(parsed.action, app: lastApp)
+            next.actions = actions + [action] + parsed.more
+            next.isConfident = isConfident && parsed.isConfident
+            next.inheritedVerb = parsed.verb
+            switch action {
+            case .openApp(let name), .switchToApp(let name): next.lastApp = name
+            case .window(let command): next.lastApp = command.appName ?? lastApp
+            default: next.lastApp = nil
+            }
+            switch action {
+            case .openApp, .switchToApp, .openURL, .browser(.newTab): next.hasOpened = true
+            default: break
+            }
+            return next
+        }
     }
 
     /// "open Chrome and put it on the left": "it" is Chrome, not whatever window is in front
     /// while Chrome is still launching.
-    private static func targeting(_ action: RioAction, app: String?) -> RioAction {
+    static func targeting(_ action: RioAction, app: String?) -> RioAction {
         guard let app, case .window(let command) = action, command.appName == nil else { return action }
         return .window(WindowCommand(appName: app, placement: command.placement))
     }
@@ -92,10 +126,13 @@ struct RioActionParser {
     /// prompts are only taken here when the sentence would otherwise be split.
     private func wholeSentence(_ body: String) -> [RioAction]? {
         let simple = RioText.simplify(body)
-        if Self.isStopListening(simple) { return [.stopListening] }
+        // While "watch me" records, "I'm done" ends the recording, not the conversation.
         if isRecordingMacro, Self.isBareMacroStop(simple) { return [.stopRecordingMacro] }
+        if Self.isStopListening(simple, wholeSentence: true) { return [.stopListening] }
         let claude = Self.normalizingClaude(body)
-        if RioText.matches(#"^(?:please\s+)?(?:tell|ask)\s+claude\b"#, claude),
+        // "tell Claude, run the tests", "Claude: add a dark mode toggle" (a comma or colon after
+        // the name, so a sentence that merely starts with "Claude" is not taken).
+        if RioText.matches(#"^(?:please\s+)?(?:(?:tell|ask)\s+claude\b|claude(?:\s+code)?\s*[,:])"#, claude),
            let action = RioMeetingPhrases.parse(raw: claude, simplified: RioText.simplify(claude)) {
             return [action]
         }
@@ -107,8 +144,21 @@ struct RioActionParser {
     }
 
     /// Whisper hears "Claude" as "cloud" ("tell cloud to run the tests").
+    /// "tell the cloud to push the branch", "ask clawed what it's doing".
     static func normalizingClaude(_ text: String) -> String {
-        RioText.replacing(#"^((?:please\s+)?(?:tell|ask))\s+(?:cloud|clod|claud|clawed|cloude)\b"#, with: "$1 Claude", in: text)
+        RioText.replacing(
+            #"^((?:please\s+)?(?:tell|ask))\s+(?:the\s+(?:claude|cloud|clod|claud|clawed|cloude)|cloud|clod|claud|clawed|cloude)\b"#,
+            with: "$1 Claude", in: text
+        )
+    }
+
+    /// A trailing "never mind" / "forget it" after a command cancels the whole utterance. In a
+    /// message body it needs a correction word too ("text Ali saying hi, actually never mind").
+    static func cancelsItself(_ body: String) -> Bool {
+        let cancel = #"(?:never\s?mind|forget\s+(?:it|that|about\s+it)|scratch\s+that|cancel\s+that)[\s.!]*$"#
+        let marked = "\\S[\\s,.;!?]*\\b(?:actually|wait|no|oh|sorry)[\\s,.!]+\(cancel)"
+        if startsGreedyCommand(body) { return RioText.matches("[,.;!?]\\s*(?:actually|wait|no|oh|sorry)[\\s,.!]+\(cancel)", body) }
+        return RioText.matches(marked, body) || RioText.matches("\\S\\s*[,.;!?]+\\s*\(cancel)", body)
     }
 
     /// While "watch me" is recording: "stop recording", "I'm done", "that's it".
@@ -147,10 +197,25 @@ struct RioActionParser {
         var more: [RioAction] = []
     }
 
-    private func parseClause(_ raw: String, inheritedVerb: String?) -> ParsedClause? {
+    private func parseClause(_ raw: String, state: ClauseState) -> ParsedClause? {
+        if let app = state.lastApp, let pronoun = Self.pronounAppVerb(raw, app: app) { return pronoun }
         if let direct = parseDirect(raw) { return direct }
-        guard let verb = inheritedVerb else { return nil }
-        return parseInherited(verb: verb, rest: RioText.simplify(raw))
+        let rest = RioText.simplify(raw)
+        guard let verb = state.inheritedVerb else {
+            // "open Chrome, new tab, github.com": a bare site after something was opened, or a
+            // spoken domain on its own, is opened too.
+            guard state.hasOpened || RioText.matches(#"\.|\sdot\s"#, raw),
+                  let site = parseInherited(verb: "open", rest: rest), case .openURL = site.action else { return nil }
+            return site
+        }
+        return parseInherited(verb: verb, rest: rest)
+    }
+
+    /// "open Chrome and then quit it": "it" is the app a previous clause named.
+    private static func pronounAppVerb(_ raw: String, app: String) -> ParsedClause? {
+        guard let groups = RioText.firstMatch(#"^(quit|close|kill|exit|hide|force\s+quit)\s+(?:it|that|this|that\s+app|this\s+app)(?:\s+(?:too|again|now))?$"#, in: RioText.simplify(raw)),
+              let verb = groups[1]?.lowercased() else { return nil }
+        return ParsedClause(action: verb == "hide" ? .hideApp(name: app) : .quitApp(name: app), verb: verb)
     }
 
     private func parseDirect(_ raw: String) -> ParsedClause? {
@@ -163,7 +228,8 @@ struct RioActionParser {
         if let action = parseSearch(raw) { return ParsedClause(action: action, verb: nil) }
         let s = RioText.simplify(raw)
         guard !s.isEmpty else { return nil }
-        if Self.isStopListening(s) { return ParsedClause(action: .stopListening, verb: nil) }
+        if isRecordingMacro, Self.isBareMacroStop(s) { return ParsedClause(action: .stopRecordingMacro, verb: nil) }
+        if Self.isStopListening(s, wholeSentence: false) { return ParsedClause(action: .stopListening, verb: nil) }
         if let action = Self.parseVolume(s) ?? Self.parseMedia(s) ?? Self.parseLock(s)
             ?? Self.parseScreenshot(s) ?? Self.parseDoNotDisturb(s) {
             return ParsedClause(action: action, verb: nil)
@@ -174,12 +240,27 @@ struct RioActionParser {
            combo.command || combo.control || combo.option || combo.shift {
             return ParsedClause(action: .pressKeys(combo), verb: "press")
         }
+        // "search youtube for lofi and play the first one": a pick from the results, not a song.
+        if RioText.matches(#"^(?:play|open|click)\s+(?:the\s+)?(?:first|second|third|top|last|next)\s+(?:one|result|video|link|song|hit)$"#, s) {
+            return nil
+        }
         if let action = RioExtraPhrases.parse(raw: raw, simplified: s) {
             if case .pressKeys = action { return ParsedClause(action: action, verb: "press") }
+            // "open canvas and chrome": the next clause can borrow "open".
+            if Self.opensSomething(action), RioText.matches(#"^(?:open(?:\s+up)?|launch)\b"#, s) {
+                return ParsedClause(action: action, verb: "open")
+            }
             return ParsedClause(action: action, verb: nil)
         }
         if let window = parseWindow(s, inherited: false) { return window }
         return parseAppVerb(s, inherited: false)
+    }
+
+    private static func opensSomething(_ action: RioAction) -> Bool {
+        switch action {
+        case .openURL, .openApp, .openFile: return true
+        default: return false
+        }
     }
 
     /// "Warp on the right" after "put Chrome on the left"; "Spotify" after "open Chrome";
@@ -250,20 +331,71 @@ struct RioActionParser {
            let combo = RioKeyCombos.parse("press \(key)") {
             let typed = words.trimmingCharacters(in: CharacterSet(charactersIn: " ,"))
             guard !typed.isEmpty else { return nil }
-            actions = [.typeText(typed), .pressKeys(combo)]
+            actions = [.typeText(spokenSymbols(typed)), .pressKeys(combo)]
         } else {
-            actions = [.typeText(text)]
+            actions = [.typeText(spokenSymbols(text))]
         }
         return actions
     }
 
+    private static let cliWords: Set<String> = [
+        "cd", "ls", "git", "npm", "npx", "yarn", "pnpm", "bun", "brew", "cat", "mkdir", "rm", "rmdir", "mv", "cp",
+        "touch", "echo", "grep", "python", "python3", "pip", "pip3", "node", "make", "swift", "swiftc", "sudo", "ssh",
+        "curl", "wget", "vim", "nvim", "nano", "chmod", "chown", "docker", "kubectl", "cargo", "pwd", "less", "head",
+        "tail", "tar", "unzip", "xcodebuild", "gh", "deno", "uv", "pytest", "export", "source",
+    ]
+    private static let symbolWords: [String: String] = ["tilde": "~", "slash": "/", "dash": "-", "dot": ".", "underscore": "_"]
+
+    /// "type cd tilde slash hala" types "cd ~/hala"; "type omar at example dot com" types the
+    /// address. Only a shell command (a CLI first word, or two or more symbol words) or an email
+    /// is converted: "type the dash is broken" stays as said.
+    static func spokenSymbols(_ text: String) -> String {
+        let email = #"\b([A-Za-z0-9]+(?:\s+(?:dot|underscore)\s+[A-Za-z0-9]+)*)\s+at\s+([A-Za-z0-9-]+(?:\s+dot\s+[A-Za-z0-9-]+)*\s+dot\s+(?:com|org|net|edu|io|co|ai|dev|me|us|uk|ae|qa|app))\b"#
+        var result = text
+        if let regex = try? NSRegularExpression(pattern: email, options: [.caseInsensitive]) {
+            let range = NSRange(result.startIndex..., in: result)
+            for match in regex.matches(in: result, range: range).reversed() {
+                guard let whole = Range(match.range, in: result), let user = Range(match.range(at: 1), in: result),
+                      let host = Range(match.range(at: 2), in: result) else { continue }
+                let address = joinSymbols(String(result[user])) + "@" + joinSymbols(String(result[host]))
+                result.replaceSubrange(whole, with: address.lowercased())
+            }
+        }
+        let words = result.split(separator: " ").map(String.init)
+        guard let first = words.first?.lowercased() else { return result }
+        let symbolCount = words.filter { symbolWords[$0.lowercased()] != nil }.count
+        guard symbolCount > 0, cliWords.contains(first) || symbolCount >= 2 else { return result }
+        return joinSymbols(result, keepFirstApart: true)
+    }
+
+    /// Joins spoken symbols to their neighbours: "feature slash login" -> "feature/login",
+    /// "ls dash la" -> "ls -la", "cd dot dot" -> "cd ..".
+    private static func joinSymbols(_ text: String, keepFirstApart: Bool = false) -> String {
+        var output = ""
+        var gluesNext = false
+        for (index, word) in text.split(separator: " ").map(String.init).enumerated() {
+            let symbol = symbolWords[word.lowercased()]
+            let token = symbol ?? word
+            let gluesBack = symbol.map { ["/", ".", "_"].contains($0) } ?? false
+            let afterCommand = keepFirstApart && index == 1
+            if !output.isEmpty, !gluesNext, !(gluesBack && !afterCommand) { output += " " }
+            output += token
+            gluesNext = symbol != nil
+        }
+        return output
+    }
+
     // MARK: Stop listening
 
-    private static func isStopListening(_ s: String) -> Bool {
-        RioText.matches(
-            #"^(?:(?:ok|okay|alright|all right|so|thanks|thank you|cool|great|perfect)\s+)*(?:you can\s+)?(?:stop listening|go to sleep|thats all(?: for now)?|that is all(?: for now)?|thatll be all|that will be all|stop conversation mode|end conversation mode|conversation mode off|turn off conversation mode|stop the conversation|good ?bye|bye(?: bye)?(?: for now)?|good ?night)(?:\s+(?:rio|thanks|thank you))?$"#,
-            s
-        )
+    /// "stop listening", "that's all", "mic off", "go away", with any thanks or name after.
+    /// "that's it", "I'm done" and "we're done" only count as the whole sentence, so "open
+    /// Chrome and that's it" never ends the conversation by accident.
+    static func isStopListening(_ s: String, wholeSentence: Bool) -> Bool {
+        let lead = #"^(?:(?:ok|okay|alright|all right|so|thanks|thank you|cool|great|perfect)\s+)*(?:you can\s+)?"#
+        let phrases = #"stop listening(?: to me)?|quit listening|go to sleep|thats all(?: for now)?|that is all(?: for now)?|thatll be all|that will be all|stop (?:the )?conversation(?: mode)?|end (?:the )?conversation(?: mode)?|conversation mode off|turn off conversation mode|good ?bye|bye(?: bye)?|good ?night|go away|leave me alone|(?:the )?mic(?:rophone)? off|(?:turn|switch|shut) (?:the |your )?mic(?:rophone)? off|(?:turn|switch|shut) off (?:the |your )?mic(?:rophone)?"#
+        let whole = #"|thats it|that is it|(?:were|we are|im|i am) done(?: here)?"#
+        let tail = "(?:\\s+(?:\(nameVariants)|thanks|thank you|now|for now|here))*$"
+        return RioText.matches(lead + "(?:" + phrases + (wholeSentence ? whole : "") + ")" + tail, s)
     }
 
     // MARK: Search
@@ -385,6 +517,8 @@ struct RioActionParser {
             "^(?:\(commaInterjections))\\s*[,.!]+\\s*(?=\\S)",
             "^(?:\(arabicFillers)|basically)\\s+(?=\\S)",
             "^(?:like|basically|actually|sorry|oops|oh|shoof|never\\s?mind)\\s+(?=(?:\(leadVerbs))\\b)",
+            // "so yeah Rio open Chrome": only before the name or a command.
+            "^(?:yeah|yep|yea|yup)\\b[\\s,.!?]*(?=(?:\(nameVariants)|\(leadVerbs))\\b)",
             #"^(?:can|could|would|will)\s+you\s*,?\s+(?:please\s*,?\s+)?"#,
             #"^(?:i\s+(?:want|need)\s+you\s+to|i\s*(?:'|\x{2019})?d\s+like\s+you\s+to|go\s+ahead\s+and|just)\s+"#,
         ]
@@ -423,17 +557,21 @@ struct RioActionParser {
         var result = text
         // "now" stays after "from" and "right" ("an hour from now"); "right now" goes as one;
         // "man" goes only after a comma ("play spider man").
+        let thanks = "[\\s,.!?;:]+(?:thanks|thank you)(?:\\s+(?:\(nameVariants)))?\\s*[.!?]*$"
         let pattern = #"(?:[\s,.!?;:]+(?:please|bro|bruh|dude|buddy|thanks|thank you|for me|real quick|quickly|right now)|(?<!\bfrom)(?<!\bright)[\s,.!?;:]+now|\s*,\s*man)\s*[.!?]*$"#
         let arabic = "[\\s,.!?;:]+(?:\(arabicFillers))\\s*[.!?]*$"
         let stripsArabic = RioText.matches(trailingArabicCommand, text)
         while true {
-            var next = RioText.replacing(pattern, with: "", in: result)
+            var next = RioText.replacing(pattern, with: "", in: RioText.replacing(thanks, with: "", in: result))
             if stripsArabic { next = RioText.replacing(arabic, with: "", in: next) }
             if next == result { break }
             result = next
         }
         // A bare filler word is the whole clause.
         if RioText.matches(#"^(?:please|bro|bruh|dude|man|buddy|thanks|thank you|now)[\s.!?,]*$"#, result) { return "" }
+        // "Thanks Rio." or a lone "Rio" left between two commands.
+        if RioText.matches("^(?:(?:thanks|thank you|cheers)[\\s,]+)?(?:\(nameVariants))[\\s.!?,]*$", result)
+            || RioText.matches("^(?:thanks|thank you|cheers)[\\s.!?,]*$", result) { return "" }
         return result.trimmingCharacters(in: CharacterSet(charactersIn: " ,.!;:\n\t"))
     }
 
@@ -441,41 +579,137 @@ struct RioActionParser {
 
     // Message bodies keep "and" and trailing words too: "text Ali saying I'm late and I'll call".
     private static let greedyStart = #"^(?:type|write|search|google|look\s+up|youtube\s+search|you\s?tube\s+search|amazon\s+search|reply|tell\s+(?:them|him|her)|text|message|send\s+(?:a\s+)?(?:text|message))\b"#
+    private static let searchStart = #"^(?:search|google|look\s+up|youtube\s+search|you\s?tube\s+search|amazon\s+search)\b"#
+    private static let messageStart = #"^(?:reply|tell\s+(?:them|him|her)|text|message|send\s+(?:a\s+)?(?:text|message))\b"#
+    /// The verbs that start a new command after "and then" inside a search or a message body.
+    private static let chainVerbs = #"(?:open|launch|quit|close|switch|play|pause|put|move|snap|search|google|mute|unmute|hide|lock|take|set|turn|remind|reply|click|press|hit|type|text|message|send|email|maximi[sz]e|minimi[sz]e|go\s+to|show\s+me|start|stop|find|look\s+up)\b"#
 
     static func startsGreedyCommand(_ clause: String) -> Bool {
         RioText.matches(greedyStart, clause)
     }
 
-    /// Splits on "and", "then", "plus", commas and semicolons. Once a type/search clause starts
-    /// it keeps the rest of the sentence, so "search for cats and dogs" stays one query.
+    struct ClausePart: Equatable {
+        var text: String
+        /// "open Chrome, I mean Safari": this clause replaces the one before it.
+        var isCorrection = false
+    }
+
+    private enum Separator: Equatable {
+        case start
+        /// ", Rio," / ". Rio" between two commands.
+        case punctuatedName
+        /// "open chrome Rio quit xcode": the name right before a command verb.
+        case bareName
+        /// "wait no", "I mean", "actually".
+        case correction
+        /// "and then", "then", "and also", "after that".
+        case chain
+        /// "and", "plus", ",", ";", "&", a spoken "comma".
+        case soft
+        /// A sentence end: "Open Chrome. Quit Xcode."
+        case sentence
+    }
+
+    private static let separatorPattern: String = {
+        let name = "(?:\(nameVariants))"
+        let groups = [
+            "\\s*[,.;!?]+\\s*(?:and\\s+)?\(name)\\b[\\s,.;!?:]*(?=\\p{L})",
+            "\\s+(?:and\\s+)?\(name)\\b[\\s,.;!?:]*(?=(?:\(leadVerbs))\\b)",
+            // A bare "actually" or "sorry" only after a pause ("remind me to actually study" stays).
+            #"\s*[,.;!?]*\s*\b(?:wait\s*[,.]?\s*no|no\s*[,.]?\s*wait|(?:no|sorry|oops)\s*[,.]?\s*i\s+mean|i\s+mean)\b[\s,.;!?:]*|\s*[,.;!?]+\s*(?:no\s*[,.]?\s*)?(?:actually|sorry)\b[\s,.;!?:]*"#,
+            #"\s*,?\s*\b(?:and\s+then|and\s+also|after\s+that|then|also)\b\s*"#,
+            #"\s*,?\s*\b(?:and|plus)\b\s*|\s*[,;]\s*|\s+&\s+|\s+comma\s+"#,
+            // Not after a lone letter ("9 a.m. tomorrow", "U.S.") or a title ("Dr. Kim").
+            #"(?<![\s.]\p{L})(?<!^\p{L})(?<!\b(?:mr|mrs|ms|dr|st|vs|etc|jr|sr|prof))(?:\.+|[!?]+)\s+(?=\p{L})"#,
+        ]
+        return groups.map { "(\($0))" }.joined(separator: "|")
+    }()
+
+    private static let separatorKinds: [Separator] = [.punctuatedName, .bareName, .correction, .chain, .soft, .sentence]
+
+    /// Splits on "and", "then", "plus", commas, semicolons, sentence ends and a second "Rio".
+    /// Once a type/search/message clause starts it keeps the rest of the sentence, so "search
+    /// for cats and dogs" stays one query, until "and then" (or a new "Rio") starts a command.
     static func splitClauses(_ text: String) -> [String] {
-        let pattern = #"\s*,?\s*\b(?:and\s+then|and\s+also|after\s+that|then|and|plus|also)\b\s*|\s*[,;]\s*|\s+&\s+"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return [text] }
+        splitClauseParts(text).map(\.text)
+    }
+
+    static func splitClauseParts(_ text: String) -> [ClausePart] {
+        guard let regex = try? NSRegularExpression(pattern: separatorPattern, options: [.caseInsensitive]) else {
+            return [ClausePart(text: text)]
+        }
         let full = NSRange(text.startIndex..., in: text)
-        var pieces: [(text: String, separator: String)] = []
+        var pieces: [(text: String, separator: String, kind: Separator)] = []
         var cursor = text.startIndex
         var pendingSeparator = ""
+        var pendingKind = Separator.start
         for match in regex.matches(in: text, options: [], range: full) {
             guard let range = Range(match.range, in: text) else { continue }
-            pieces.append((String(text[cursor..<range.lowerBound]), pendingSeparator))
+            pieces.append((String(text[cursor..<range.lowerBound]), pendingSeparator, pendingKind))
             pendingSeparator = String(text[range])
+            pendingKind = (1...separatorKinds.count).first { match.range(at: $0).location != NSNotFound }
+                .map { separatorKinds[$0 - 1] } ?? .soft
             cursor = range.upperBound
         }
-        pieces.append((String(text[cursor...]), pendingSeparator))
+        pieces.append((String(text[cursor...]), pendingSeparator, pendingKind))
 
-        var clauses: [String] = []
+        let edge = CharacterSet(charactersIn: " ,;:.!")
+        var parts: [ClausePart] = []
         var index = 0
         while index < pieces.count {
-            let piece = pieces[index].text.trimmingCharacters(in: CharacterSet(charactersIn: " ,;:.!"))
+            let piece = pieces[index].text.trimmingCharacters(in: edge)
             if startsGreedyCommand(piece) {
                 var merged = pieces[index].text
-                for later in pieces[(index + 1)...] { merged += later.separator + later.text }
-                clauses.append(merged.trimmingCharacters(in: CharacterSet(charactersIn: " ,;:\n\t")))
-                break
+                var next = index + 1
+                while next < pieces.count, !endsGreedy(piece, at: pieces[next]) {
+                    merged += pieces[next].separator + pieces[next].text
+                    next += 1
+                }
+                // "reply saying sounds good and send it": sending already waits for a confirm.
+                if next < pieces.count, isMessage(piece), isSendIt(pieces[next].text) { next += 1 }
+                parts.append(ClausePart(text: cleanedGreedy(merged)))
+                index = next
+                continue
             }
-            if !piece.isEmpty { clauses.append(piece) }
+            if !piece.isEmpty {
+                // "and actually maximize it": a correction word right after another separator is not one.
+                let previousText = index > 0 ? pieces[index - 1].text.trimmingCharacters(in: edge) : ""
+                let corrects = pieces[index].kind == .correction && !previousText.isEmpty && !parts.isEmpty
+                parts.append(ClausePart(text: piece, isCorrection: corrects))
+            }
             index += 1
         }
-        return clauses
+        return parts
+    }
+
+    /// Where a greedy clause stops: a new "Rio" + command, "and then" + command, and (in a
+    /// search only) a plain "and" + command ("search for cats and open the first result").
+    private static func endsGreedy(_ greedy: String, at piece: (text: String, separator: String, kind: Separator)) -> Bool {
+        let next = piece.text.trimmingCharacters(in: CharacterSet(charactersIn: " ,;:.!"))
+        let startsCommand = RioText.matches("^" + chainVerbs, next)
+        switch piece.kind {
+        case .punctuatedName: return RioText.matches("^(?:\(leadVerbs))\\b", next)
+        case .chain: return startsCommand || (isMessage(greedy) && isSendIt(next))
+        case .soft:
+            if isMessage(greedy), isSendIt(next), !piece.separator.contains("comma") { return true }
+            return RioText.matches(searchStart, greedy) && startsCommand
+                && RioText.matches(#"^\s*,?\s*(?:and\b|,)"#, piece.separator)
+        default: return false
+        }
+    }
+
+    private static func isMessage(_ clause: String) -> Bool { RioText.matches(messageStart, clause) }
+
+    private static func isSendIt(_ text: String) -> Bool {
+        RioText.matches(#"^\s*send(?:\s+it)?(?:\s+(?:now|please))?[\s.!]*$"#, text)
+    }
+
+    /// "reply saying that I'll be there at 3": the "that" only introduces the words.
+    private static func cleanedGreedy(_ merged: String) -> String {
+        var text = merged.trimmingCharacters(in: CharacterSet(charactersIn: " ,;:\n\t"))
+        if isMessage(text) {
+            text = RioText.replacing(#"\b(saying|say|says)\s+that\s+(?=(?:i|we|you|he|she|they)\b)"#, with: "$1 ", in: text)
+        }
+        return text
     }
 }

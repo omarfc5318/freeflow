@@ -22,7 +22,12 @@ enum RioFilesPhrases {
     /// Questions memory may answer ("where's my midterm" after "remember my midterm is in Wellman 2").
     private static let memoryQuestion = #"^(?:where(?:s|\s+is|\s+are)|where\s+did\s+i\s+(?:put|leave))\s+(.+)$"#
 
+    /// "find the email from Professor Kim": a message to look for in a mail or chat app, never a
+    /// file on disk (the resolver decides where to look).
+    private static let messageQuery = #"\b(?:e\s?mails?|mail|messages?|texts?|dms?|threads?|conversations?|chats?)\s+(?:from|to|with|by)\b"#
+
     static func parse(simplified: String) -> RioAction? {
+        if RioText.matches(messageQuery, simplified) { return nil }
         // "show desktop" means clear the windows away (the system parser's F11), not the folder.
         if RioText.matches(#"^(?:show|reveal|go\s+to)\s+(?:me\s+)?(?:the\s+|my\s+)?desktop$"#, simplified) { return nil }
         if let groups = RioText.firstMatch(memoryQuestion, in: simplified), let object = groups[1] {

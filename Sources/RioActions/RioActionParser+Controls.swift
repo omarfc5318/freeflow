@@ -4,7 +4,8 @@ import Foundation
 /// simplified transcript (punctuation gone, apostrophes dropped) and is anchored on both ends,
 /// so a stray word means "not a control" rather than a guess.
 extension RioActionParser {
-    private static let tail = #"(?:\s+(?:a\s+bit|a\s+little|a\s+lot|some|a\s+notch))?"#
+    /// "turn the volume down a little bit".
+    private static let tail = #"(?:\s+(?:a\s+little\s+bit|a\s+tiny\s+bit|a\s+bit|a\s+little|a\s+lot|some|a\s+notch|slightly|a\s+tad))?"#
 
     static func parseVolume(_ s: String) -> RioAction? {
         if let level = volumeLevel(s) { return .volume(.set(RioVolume.clamp(level))) }
@@ -14,7 +15,7 @@ extension RioActionParser {
             "^(?:turn|crank|bump|pump|raise|put|move)\\s+(?:(?:the|my)\\s+)?(?:(?:volume|sound|music)\\s+|it\\s+)?(?:way\\s+)?up\(tail)$",
             "^(?:turn|crank|bump|pump|raise)\\s+up\\s+(?:(?:the|my)\\s+)?(?:volume|sound|music)\(tail)$",
             "^(?:raise|increase|boost)\\s+(?:(?:the|my)\\s+)?(?:volume|sound)\(tail)$",
-            "^(?:make\\s+(?:it|the\\s+music|the\\s+sound)\\s+)?(?:(?:a\\s+bit|a\\s+little|much)\\s+)?(?:louder|higher)$",
+            "^(?:make\\s+(?:it|the\\s+music|the\\s+sound)\\s+)?(?:(?:a\\s+little\\s+bit|a\\s+bit|a\\s+little|much|slightly)\\s+)?(?:louder|higher)$",
         ]
         if upPatterns.contains(where: { RioText.matches($0, s) }) { return .volume(.up) }
 
@@ -23,7 +24,7 @@ extension RioActionParser {
             "^(?:turn|bring|move|put)\\s+(?:(?:the|my)\\s+)?(?:(?:volume|sound|music)\\s+|it\\s+)?(?:way\\s+)?down\(tail)$",
             "^turn\\s+down\\s+(?:(?:the|my)\\s+)?(?:volume|sound|music)\(tail)$",
             "^(?:lower|decrease|reduce|drop)\\s+(?:(?:the|my)\\s+)?(?:volume|sound)\(tail)$",
-            "^(?:make\\s+(?:it|the\\s+music|the\\s+sound)\\s+)?(?:(?:a\\s+bit|a\\s+little|much)\\s+)?(?:quieter|softer|lower)$",
+            "^(?:make\\s+(?:it|the\\s+music|the\\s+sound)\\s+)?(?:(?:a\\s+little\\s+bit|a\\s+bit|a\\s+little|much|slightly)\\s+)?(?:quieter|softer|lower)$",
         ]
         if downPatterns.contains(where: { RioText.matches($0, s) }) { return .volume(.down) }
 
