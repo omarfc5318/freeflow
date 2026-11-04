@@ -101,17 +101,21 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
     /// input rate). Set before ``startRecording`` to stream audio out-of-band
     /// to a realtime transcription socket. The recorder writes a normalized
     /// 16 kHz mono PCM16 WAV file independently for upload-based transcription.
-    var onPCM16Samples: ((Data) -> Void)?
+    /// Written on main, read on the capture queue per buffer, so it lives in a locked slot.
+    var onPCM16Samples: ((Data) -> Void)? {
+        get { pcm16HandlerStore.callback }
+        set { pcm16HandlerStore.callback = newValue }
+    }
+    private let pcm16HandlerStore = PCM16SamplesHandlerStore()
     /// Called on the capture queue with each buffer's RMS level (0...1) and length in
     /// seconds. Levels only; no audio leaves the recorder through this callback. Set and
     /// cleared from the main thread while capture runs, so access goes through a lock.
     var onLevelSample: (@Sendable (Float, TimeInterval) -> Void)? {
-        get { levelSampleHandlerLock.withLock { $0 } }
-        set { levelSampleHandlerLock.withLock { $0 = newValue } }
+        get { levelHandlerStore.callback }
+        set { levelHandlerStore.callback = newValue }
     }
-    private let levelSampleHandlerLock = OSAllocatedUnfairLock<(@Sendable (Float, TimeInterval) -> Void)?>(
-        initialState: nil
-    )
+    /// A struct slot, not a bare closure in a generic lock: see ``LevelSampleSlot``.
+    private let levelHandlerStore = LevelSampleHandlerStore()
     private let recordingConverterLock = OSAllocatedUnfairLock<AVAudioConverter?>(initialState: nil)
     private let pcm16ConverterLock = OSAllocatedUnfairLock<AVAudioConverter?>(initialState: nil)
     private let recordingTargetFormat: AVAudioFormat = {

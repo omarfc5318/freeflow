@@ -79,6 +79,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/WindowAppNameResolver.swift \
 	Sources/RioActions/WindowGeometry.swift \
 	Sources/APIConfigurationDraft.swift \
+	Sources/AudioCallbackSlots.swift \
 	Sources/AppContextService.swift \
 	Sources/AppName.swift \
 	Sources/AppTextInsertionCore.swift \

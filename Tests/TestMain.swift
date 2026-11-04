@@ -16,6 +16,7 @@ struct FreeFlowTests {
         ShortcutCoreTests.run()
         PreferenceLeakCheckTests.run()
         RioLaunchCoreTests.run()
+        AudioCallbackSlotsTests.run()
         RioScreenFollowTests.run()
         LLMCooldownManagerTests.run()
         PostProcessingServiceTests.run()
