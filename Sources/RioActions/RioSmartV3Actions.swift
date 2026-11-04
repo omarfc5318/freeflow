@@ -30,10 +30,15 @@ enum RioSmartV3Actions {
         case "calculate":
             // Only maths the local calculator can really answer runs as calculate. A conversion it
             // can't do ("100 USD to QAR": currencies change, so there is no rate table) is looked
-            // up instead of dropped.
+            // up instead of dropped. Other maths it can't do ("7 choose 3" beyond its reach) is
+            // never a web search (round 3): the model's own worked answer is spoken when it gave
+            // one, else the step is dropped and the resolver asks again.
             guard let expression = RioSmartResponseParser.text(object["expression"], max: maxQueryCharacters) else { return nil }
             if RioCalculator.evaluate(expression, now: now, timeZone: timeZone) != nil { return .calculate(expression: expression) }
-            return isLookupWorthy(expression) ? .webSearch(query: expression) : nil
+            if isLookupWorthy(expression) { return .webSearch(query: expression) }
+            return RioSmartResponseParser.answerText(object).map {
+                RioAction.answer(RioSmartText.limitSentences($0, maxSentences: 2, maxCharacters: RioSmartText.maxAnswerCharacters))
+            }
         case "startTranslation": return .startTranslation
         case "stopTranslation": return .stopTranslation
         case "speakLastTranslation": return .speakLastTranslation
@@ -46,10 +51,12 @@ enum RioSmartV3Actions {
     /// shell-like, and never a bare fragment like "2 +" or a command like "open Chrome".
     static func isLookupWorthy(_ expression: String) -> Bool {
         guard RioSmartResponseParser.name(expression, max: maxQueryCharacters) != nil else { return false }
-        let hasLetters = expression.contains(where: \.isLetter)
-        let hasDigit = expression.contains(where: \.isNumber)
-        return (hasLetters && hasDigit) || RioText.matches(#"\b(?:exchange\s+rate|rate\s+of|in\s+(?:dollars|euros|riyals?|dirhams?|pounds|rupees|yen))\b"#, expression)
+        return RioText.matches(currencyOrRate, expression)
     }
+
+    /// Money and rates: they change, so they are looked up. Plain maths never is (round 3).
+    private static let currencyOrRate =
+        #"\b(?:usd|qar|eur|gbp|aed|sar|kwd|bhd|omr|jpy|cny|inr|pkr|egp|cad|aud|chf|mxn|dollars?|bucks|euros?|riyals?|rials?|dirhams?|pounds?\s+sterling|sterling|rupees?|yen|yuan|lira|liras|dinars?|francs?|pesos?|bitcoins?|btc|ethereum|eth|crypto|exchange\s+rate|rate\s+of|stocks?|shares?|price|prices|gold|silver|oil)\b|\bin\s+pounds\b|[$\u20AC\u00A3]"#
 
     // MARK: Fields
 
@@ -227,9 +234,155 @@ enum RioSmartPlanGuards {
     ]
 
     static func apply(_ actions: [RioAction], command: String) -> [RioAction] {
+        guard !isTakenBack(command) else { return [] }
         var plan = messagingAppGuard(actions, command: command)
         plan = micGuard(plan, command: command)
+        plan = openURLGuard(plan, command: command)
+        plan = quitGuard(plan, command: command)
+        plan = tabKeyGuard(plan, command: command)
+        plan = commandTabGuard(plan)
         return plan
+    }
+
+    // MARK: Round 3 guards
+
+    /// "quit Xcode, no, don't", "open Chrome... hold on", "empty the trash. No!": a take-back after a
+    /// break cancels the command before it (finding 38b). Words after "saying" or ":" are a message.
+    static func isTakenBack(_ command: String) -> Bool {
+        let lowered = command.lowercased().replacingOccurrences(of: "\u{2019}", with: "'")
+        guard instructionPart(lowered) == lowered else { return false }
+        let filler = #"(?:(?:oh|oops|um+|uh+|wait|actually|no|nah|nope|sorry)[\s,.!]+)*"#
+        let takeBack = #"(?:no+|nope|nah|don'?t|do\s+not|hold\s+on|never\s?mind|stop|cancel(?:\s+(?:that|it))?|scratch\s+that|forget\s+(?:it|that)|wait|oops)"#
+        return RioText.matches(#"\S.*?(?:[,.!?;:\u2026-]|\.\.\.)\s*"# + filler + takeBack + #"(?:\s+(?:that|it|rio))?[\s.!?]*$"#, lowered)
+    }
+
+    static let tabAnswer = "I can only jump to tabs 1 to 8 or the last one."
+
+    /// Command-9 is the LAST tab, never "tab 9" or "tab 12": it stays only when the owner said last
+    /// or final; for a tab number it becomes a plain answer (finding 43).
+    static func tabKeyGuard(_ actions: [RioAction], command: String) -> [RioAction] {
+        let nine = KeyCombo(key: "9", command: true, shift: false, option: false, control: false)
+        guard actions.contains(.pressKeys(nine)), !RioText.matches(#"\b(?:last|final|rightmost|end)\b"#, command) else { return actions }
+        let saysTab = RioText.matches(#"\btabs?\b"#, command)
+        var answered = false
+        return actions.compactMap { action in
+            guard action == .pressKeys(nine) else { return action }
+            guard saysTab, !answered else { return nil }
+            answered = true
+            return .answer(tabAnswer)
+        }
+    }
+
+    /// Focus settling follows only switchToApp and openApp, so after a planned Command-Tab nothing
+    /// that acts on the front app may follow: it would land in whatever app was there before,
+    /// perhaps a terminal (finding 84).
+    static func commandTabGuard(_ actions: [RioAction]) -> [RioAction] {
+        let commandTab = KeyCombo(key: "tab", command: true, shift: false, option: false, control: false)
+        guard let index = actions.firstIndex(of: .pressKeys(commandTab)) else { return actions }
+        return Array(actions[...index]) + actions[(index + 1)...].filter { !RioSmartRouting.actsOnFrontApp($0) }
+    }
+
+    static let terminalQuitAnswer = "I won't quit a terminal you didn't name. To stop what's running, say \"press control c\"."
+
+    /// quitApp or hideApp of an app the owner never named (finding 21): never a terminal (that ends
+    /// every session in it) nor anything for "kill the dev server"; "close it" is Command-W.
+    static func quitGuard(_ actions: [RioAction], command: String) -> [RioAction] {
+        let closeWindow = KeyCombo(key: "w", command: true, shift: false, option: false, control: false)
+        let aboutProcess = RioText.matches(#"\b(?:dev\s+server|server|process(?:es)?|script|localhost|port\s+\d+|npm|node|python|the\s+build)\b"#, command)
+        let saysClose = RioText.matches(#"\b(?:close|shut)\b"#, command)
+        var answered = false
+        var result: [RioAction] = []
+        for action in actions {
+            let name: String
+            switch action {
+            case .quitApp(let app), .hideApp(let app): name = app
+            default:
+                result.append(action)
+                continue
+            }
+            if namesApp(name, in: command) {
+                result.append(action)
+            } else if RioTaskSafety.isTerminal(appName: name) || aboutProcess {
+                if !answered { result.append(.answer(terminalQuitAnswer)) }
+                answered = true
+            } else if case .quitApp = action, saysClose {
+                result.append(.pressKeys(closeWindow))
+            } else {
+                result.append(action)
+            }
+        }
+        return result
+    }
+
+    /// Whether the owner's words name `app` ("quit Warp", "close both chromes", "quit iterm").
+    static func namesApp(_ app: String, in command: String) -> Bool {
+        if !RioSmartContextPolicy.relevantApps([app], command: command).isEmpty { return true }
+        let compactApp = RioText.compact(app).filter(\.isLetter)
+        return compactApp.count >= 3 && RioText.compact(command).contains(compactApp)
+    }
+
+    /// A planned openURL is kept only for a site the owner named or a well-known site, and only
+    /// with path, query and fragment words the owner said; anything else a hostile window title
+    /// could have written is cut to the site's home page or dropped (finding 81).
+    static func openURLGuard(_ actions: [RioAction], command: String) -> [RioAction] {
+        actions.compactMap { action in
+            guard case .openURL(let url) = action else { return action }
+            return vettedURL(url, command: command).map(RioAction.openURL)
+        }
+    }
+
+    static func vettedURL(_ url: URL, command: String) -> URL? {
+        guard let host = url.host?.lowercased(), let scheme = url.scheme?.lowercased() else { return nil }
+        let commandWords = Set(words(command))
+        let site = registrableDomain(host)
+        guard siteIsNamed(site, commandWords: commandWords, command: command) || isKnownSite(site) else { return nil }
+        let rest = [url.path, url.query, url.fragment].compactMap { $0 }.joined(separator: " ")
+        let restWords = words(rest.removingPercentEncoding ?? rest)
+        let compactCommand = RioText.compact(command)
+        if restWords.allSatisfy({ commandWords.contains($0) || compactCommand.contains($0) }) { return url }
+        var origin = URLComponents()
+        origin.scheme = scheme
+        origin.host = host
+        origin.port = url.port
+        origin.path = "/"
+        return origin.url
+    }
+
+    /// Lowercased runs of letters and digits, two or more long.
+    private static func words(_ text: String) -> [String] {
+        text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init).filter { $0.count >= 2 }
+    }
+
+    /// "mail.google.com" -> "google.com"; "bbc.co.uk" -> "bbc.co.uk".
+    static func registrableDomain(_ host: String) -> String {
+        var labels = host.split(separator: ".").map(String.init)
+        if labels.first == "www" { labels.removeFirst() }
+        guard labels.count > 2 else { return labels.joined(separator: ".") }
+        let secondLevel = labels[labels.count - 2]
+        let isCountrySecondLevel = labels[labels.count - 1].count == 2 && ["co", "com", "org", "net", "ac", "gov", "edu"].contains(secondLevel)
+        return labels.suffix(isCountrySecondLevel ? 3 : 2).joined(separator: ".")
+    }
+
+    /// The owner said the site: its name ("vercel"), its domain, or a known site's spoken name
+    /// ("twitter" for x.com).
+    private static func siteIsNamed(_ site: String, commandWords: Set<String>, command: String) -> Bool {
+        guard let name = site.split(separator: ".").first.map(String.init) else { return false }
+        if commandWords.contains(name) || RioText.compact(command).contains(RioText.compact(site)) { return true }
+        let spoken = command.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        for start in spoken.indices {
+            for end in start..<min(spoken.count, start + 3) {
+                let compact = spoken[start...end].joined()
+                if let known = RioWebURLs.knownSite(compactName: compact)?.host, registrableDomain(known.lowercased()) == site { return true }
+            }
+        }
+        return false
+    }
+
+    /// One of Rio's well-known sites (google.com, github.com, ...), by its main name.
+    private static func isKnownSite(_ site: String) -> Bool {
+        guard let name = site.split(separator: ".").first.map(String.init),
+              let known = RioWebURLs.knownSite(compactName: name)?.host else { return false }
+        return registrableDomain(known.lowercased()) == site
     }
 
     /// The command words, not the message: "text mom saying check WhatsApp" names no app.

@@ -116,7 +116,18 @@ struct RioSmartResolver: RioSmartResolving {
         let user = RioSmartPrompt.user(request: RioSmartRequest(
             command: command, context: request.context, attempt: request.attempt, spokenLanguage: language
         ))
-        switch await complete(system: system, user: user) {
+        var completion = await complete(system: system, user: user)
+        if isWorldQuestion, case .reply(let reply) = completion,
+           RioSmartResponseParser.plan(from: reply, now: moment, timeZone: zone).actions.isEmpty {
+            // The short prompt came back empty (round 3, findings 1 and 74). Prose is the answer
+            // itself; "needsContext", [] or a step that didn't validate goes once to the full prompt,
+            // which can look at the screen, the calendar, Canvas and the rest.
+            if !RioSmartResponseParser.asksForContext(reply), let prose = RioSmartResponseParser.spokenProse(reply) {
+                return .actions([.answer(prose)])
+            }
+            completion = await complete(system: RioSmartPrompt.system(now: moment, timeZone: zone, spokenLanguage: language), user: user)
+        }
+        switch completion {
         case .reply(let reply):
             let parsed = RioSmartResponseParser.plan(from: reply, now: moment, timeZone: zone)
             var actions = RioSmartPlanGuards.apply(parsed.actions, command: command)

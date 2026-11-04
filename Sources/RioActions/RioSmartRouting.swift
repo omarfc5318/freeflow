@@ -298,6 +298,16 @@ enum RioSmartContextPolicy {
     static func commandRefersToWindow(_ command: String) -> Bool {
         RioText.matches(#"\b(?:this|that|the|current|front|my)\s+(?:\w+\s+)?(?:window|tab|page|site|website|document)\b"#, command)
             || RioText.matches(#"\b(?:in|on)\s+here\b"#, command)
+            || isBareDoThis(command)
+    }
+
+    /// "Rio do this", "do it", "handle this": the whole command points at what is in front, so the
+    /// model needs the window to know what "this" is (round 3, finding 20b).
+    static func isBareDoThis(_ command: String) -> Bool {
+        RioText.matches(
+            #"^\W*(?:(?:hey|ok(?:ay)?|rio|please|just|now|so|can\s+you|could\s+you)[\s,]+)*(?:do|handle|finish|sort(?:\s+out)?|deal\s+with|take\s+care\s+of)\s+(?:this|it|that)(?:\s+(?:one|thing|for\s+me|please|now|rio))*\W*$"#,
+            command
+        )
     }
 
     /// Command words too common to pick out an app ("open", "window").
@@ -326,13 +336,27 @@ enum RioSmartContextPolicy {
             guard app.count >= 3 else { continue }
             let tokens = name.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
             let saysAWord = words.contains { word in
-                tokens.contains { token in token == word || (token.count >= 4 && word.hasPrefix(token)) }
+                tokens.contains { token in token == word || isPlural(word, of: token) || isOneSlipAway(word, token) }
             }
             guard spans.contains(app) || saysAWord else { continue }
             result.append(name)
             if result.count == RioSmartContextLimits.maxRelevantInstalledApps { break }
         }
         return result
+    }
+
+    /// "chromes" for Chrome. Only a plural, never a longer word: "timer" is not Time Machine.
+    private static func isPlural(_ word: String, of token: String) -> Bool {
+        token.count >= 4 && (word == token + "s" || word == token + "es")
+    }
+
+    /// A misheard app name one letter off ("worp" for Warp): same length, at least 4 letters, same
+    /// first letter, exactly one letter different. Never a longer or shorter word, so "whatsapp" is
+    /// not Apps and "free" is not Freeform.
+    private static func isOneSlipAway(_ word: String, _ token: String) -> Bool {
+        guard word.count >= 4, word.count == token.count, word.first == token.first,
+              token.allSatisfy(\.isLetter), word.allSatisfy(\.isLetter) else { return false }
+        return zip(word, token).filter { $0 != $1 }.count == 1
     }
 
     /// Installed app names for the prompt: apps in the Applications folders before system
@@ -385,11 +409,36 @@ enum RioQuestionShape {
         // The owner's own facts ("what's the staging url").
         "url", "password", "staging",
     ]
-    /// Messages and the owner's school day: always about the owner, never the world.
+    /// Messages, the owner's school day and work: always about the owner, never the world.
     private static let personal: Set<String> = [
         "reply", "replied", "texted", "messaged", "emailed", "dm", "dms", "voicemail", "inbox", "class", "classes",
         "homework", "assignment", "assignments", "due", "schedule", "agenda",
+        // Courses ("when is the midterm", "who is the TA", "is lecture cancelled today"; round 3).
+        "midterm", "midterms", "exam", "exams", "quiz", "quizzes", "finals", "lecture", "lectures", "syllabus",
+        "professor", "prof", "ta", "tas", "instructor", "lecturer",
+        // Work ("did the deploy finish", "what's the status of the PR", "when is the standup").
+        "standup", "deploy", "deployed", "deployment", "pr", "prs", "ticket", "tickets", "sprint", "repo",
+        "branch", "commit", "code", "bug", "bugs", "deadline",
     ]
+    /// People in the room whose words the owner means ("what did the professor say"): with a
+    /// speech word, the question is about the lecture or meeting, not the world.
+    private static let speakers: Set<String> = [
+        "professor", "prof", "teacher", "ta", "lecturer", "instructor", "doctor", "dr", "speaker", "presenter",
+        "he", "she", "they", "him", "her", "them", "everyone", "everybody", "guy",
+    ]
+    /// What "translate ..." points at when it means the live translator, not a phrase.
+    private static let liveSpeech: Set<String> = [
+        "saying", "says", "said", "say", "speaking", "speaks", "talking", "lecture", "meeting", "video", "call",
+        "conversation", "talk", "audio", "speech", "podcast", "class",
+    ]
+    /// "what's the answer", "when is the midterm", "where is the discussion section": a question about
+    /// "the" something with nothing to anchor it in the world means the thing in front of the owner.
+    private static let bareDefinite =
+        #"^(?:what|whats|which|where|when|who|whos)(?:\s+(?:is|are|s))?\s+the\s+\w+(?:\s+\w+)?(?:\s+(?:today|tomorrow|tonight|now|here|again|then))?$"#
+    /// "what's at 4pm", "is anything at 2:30": a clock time is the owner's day.
+    private static let clockTime = #"\bat\s+(?:\d{1,2}(?::\d{2})?|noon|midnight)\b(?!\s*(?:percent|degrees|miles|km))|\b\d{1,2}(?::\d{2})?\s?(?:am|pm)\b"#
+    /// "ECS 150", "MAT108": a course code.
+    private static let courseCode = #"(?-i:\b[A-Z]{2,4}\s?\d{2,3}[A-Z]?\b)"#
     /// What people said: about the owner's messages when a name is in the question ("what did Ali
     /// say"); "who said ..." with no name stays a world question.
     private static let speech: Set<String> = [
@@ -424,7 +473,15 @@ enum RioQuestionShape {
             return false
         }
         if isHowTo { return true }
-        return !(words.contains(where: speech.contains) && namesSomeone(text))
+        let joined = words.joined(separator: " ")
+        if RioText.matches(bareDefinite, joined) || RioText.matches(clockTime, trimmed) || RioText.matches(courseCode, text) {
+            return false
+        }
+        // "who is Ahmed": someone the owner knows, more likely than a famous person.
+        if RioText.matches(#"^(?:who\s+is|whos)\s+\w+(?:\s+\w+)?$"#, joined), namesSomeone(text) { return false }
+        if first == "translate", words.contains(where: liveSpeech.contains) { return false }
+        let speaks = words.contains(where: speech.contains)
+        return !(speaks && (namesSomeone(text) || words.contains(where: speakers.contains)))
     }
 
     /// Whether `word` ties the question to the owner, with the uses that do not taken out:
@@ -446,6 +503,8 @@ enum RioQuestionShape {
             return ownedNote.contains(before) || after == "app"
         case "number":
             return Int(after) != nil || numberWords.contains(after)
+        case "office":
+            return after == "hours"
         default:
             break
         }

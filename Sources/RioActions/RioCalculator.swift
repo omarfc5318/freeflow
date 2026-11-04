@@ -20,7 +20,9 @@ enum RioCalculator {
         let plain = withoutCurrency(stripped)
         return RioCalcTime.evaluate(cleaned: cleaned, stripped: stripped, now: now, local: timeZone)
             ?? convertUnits(stripped)
+            ?? numberBase(plain)
             ?? percentForm(plain)
+            ?? average(plain)
             ?? arithmetic(plain)
     }
 
@@ -67,14 +69,26 @@ enum RioCalculator {
 
     /// Decimals Rio says for a result of 1 or more: "22.22 degrees", not "22.2222".
     static let spokenDecimals = 2
+    /// Significant digits for a maths answer ("the square root of 2 is 1.414"; round 3).
+    static let mathSignificantDigits = 4
 
-    static func format(_ value: Double) -> String {
+    /// `significant` nil: conversions and percentages (2 decimals, or 2 significant digits below
+    /// 1). A maths answer passes `mathSignificantDigits`.
+    static func format(_ value: Double, significant: Int? = nil) -> String {
         // Tiny results ("1 divided by 3 billion") keep their digits instead of rounding to 0.
         var number = abs(value) < 1e-3 ? value : (value * 1e9).rounded() / 1e9
         if abs(number) < 1e-15 { number = 0 }
         let magnitude = abs(number)
-        // Below 1, two significant digits: 0.4536 -> 0.45, 0.001234 -> 0.0012.
-        let decimals = magnitude >= 1 || magnitude == 0 ? spokenDecimals : min(15, 1 - Int(floor(log10(magnitude))))
+        let digits = significant ?? 2
+        let decimals: Int
+        if magnitude == 0 {
+            decimals = spokenDecimals
+        } else if magnitude >= 1 {
+            // Below 1, two significant digits: 0.4536 -> 0.45, 0.001234 -> 0.0012.
+            decimals = significant.map { max(spokenDecimals, $0 - 1 - Int(floor(log10(magnitude)))) } ?? spokenDecimals
+        } else {
+            decimals = min(15, digits - 1 - Int(floor(log10(magnitude))))
+        }
         let formatter = NumberFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.numberStyle = .decimal
@@ -95,10 +109,38 @@ enum RioCalculator {
         guard let tokens = RioCalcTokenizer.tokenize(words), let tree = RioCalcParser.parse(tokens), !tree.isTrivial else { return nil }
         guard let result = RioCalcEvaluator.value(tree) else {
             // "100 divided by 0" gets a plain answer instead of a shrug.
-            return tree.dividesByZero ? RioCalcAnswer(value: "undefined", sentence: "You can't divide by zero") : nil
+            if tree.dividesByZero { return RioCalcAnswer(value: "undefined", sentence: "You can't divide by zero") }
+            // "2 to the power of 64": past the double's exact range, said exactly or rounded.
+            return bigPower(tree).map { RioCalcAnswer(value: $0, sentence: "\(describe(tokens)) is \($0)") }
         }
-        let value = format(result)
+        let value = format(result, significant: mathSignificantDigits)
         return RioCalcAnswer(value: value, sentence: "\(describe(tokens)) is \(value)")
+    }
+
+    static let maxExactDigits = 38.0
+
+    /// A whole-number power too big for the plain path: every digit when it fits in a Decimal,
+    /// else "about 1.607 times 10 to the 60".
+    private static func bigPower(_ tree: RioCalcNode) -> String? {
+        guard case .binary("^", .number(let base, _), .number(let exponent, _)) = tree,
+              base == base.rounded(), exponent == exponent.rounded(), abs(base) >= 2, abs(base) <= 1e6,
+              exponent >= 1, exponent <= 1_000 else { return nil }
+        let digits = exponent * log10(abs(base))
+        if digits < maxExactDigits {
+            let exact = pow(Decimal(Int(base)), Int(exponent))
+            let formatter = NumberFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.numberStyle = .decimal
+            formatter.usesGroupingSeparator = true
+            formatter.groupingSeparator = ","
+            formatter.groupingSize = 3
+            formatter.maximumFractionDigits = 0
+            return formatter.string(from: NSDecimalNumber(decimal: exact))
+        }
+        let power = floor(digits)
+        let mantissa = pow(10, digits - power)
+        let sign = base < 0 && exponent.truncatingRemainder(dividingBy: 2) == 1 ? "minus " : ""
+        return "about \(sign)\(format(mantissa, significant: mathSignificantDigits)) times 10 to the \(format(power))"
     }
 
     private static func describe(_ tokens: [RioCalcToken]) -> String {
@@ -111,6 +153,9 @@ enum RioCalculator {
                 case "-": return "minus"
                 case "*": return "times"
                 case "/": return "divided by"
+                case "m": return "mod"
+                case "C": return "choose"
+                case "t": return "to the"
                 default: return "to the power of"
                 }
             case .leftParen: return "("
@@ -121,6 +166,10 @@ enum RioCalculator {
             case .squared: return "squared"
             case .cubed: return "cubed"
             case .factorial: return "factorial"
+            case .function(_, let text), .root(_, let text): return text
+            case .logBase: return "log base"
+            case .degrees: return "degrees"
+            case .radians: return "radians"
             }
         }.joined(separator: " ")
     }
@@ -149,6 +198,11 @@ enum RioCalculator {
         if let g = RioText.firstMatch(#"^what percent(?:age)? of (.+?) is (.+)$"#, in: s), let b = number(g[1] ?? ""), let a = number(g[2] ?? ""), b != 0 {
             return answer(a / b * 100, { "\(g[2] ?? "") is \($0) of \(g[1] ?? "")" }, suffix: "%")
         }
+        // "98 out of 120 as a percent" (round 3).
+        if let g = RioText.firstMatch(#"^(?:what percent(?:age)? is )?(.+?) out of (.+?)(?: (?:as|in|into|to) (?:a )?percent(?:age)?)?$"#, in: s),
+           let a = number(g[1] ?? ""), let b = number(g[2] ?? ""), b != 0 {
+            return answer(a / b * 100, { "\(g[1] ?? "") out of \(g[2] ?? "") is \($0)" }, suffix: "%")
+        }
         if let g = RioText.firstMatch(#"^(.+?) percent off(?: of)? (.+)$"#, in: s), let rate = number(g[1] ?? ""), let base = number(g[2] ?? "") {
             return answer(base * (1 - rate / 100), { "\(s) is \($0)" })
         }
@@ -168,6 +222,47 @@ enum RioCalculator {
             return answer(base * rate / 100, { "\(s) is \($0)" })
         }
         return nil
+    }
+
+    // MARK: Number bases and averages (round 3)
+
+    static let maxBaseValue = 9_007_199_254_740_992.0
+
+    /// "1000 in binary", "255 in hex": a whole number in base 2, 8 or 16.
+    private static func numberBase(_ s: String) -> RioCalcAnswer? {
+        guard let g = RioText.firstMatch(#"^(.+?) (?:in|to|into|as) (binary|hex|hexadecimal|octal|base (?:2|8|16))$"#, in: s),
+              let source = g[1], let base = g[2], let value = number(source),
+              value >= 0, value == value.rounded(), value <= maxBaseValue else { return nil }
+        let radix: Int
+        let name: String
+        switch base {
+        case "binary", "base 2": (radix, name) = (2, "binary")
+        case "octal", "base 8": (radix, name) = (8, "octal")
+        default: (radix, name) = (16, "hex")
+        }
+        let digits = String(Int64(value), radix: radix, uppercase: true)
+        return RioCalcAnswer(value: digits, sentence: "\(source) in \(name) is \(digits)")
+    }
+
+    /// "the average of 85 and 92", "mean of 3 4 and 8": at least two numbers.
+    private static func average(_ s: String) -> RioCalcAnswer? {
+        guard let g = RioText.firstMatch(#"^(?:the )?(?:average|mean) of (.+)$"#, in: s), let list = g[1] else { return nil }
+        var values: [Double] = []
+        for part in list.components(separatedBy: " and ") {
+            if let whole = number(part) {
+                values.append(whole)
+                continue
+            }
+            for word in part.split(separator: " ").map(String.init) {
+                guard let one = number(word) else { return nil }
+                values.append(one)
+            }
+        }
+        guard values.count >= 2 else { return nil }
+        let mean = values.reduce(0, +) / Double(values.count)
+        guard mean.isFinite, abs(mean) < RioCalcEvaluator.limit else { return nil }
+        let value = format(mean, significant: mathSignificantDigits)
+        return RioCalcAnswer(value: value, sentence: "The average of \(list) is \(value)")
     }
 
     // MARK: Unit conversions
