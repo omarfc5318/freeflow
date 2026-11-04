@@ -80,6 +80,7 @@ struct FreeFlowTests {
         await RioTaskRunnerTests.run()
         RioCalculatorTests.run()
         RioMemoryTests.run()
+        RioAutomationTests.run()
         RioEmailNotesTests.run()
         RioSmartV3Tests.run()
         RioArabicCommandTests.run()
