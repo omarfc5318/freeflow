@@ -38,7 +38,7 @@ final class RioTaskActionHandler: RioActionHandling {
         startWatchingEscape()
         defer { stopWatchingEscape() }
         let runner = RioTaskRunner(
-            observer: RioTaskObserver(), model: RioTaskVisionModel(), prompter: prompter, reporter: progress
+            observer: RioTaskObserver(), resolver: RioTaskTargetResolver(), model: RioTaskVisionModel(), prompter: prompter, reporter: progress
         )
         return await runner.run(goal: trimmed, executor: executor)
     }

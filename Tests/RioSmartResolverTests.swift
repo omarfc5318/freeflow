@@ -174,7 +174,9 @@ enum RioSmartResolverTests {
         // Non-http(s) and malformed URLs.
         for url in ["file:///etc/passwd", "javascript:alert(1)", "ftp://x.com/a", "data:text/html,hi", "tel:123",
                     "x-apple.systempreferences:com.apple.preference", "http://", "https:///path", "https://user:pw@evil.com/",
-                    "not a url", "//evil.com", "https://exa mple.com", "shell:rm -rf /", ""] {
+                    "not a url", "//evil.com", "https://exa mple.com", "shell:rm -rf /", "",
+                    "http://localhost/admin", "http://127.0.0.1:8080/", "http://192.168.1.1/", "http://10.0.0.5/x", "http://169.254.169.254/latest",
+                    "http://2130706433/", "http://0x7f.0.0.1/", "http://[::1]/", "http://printer.local/", "http://router.internal/"] {
             let json = "{\"actions\":[{\"action\":\"openURL\",\"url\":\(jsonString(url))}]}"
             ETest.eq(parse(json), [], "url \(url)")
         }

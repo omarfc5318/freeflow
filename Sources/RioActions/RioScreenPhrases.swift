@@ -118,6 +118,9 @@ enum RioScreenPhrases {
         "blue", "red", "green", "yellow", "orange", "purple", "pink", "gray", "grey", "black", "white",
         "big", "small", "little", "large", "round",
     ]
+    private static let colourHints: Set<String> = [
+        "blue", "red", "green", "yellow", "orange", "purple", "pink", "gray", "grey", "black", "white",
+    ]
     private static let pronounLabels: Set<String> = ["it", "this", "that", "here", "there", "them", "one", "ones", "something", "please", "now", "thanks"]
     private static let maxLabelWords = 8
 
@@ -131,7 +134,8 @@ enum RioScreenPhrases {
         // "press return" and "hit enter" are keys, not clicks: those verbs need a role noun.
         if verb == "press" || verb == "hit", !roleNouns.contains(lastWord) { return nil }
         if parts.label.isEmpty { return parts.ordinal == nil ? nil : .click(label: "", ordinal: parts.ordinal) }
-        if pronounLabels.contains(parts.label.lowercased()) { return nil }
+        let withoutColours = parts.label.split(separator: " ").drop { colourHints.contains($0.lowercased()) }.joined(separator: " ")
+        if pronounLabels.contains(withoutColours.lowercased()) { return nil }
         if RioText.matches(#"\b(?:times|twice|once)$"#, parts.label) { return nil }
         return .click(label: parts.label, ordinal: parts.ordinal)
     }
@@ -150,7 +154,14 @@ enum RioScreenPhrases {
             ordinalValue = value
             words.removeFirst(2)
         }
-        while let first = words.first, colorWords.contains(first.lowercased()) { words.removeFirst() }
+        // Colours stay in the label as a soft hint for the matcher ("the blue button" prefers a
+        // control whose text or description says blue); size words carry no meaning and go.
+        var colours: [String] = []
+        while let first = words.first, colorWords.contains(first.lowercased()) {
+            if colourHints.contains(first.lowercased()) { colours.append(first) }
+            words.removeFirst()
+        }
+        if !words.isEmpty { words.insert(contentsOf: colours, at: 0) }
         guard words.count <= maxLabelWords else { return nil }
         if normalizeBox, words.count >= 2, words[words.count - 2].lowercased() == "check", words[words.count - 1].lowercased() == "box" {
             words.replaceSubrange((words.count - 2)..., with: ["checkbox"])

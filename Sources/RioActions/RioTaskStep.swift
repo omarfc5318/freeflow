@@ -28,9 +28,9 @@ enum RioTaskStepParser {
     static let maxTextCharacters = 500
     static let maxSummaryCharacters = 280
 
+    /// Tab commands are out: a page-steered agent must not open tabs or read other tabs.
     static let allowedBrowserCommands: Set<BrowserCommand> = [
-        .newTab, .nextTab, .previousTab, .back, .forward, .reload,
-        .scrollDown, .scrollUp, .scrollToTop, .scrollToBottom, .find,
+        .back, .forward, .reload, .scrollDown, .scrollUp, .scrollToTop, .scrollToBottom, .find,
     ]
     /// Keys the agent may press on their own. Letters and digits are deliberately absent: typing
     /// goes through `typeText` / `fillField`, where the sensitive-text checks live.
@@ -38,7 +38,7 @@ enum RioTaskStepParser {
         "return", "tab", "escape", "space", "delete", "up", "down", "left", "right",
         "home", "end", "pageup", "pagedown",
     ]
-    /// Command shortcuts the agent may use (address bar, find, select all, new tab).
+    /// Command shortcuts the agent may use (find, select all).
     /// ⌘F and ⌘A only. ⌘L/⌘T are excluded: focusing the address bar and typing would let the
     /// agent reach any URL without the `webURL` checks; it navigates with `openURL` instead.
     static let allowedCommandKeys: Set<String> = ["f", "a"]
@@ -162,26 +162,8 @@ enum RioTaskStepParser {
               let url = URL(string: string), let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https", url.user == nil, url.password == nil,
               let host = url.host?.lowercased(), host.contains("."), !host.hasPrefix("."), !host.hasSuffix("."),
-              !isLocalHost(host) else { return nil }
+              !RioWebHostRules.isLocalHost(host) else { return nil }
         return url
-    }
-
-    /// Loopback, link-local and private addresses: the agent browses the public web only. Any IP
-    /// literal (dotted, decimal, hex, octal, short or IPv6) is refused outright: the host must be
-    /// a name ending in an alphabetic top-level domain.
-    private static func isLocalHost(_ host: String) -> Bool {
-        if host == "localhost" || host.hasSuffix(".local") || host.hasSuffix(".localhost") || host.hasSuffix(".internal") { return true }
-        if host.contains(":") || host.contains("[") { return true }
-        guard let tld = host.split(separator: ".").last, tld.count >= 2, tld.allSatisfy({ $0.isLetter && $0.isASCII }) else {
-            return true
-        }
-        let parts = host.split(separator: ".").compactMap { Int($0) }
-        guard parts.count == 4 else { return false }
-        switch (parts[0], parts[1]) {
-        case (127, _), (10, _), (0, _), (169, 254), (192, 168): return true
-        case (172, 16...31): return true
-        default: return false
-        }
     }
 
     // MARK: Decoding

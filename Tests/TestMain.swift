@@ -73,6 +73,7 @@ struct FreeFlowTests {
         await RioVisionRequestTests.run()
         RioTaskStepTests.run()
         RioTaskSafetyTests.run()
+        RioTaskHardeningTests.run()
         RioTaskPromptTests.run()
         RioTaskPhrasesTests.run()
         await RioTaskRunnerTests.run()

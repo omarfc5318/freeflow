@@ -63,8 +63,10 @@ enum RioScreenPhrasesTests {
             ("Click send.", "send", nil),
             ("click on Send", "Send", nil),
             ("click the Send button", "Send button", nil),
-            ("click the blue Submit button", "Submit button", nil),
-            ("click the red delete button", "delete button", nil),
+            ("click the blue Submit button", "blue Submit button", nil),
+            ("click the blue button", "blue button", nil),
+            ("click the big round blue Next link", "blue Next link", nil),
+            ("click the red delete button", "red delete button", nil),
             ("tap Reply", "Reply", nil),
             ("press the Done button", "Done button", nil),
             ("hit the Save button", "Save button", nil),
@@ -175,7 +177,7 @@ enum RioScreenPhrasesTests {
 
     private static func testThroughRealParser() {
         let click = viaParser("Rio, click the blue Submit button")
-        ETest.eq(click, .actions([.click(label: "Submit button", ordinal: nil)]), "real parser click")
+        ETest.eq(click, .actions([.click(label: "blue Submit button", ordinal: nil)]), "real parser click")
         ETest.eq(viaParser("click Send"), .actions([.click(label: "Send", ordinal: nil)]), "real parser click Send")
         ETest.eq(viaParser("what's on my screen"), .actions([.describeScreen(question: nil)]), "real parser describe")
         ETest.eq(viaParser("what does this error mean"),

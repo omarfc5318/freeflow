@@ -41,8 +41,13 @@ enum RioTaskSafety {
         return RioText.matches(riskyWordPattern, text)
     }
 
+    /// `resolution` is the control the label really resolves to (security H2): its own texts are
+    /// checked as well as the model's wording, and a match that is not exact always asks.
+    /// `currentPage` is the page the agent is on, for the "opens another site" check.
     static func risk(
-        of action: RioAction, targetLabel: String?, narration: String, modelFlagged: Bool, goal: String
+        of action: RioAction, targetLabel: String?, narration: String, modelFlagged: Bool, goal: String,
+        resolution: RioTaskTargetResolution = .notApplicable, currentPage: URL? = nil,
+        focusInWebArea: Bool = true, focusIsAddressField: Bool = false
     ) -> RioTaskRisk {
         if modelFlagged { return .confirm(reason: "Rio thinks this step needs your OK.") }
         switch action {
@@ -50,11 +55,13 @@ enum RioTaskSafety {
             if isRiskyText(label) || isRiskyText(targetLabel) || isRiskyText(narration) {
                 return .confirm(reason: "This step may buy, send, submit, delete, book or sign in.")
             }
+            if let reason = resolvedClickReason(resolution) { return .confirm(reason: reason) }
         case .pressKeys(let combo):
             if combo.key == "return" || combo.key == "space" {
                 // The focused element may be a button ("Place order") or a form field whose Return
-                // submits; only a search box is exempt.
-                let isSearchBox = targetLabel.map { RioText.matches(#"(?i)\bsearch\b"#, $0) } ?? false
+                // submits; only a search box on the page itself is exempt.
+                let isSearchBox = (targetLabel.map { RioText.matches(#"(?i)\bsearch\b"#, $0) } ?? false)
+                    && focusInWebArea && !focusIsAddressField
                 if !isSearchBox || isRiskyText(targetLabel) || isRiskyText(narration) || isSensitiveLabel(targetLabel) {
                     return .confirm(reason: "Pressing this key may submit, send or sign in.")
                 }
@@ -64,6 +71,7 @@ enum RioTaskSafety {
             if RioText.matches(riskyURLPattern, text) {
                 return .confirm(reason: "This page looks like a checkout, sign-in or account change.")
             }
+            if let reason = exfiltrationReason(url: url, goal: goal, currentPage: currentPage) { return .confirm(reason: reason) }
         case .fillField(_, let text), .typeText(let text):
             if hasPersonalDetails(text), !goal.localizedCaseInsensitiveContains(text) {
                 return .confirm(reason: "This types personal details the page asked for, not ones you gave.")
@@ -74,8 +82,97 @@ enum RioTaskSafety {
         return .safe
     }
 
+    /// Why a click on the resolved control needs the user's OK, or nil. Every text the control has
+    /// is checked, and anything short of an exact match asks ("Place" is "Place order").
+    private static func resolvedClickReason(_ resolution: RioTaskTargetResolution) -> String? {
+        switch resolution {
+        case .notApplicable:
+            return nil
+        case .unresolved:
+            return "Rio couldn't check which control that is."
+        case .resolved(let candidates, let isExact):
+            if candidates.contains(where: { $0.texts.contains(where: { isRiskyText($0) }) }) {
+                return "This control may buy, send, submit, delete, book or sign in."
+            }
+            if !isExact { return "Rio isn't sure which control that is, so it wants your OK first." }
+            return nil
+        }
+    }
+
+    // MARK: Leaving the page (exfiltration)
+
+    private static let longWordCount = 7
+    private static let longTextCharacters = 80
+    private static let opaqueTokenCharacters = 40
+
+    /// A hostile page can steer `openURL` to `attacker.example/?d=<page data>`. Ask when the host
+    /// is not the current page's and the goal doesn't name it, or when the path or query carries
+    /// personal details, long free text or an opaque token that the goal doesn't contain.
+    static func exfiltrationReason(url: URL, goal: String, currentPage: URL?) -> String? {
+        if let host = url.host?.lowercased() {
+            let current = currentPage?.host.map(RioWebHostRules.bareHost)
+            if current != RioWebHostRules.bareHost(host), !RioWebHostRules.goalMentions(host: host, goal: goal) {
+                return "This opens a different site (\(host)) than the one you asked for."
+            }
+        }
+        if carriesPayload(url, goal: goal) {
+            return "This address carries text or details you didn't give Rio."
+        }
+        return nil
+    }
+
+    private static func carriesPayload(_ url: URL, goal: String) -> Bool {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+        var chunks = parts.path.split(separator: "/").map { String($0).removingPercentEncoding ?? String($0) }
+        for item in parts.queryItems ?? [] {
+            chunks.append(item.name)
+            if let value = item.value { chunks.append(value) }
+        }
+        if let fragment = parts.fragment { chunks.append(fragment.removingPercentEncoding ?? fragment) }
+        let lowerGoal = goal.lowercased()
+        for raw in chunks {
+            let chunk = raw.replacingOccurrences(of: "+", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !chunk.isEmpty, !lowerGoal.contains(chunk.lowercased()) else { continue }
+            if hasPersonalDetails(chunk) { return true }
+            let words = chunk.split(whereSeparator: \.isWhitespace).count
+            if words >= longWordCount || chunk.count >= longTextCharacters { return true }
+            if words == 1, chunk.count >= opaqueTokenCharacters { return true }
+        }
+        return false
+    }
+
+    // MARK: Browser chrome (security H1)
+
+    /// The agent never types into, or presses Return or Space in, browser chrome: the address bar
+    /// would reach any URL (local hosts, file:) and Return there would pass as a search. Typing is
+    /// allowed only when the focused or target element is inside the page (an AXWebArea).
+    /// Returns the hand-back message, or nil.
+    static func chromeHandBackReason(
+        for action: RioAction, observation: RioTaskObservation, target: RioTaskTargetResolution
+    ) -> String? {
+        let chrome = "That's part of the browser, not the page, so please do that one yourself."
+        switch action {
+        case .fillField:
+            guard case .resolved(let candidates, _) = target else { return nil }
+            if candidates.contains(where: { $0.isAddressField }) {
+                return "That's the browser's address bar, so please use it yourself."
+            }
+            if candidates.contains(where: { !$0.isInWebArea }) { return chrome }
+        case .typeText:
+            if observation.focusedIsAddressField { return "That's the browser's address bar, so please use it yourself." }
+            if !observation.focusedInWebArea { return chrome }
+        case .pressKeys(let combo):
+            guard combo.key == "return" || combo.key == "space" else { return nil }
+            if observation.focusedIsAddressField { return "That's the browser's address bar, so please use it yourself." }
+            if !observation.focusedInWebArea { return chrome }
+        default:
+            break
+        }
+        return nil
+    }
+
     /// Email addresses, phone numbers and long digit runs.
-    private static func hasPersonalDetails(_ text: String) -> Bool {
+    static func hasPersonalDetails(_ text: String) -> Bool {
         if RioText.matches(#"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}"#, text) { return true }
         if RioText.matches(#"\d{6,}"#, text) { return true }
         if let groups = RioText.firstMatch(#"\+?\d[\d\s().\-]{7,}\d"#, in: text), let run = groups[0] {

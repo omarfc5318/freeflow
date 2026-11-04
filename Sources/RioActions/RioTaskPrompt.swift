@@ -13,6 +13,17 @@ struct RioTaskObservation: Equatable {
     let focusedField: RioTaskFieldInfo?
     /// A JPEG data URL of the window, when Screen Recording is allowed and screenshots are on.
     let imageDataURL: String?
+    /// The URL of the page in the window (its AXWebArea), when the browser exposes it.
+    var pageURL: URL?
+    /// Keyboard focus is on the page itself (inside an AXWebArea), not in browser chrome. False
+    /// when nothing is focused. Typing and Return are refused unless this is true.
+    var focusedInWebArea = true
+    /// Keyboard focus is on a browser address (and search) field.
+    var focusedIsAddressField = false
+    /// The process that owns the window; the task is pinned to it.
+    var processID: Int32?
+    /// A window Rio must not read (password manager, privacy pane): nothing was collected.
+    var isRestricted = false
 }
 
 struct RioTaskHistoryEntry: Equatable {
@@ -36,8 +47,8 @@ enum RioTaskPrompt {
     {"step":"click","label":"Search","ordinal":2}          press a button, link, tab or checkbox by its visible label; ordinal is optional
     {"step":"fillField","label":"Where to?","text":"Doha"} focus the field with that label and type
     {"step":"typeText","text":"flights to Doha"}           type into the focused field
-    {"step":"pressKeys","key":"return"}                    keys: return, tab, escape, space, delete, arrows, pageup, pagedown, home, end; or command with l, f, a or t
-    {"step":"browser","command":"scrollDown"}              newTab, nextTab, previousTab, back, forward, reload, scrollDown, scrollUp, scrollToTop, scrollToBottom, find
+    {"step":"pressKeys","key":"return"}                    keys: return, tab, escape, space, delete, arrows, pageup, pagedown, home, end; or command with f or a
+    {"step":"browser","command":"scrollDown"}              back, forward, reload, scrollDown, scrollUp, scrollToTop, scrollToBottom, find
     {"step":"wait","seconds":2}                            let the page load (0.5 to 5)
     {"step":"ask","question":"Which date works?"}          you need information, or the user must do something themselves
     {"step":"done","summary":"Cheapest is $640 on Qatar."} the goal is finished or cannot be finished; summarize in one or two sentences
@@ -91,6 +102,9 @@ enum RioTaskPrompt {
         if let focused = observation.focusedField {
             let label = sanitizePageText(focused.label ?? "unlabelled", maxLength: 60)
             lines.append("Focused field: \(label)\(focused.isSecure ? " (private, do not type)" : "")")
+        }
+        if observation.focusedIsAddressField || !observation.focusedInWebArea {
+            lines.append("Keyboard focus: the browser's own toolbar, not the page (do not type or press Return)")
         }
         lines.append("Controls:")
         lines.append(sanitizeOutline(observation.outline))
