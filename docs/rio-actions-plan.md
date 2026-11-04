@@ -613,6 +613,19 @@ WhatsApp"), #49 triggers (external monitor plugged in, AirPods connected, joined
 run commands), #52 ("definitely") the corner bear follows the owner to whichever screen they're
 actually working on.
 
+## Wave 5 additions (owner picks, 2026-11-03)
+
+- #55 Write for me: "Rio, write a reply saying I'll send it tomorrow, keep it friendly"
+  composes text (not verbatim) and types it into the focused field.
+- #56 Smart paste: "paste that as bullet points / in Arabic / more formally" transforms the
+  clipboard while pasting.
+- #57 Copy text from anything on screen: "copy the text from this image/video/PDF" via on-device
+  Vision OCR (Live Text). Nothing leaves the Mac.
+- #58 Weather and news: real data. Weather from Open-Meteo (free, no key); news through the
+  provider's web-search-capable model, disclosed.
+- #59 Drive Claude Code by voice: "tell Claude to fix the failing test", "approve that", "what's
+  Claude doing?" against the owner's Claude Code session in Warp.
+
 ## Rules for every builder
 - Read `AGENTS.md` first and follow it. No new dependencies, no SPM/Xcode project. Swift 6.2
   toolchain, deployment target macOS 13, `-warnings-as-errors`. Use `#available` for newer APIs.
