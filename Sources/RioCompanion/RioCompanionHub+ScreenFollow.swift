@@ -41,7 +41,7 @@ extension RioCompanionHub {
 
     /// Starts or stops the safety poll to match the number of displays and the style.
     func updateScreenFollowTimer() {
-        let needed = RioStyle.current == .corner && isShown && NSScreen.screens.count > 1
+        let needed = RioStyle.current == .corner && isShown && NSScreen.screens.count > 1 && !model.gate.isPaused
         if needed, screenFollowTimer == nil {
             let timer = Timer(timeInterval: RioScreenFollow.pollInterval, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.checkScreenFollow() }
@@ -66,7 +66,7 @@ extension RioCompanionHub {
     // MARK: The check
 
     func checkScreenFollow() {
-        guard RioStyle.current == .corner, isShown else { return }
+        guard RioStyle.current == .corner, isShown, !model.gate.isPaused else { return }
         let screens = Self.screenInfos()
         guard screens.count > 1, let primaryHeight = NSScreen.screens.first?.frame.height else { return }
         if screenFollow.current == nil {

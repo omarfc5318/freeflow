@@ -21,7 +21,10 @@ import Foundation
 
     private let synthesizer = AVSpeechSynthesizer()
     private let delegateBridge = SpeechDelegate()
-    private var currentUtterance: ObjectIdentifier?
+    private var tracker = RioUtteranceTracker()
+    private var startedAt = Date.distantPast
+    private var maxDuration: TimeInterval = 0
+    private var watchdog: Timer?
     private var mouthTimer: Timer?
     private var lastWordAt = Date.distantPast
     private var lastWordLength = 5
@@ -37,18 +40,21 @@ import Foundation
     func speak(_ text: String) {
         guard let prepared = RioSpeechText.prepare(text), canSpeak(prepared) else { return }
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
-        let utterance = AVSpeechUtterance(string: prepared)
+        let utterance = RioUtterance(string: prepared, token: tracker.begin())
         utterance.voice = voice
         utterance.pitchMultiplier = RioVoiceStyle.pitch
         utterance.rate = RioVoiceStyle.rate
         utterance.volume = RioVoiceStyle.volume
         utterance.preUtteranceDelay = 0.05
-        currentUtterance = ObjectIdentifier(utterance)
+        startedAt = Date()
+        lastWordAt = startedAt
+        maxDuration = RioSpeechWatchdog.maxDuration(characterCount: prepared.count)
+        armWatchdog()
         synthesizer.speak(utterance)
     }
 
     func stopSpeaking() {
-        currentUtterance = nil
+        tracker.cancel()
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
         finishSpeaking()
     }
@@ -89,27 +95,59 @@ import Foundation
 
     // MARK: Delegate events (hopped onto the main actor by SpeechDelegate)
 
-    fileprivate func utteranceStarted(_ id: ObjectIdentifier) {
-        guard id == currentUtterance else { return }
+    fileprivate func utteranceStarted(_ id: UUID?) {
+        guard tracker.isCurrent(id) else { return }
         lastWordAt = Date()
         lastWordLength = 5
         isSpeaking = true
         startMouthTimer()
     }
 
-    fileprivate func wordSpoken(_ id: ObjectIdentifier, length: Int) {
-        guard id == currentUtterance else { return }
+    fileprivate func wordSpoken(_ id: UUID?, length: Int) {
+        guard tracker.isCurrent(id) else { return }
         lastWordAt = Date()
         lastWordLength = length
     }
 
-    fileprivate func utteranceEnded(_ id: ObjectIdentifier) {
-        guard id == currentUtterance else { return }
-        currentUtterance = nil
+    fileprivate func utteranceEnded(_ id: UUID?) {
+        guard tracker.end(id) else { return }
+        finishSpeaking()
+    }
+
+    /// A once-a-second backstop for a `didFinish` that never arrives: `isSpeaking` cannot stick.
+    private func armWatchdog() {
+        watchdog?.invalidate()
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.watchdogTick() }
+        }
+        timer.tolerance = 0.5
+        RunLoop.main.add(timer, forMode: .common)
+        watchdog = timer
+    }
+
+    private func watchdogTick() {
+        guard tracker.current != nil else {
+            watchdog?.invalidate()
+            watchdog = nil
+            return
+        }
+        let now = Date()
+        let stuck = RioSpeechWatchdog.shouldForceFinish(
+            synthesizerIsSpeaking: synthesizer.isSpeaking,
+            // Before the first word the voice may still be loading; only the hard cap applies then.
+            secondsSinceWord: isSpeaking ? now.timeIntervalSince(lastWordAt) : 0,
+            secondsSinceStart: now.timeIntervalSince(startedAt),
+            maxDuration: maxDuration
+        )
+        guard stuck else { return }
+        tracker.cancel()
+        if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
         finishSpeaking()
     }
 
     private func finishSpeaking() {
+        watchdog?.invalidate()
+        watchdog = nil
         mouthTimer?.invalidate()
         mouthTimer = nil
         level = RioMouthLevel.restingLevel
@@ -144,12 +182,22 @@ import Foundation
 
     // MARK: Bridge
 
+    /// An utterance that carries the token Rio minted for it.
+    private final class RioUtterance: AVSpeechUtterance, @unchecked Sendable {
+        private(set) var token: UUID?
+
+        convenience init(string: String, token: UUID) {
+            self.init(string: string)
+            self.token = token
+        }
+    }
+
     /// AVSpeechSynthesizer delegate callbacks arrive off the main actor; this hops them over.
     private final class SpeechDelegate: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
         weak var owner: RioVoice?
 
         func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
-            let id = ObjectIdentifier(utterance)
+            let id = (utterance as? RioUtterance)?.token
             Task { @MainActor [weak owner] in owner?.utteranceStarted(id) }
         }
 
@@ -157,18 +205,18 @@ import Foundation
             _ synthesizer: AVSpeechSynthesizer, willSpeakRangeOfSpeechString characterRange: NSRange,
             utterance: AVSpeechUtterance
         ) {
-            let id = ObjectIdentifier(utterance)
+            let id = (utterance as? RioUtterance)?.token
             let length = characterRange.length
             Task { @MainActor [weak owner] in owner?.wordSpoken(id, length: length) }
         }
 
         func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-            let id = ObjectIdentifier(utterance)
+            let id = (utterance as? RioUtterance)?.token
             Task { @MainActor [weak owner] in owner?.utteranceEnded(id) }
         }
 
         func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-            let id = ObjectIdentifier(utterance)
+            let id = (utterance as? RioUtterance)?.token
             Task { @MainActor [weak owner] in owner?.utteranceEnded(id) }
         }
     }

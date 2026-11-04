@@ -42,6 +42,8 @@ struct TeddyBodyPose: Equatable {
     enum HeadProp: Equatable {
         case none
         case nightcap
+        /// Over-ear headphones, worn while Rio is translating.
+        case headphones
     }
 
     struct Limb: Equatable {

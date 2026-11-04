@@ -24,10 +24,12 @@ final class RioCompanionHub: RioCompanionDirecting {
     var screenFollowTimer: Timer?
     var isMovingScreens = false
     private var recoveryAnnounced = false
-    private var tierTimer: Timer?
+    private var housekeepingTimer: Timer?
+    private var housekeepingPeriod: TimeInterval = 0
     private var lastActionPhase: RioActionPhase = .idle
     var voiceIsActive = false
     private var runToken = UUID()
+    private var dockRunThrottle = RioDockRunThrottle()
     private var observersInstalled = false
 
     private init() {}
@@ -36,13 +38,22 @@ final class RioCompanionHub: RioCompanionDirecting {
 
     func attach(_ appState: AppState) {
         startDockClickRuns()
-        appState.objectWillChange
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self, weak appState] _ in
-                guard let self, let appState else { return }
-                MainActor.assumeIsolated { self.syncAppState(appState) }
+        // Only the two AppState values the bear needs: the action phase and the crash apology.
+        // Speech, timer, help and celebration come straight from RioVoice and RioCompanionCenter,
+        // never through AppState's mirrored copies (they fired at 30 Hz while he spoke).
+        appState.$rioActionPhase.removeDuplicates()
+            .sink { [weak self] phase in MainActor.assumeIsolated { self?.syncActionPhase(phase) } }
+            .store(in: &cancellables)
+        appState.$rioRecoveredFromCrash.removeDuplicates()
+            .sink { [weak self] recovered in
+                MainActor.assumeIsolated {
+                    guard let self, recovered, !self.recoveryAnnounced else { return }
+                    self.recoveryAnnounced = true
+                    self.announceRecovery()
+                }
             }
             .store(in: &cancellables)
+        bindDirectSources()
         installObservers()
         applyStyle()
     }
@@ -51,8 +62,10 @@ final class RioCompanionHub: RioCompanionDirecting {
         guard !observersInstalled else { return }
         observersInstalled = true
         let center = NotificationCenter.default
+        // UserDefaults posts one notification for every write by anyone in the app; only a change
+        // to the bear's own keys may re-run the style, relayout and Dock walk.
         center.publisher(for: UserDefaults.didChangeNotification).receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in MainActor.assumeIsolated { self?.applyStyle() } }.store(in: &cancellables)
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.bearDefaultsMayHaveChanged() } }.store(in: &cancellables)
         center.publisher(for: NSApplication.didChangeScreenParametersNotification).receive(on: DispatchQueue.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.reconcileHomeScreen(); self?.relayout() } }.store(in: &cancellables)
         let workspace = NSWorkspace.shared.notificationCenter
@@ -65,13 +78,63 @@ final class RioCompanionHub: RioCompanionDirecting {
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.relayout(); self?.locator.refresh() } }
             .store(in: &cancellables)
         installScreenFollow()
+        installPauseObservers()
         model.onStop = { [weak self] in self?.onStopPressed?() }
     }
 
     var onStopPressed: (() -> Void)?
 
+    private var lastBearDefaults: RioBearDefaults?
+
+    private static func readBearDefaults() -> RioBearDefaults {
+        RioBearDefaults.read(
+            from: .standard, styleKey: RioStyle.defaultsKey,
+            capturesKey: RioCompanionPrivacy.defaultsKey, dockRunKey: dockRunDefaultsKey
+        )
+    }
+
+    private func bearDefaultsMayHaveChanged() {
+        let current = Self.readBearDefaults()
+        guard current != lastBearDefaults else { return }
+        applyStyle()
+    }
+
+    // MARK: Pausing (display asleep, session inactive, panel covered)
+
+    private func installPauseObservers() {
+        let workspace = NSWorkspace.shared.notificationCenter
+        let changes: [(Notification.Name, WritableKeyPath<RioRedrawGate, Bool>, Bool)] = [
+            (NSWorkspace.screensDidSleepNotification, \.displayAsleep, true),
+            (NSWorkspace.screensDidWakeNotification, \.displayAsleep, false),
+            (NSWorkspace.sessionDidResignActiveNotification, \.sessionActive, false),
+            (NSWorkspace.sessionDidBecomeActiveNotification, \.sessionActive, true),
+        ]
+        for (name, path, value) in changes {
+            workspace.publisher(for: name).receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in MainActor.assumeIsolated { self?.setGate(path, to: value) } }
+                .store(in: &cancellables)
+        }
+        NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification).receive(on: DispatchQueue.main)
+            .sink { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let self, let panel = self.panel, (note.object as? NSPanel) === panel else { return }
+                    self.setGate(\.panelVisible, to: panel.occlusionState.contains(.visible))
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func setGate(_ path: WritableKeyPath<RioRedrawGate, Bool>, to value: Bool) {
+        guard model.gate[keyPath: path] != value else { return }
+        model.gate[keyPath: path] = value
+        // Resuming kicks the timers back on; pausing lets them lapse and stops screen-follow polling.
+        kick()
+        updateScreenFollowTimer()
+    }
+
     /// Shows the sleeping bear (corner style) or removes him (classic pill).
     func applyStyle() {
+        lastBearDefaults = Self.readBearDefaults()
         if RioStyle.current == .corner {
             if panel == nil { makePanel() }
             panel?.sharingType = RioCompanionPrivacy.sharingType
@@ -84,8 +147,7 @@ final class RioCompanionHub: RioCompanionDirecting {
             panel.contentView = nil
             panel.close()
             self.panel = nil
-            tierTimer?.invalidate()
-            tierTimer = nil
+            stopHousekeeping()
             homeDisplayID = nil
             updateScreenFollowTimer()
         }
@@ -140,6 +202,22 @@ final class RioCompanionHub: RioCompanionDirecting {
     }
 
     static let recoveryMessage = "Sorry, I tripped! I'm back."
+    static let crashLoopMessage = "Rio kept crashing at startup, so I stopped restarting him."
+
+    /// Shown once on the first manual launch after Rio gave up restarting himself (three crashes
+    /// in about two minutes). A longer card on the bear; a plain alert when the pill style is on.
+    func announceCrashLoopStopped() {
+        if RioStyle.current == .corner, panel != nil {
+            model.noticeText = (Self.crashLoopMessage, RioCompanionClock.now + 10)
+            kick()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Rio stopped restarting"
+        alert.informativeText = Self.crashLoopMessage
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
 
     func showFailure() { showError("Something went wrong", seconds: 2.2) }
 
@@ -165,41 +243,70 @@ final class RioCompanionHub: RioCompanionDirecting {
     var lastSpeaking = false
     var lastHelp = false
 
-    /// Mirrors AppState's Rio state (action phase, speech, timer, help card, celebrations).
-    private func syncAppState(_ appState: AppState) {
-        syncActionPhase(appState.rioActionPhase)
-        if appState.rioRecoveredFromCrash, !recoveryAnnounced {
-            recoveryAnnounced = true
-            announceRecovery()
-        }
+    /// Subscribes straight to the sources of the bear's state: Rio's voice (speaking and mouth
+    /// level) and RioCompanionCenter (timer, help card, celebrations). `@Published` fires before
+    /// the value changes, so each handler uses the value it is handed, never a re-read.
+    private func bindDirectSources() {
+        let voice = RioVoice.shared
+        let center = RioCompanionCenter.shared
+        voice.$isSpeaking.removeDuplicates()
+            .sink { [weak self] speaking in MainActor.assumeIsolated { self?.speakingChanged(speaking) } }
+            .store(in: &cancellables)
+        voice.$level
+            .sink { [weak self] level in
+                MainActor.assumeIsolated {
+                    guard let self, self.lastSpeaking else { return }
+                    self.model.level = CGFloat(min(max(level, 0), 1))
+                }
+            }
+            .store(in: &cancellables)
+        center.$timerRemaining.combineLatest(center.$timerRinging)
+            .sink { [weak self] remaining, ringing in MainActor.assumeIsolated { self?.timerChanged(remaining: remaining, ringing: ringing) } }
+            .store(in: &cancellables)
+        RioTranslatorMode.shared.$isOn.removeDuplicates()
+            .sink { [weak self] isOn in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.model.wearsHeadphones = isOn
+                    self.kick()
+                }
+            }
+            .store(in: &cancellables)
+        center.$isHelpVisible.removeDuplicates()
+            .sink { [weak self] visible in MainActor.assumeIsolated { self?.helpChanged(visible) } }
+            .store(in: &cancellables)
+        center.$celebrateCount
+            .sink { [weak self] count in MainActor.assumeIsolated { self?.celebrateCountChanged(count) } }
+            .store(in: &cancellables)
+    }
+
+    private func speakingChanged(_ speaking: Bool) {
+        guard RioStyle.current == .corner, speaking != lastSpeaking else { return }
+        lastSpeaking = speaking
+        model.machine.speakingChanged(speaking, at: RioCompanionClock.now)
+        kick()
+    }
+
+    private func timerChanged(remaining: TimeInterval?, ringing: Bool) {
         guard RioStyle.current == .corner else { return }
-        let now = RioCompanionClock.now
-        var changed = false
-        let speaking = appState.isRioSpeaking
-        if speaking != lastSpeaking {
-            lastSpeaking = speaking
-            model.machine.speakingChanged(speaking, at: now)
-            changed = true
-        }
-        if speaking { model.level = CGFloat(min(max(appState.rioSpeechLevel, 0), 1)) }
-        let remaining = appState.rioTimerRemaining
         let wholeSeconds = remaining.map { Int($0.rounded(.up)) }
-        let ringing = appState.rioTimerRinging
-        if wholeSeconds != lastTimer.remaining || ringing != lastTimer.ringing {
-            lastTimer = (wholeSeconds, ringing)
-            model.machine.timerChanged(remaining: remaining, ringing: ringing, at: now)
-            changed = true
-        }
-        if appState.isRioHelpVisible != lastHelp {
-            lastHelp = appState.isRioHelpVisible
-            model.machine.helpChanged(lastHelp, at: now)
-            changed = true
-        }
-        if celebrateWatcher.didIncrement(appState.rioCelebrate) {
-            model.machine.celebrate(at: now)
-            changed = true
-        }
-        if changed { kick() }
+        guard wholeSeconds != lastTimer.remaining || ringing != lastTimer.ringing else { return }
+        lastTimer = (wholeSeconds, ringing)
+        model.machine.timerChanged(remaining: remaining, ringing: ringing, at: RioCompanionClock.now)
+        kick()
+    }
+
+    private func helpChanged(_ visible: Bool) {
+        guard RioStyle.current == .corner, visible != lastHelp else { return }
+        lastHelp = visible
+        model.machine.helpChanged(visible, at: RioCompanionClock.now)
+        kick()
+    }
+
+    private func celebrateCountChanged(_ count: Int) {
+        guard RioStyle.current == .corner, celebrateWatcher.didIncrement(count) else { return }
+        model.machine.celebrate(at: RioCompanionClock.now)
+        kick()
     }
 
     private func syncActionPhase(_ phase: RioActionPhase) {
@@ -264,7 +371,8 @@ final class RioCompanionHub: RioCompanionDirecting {
               let screen = Self.homeScreen(),
               RioScreenChoice.canRunDockRun(bearScreen: homeDisplayID, screens: Self.screenInfos()) else { return false }
         let now = RioCompanionClock.now
-        guard model.machine.canRun(at: now), model.run == nil,
+        // Never while a trick or another run is going, and at most one run per 0.5 s.
+        guard dockRunThrottle.allows(at: now), model.machine.canRun(at: now), model.run == nil,
               let target = locator.target(for: appURL, primaryScreen: screen.frame, allowStale: allowStaleDock) else { return false }
 
         let anchor = RioCompanionLayout.anchor(screenFrame: screen.frame, visibleFrame: screen.visibleFrame)
@@ -275,6 +383,7 @@ final class RioCompanionHub: RioCompanionDirecting {
 
         let plan = RioDockRunPlan.make(distance: finalX - startX)
         guard model.machine.startRun(plan, at: now) else { return false }
+        dockRunThrottle.record(at: now)
         let token = UUID()
         runToken = token
         let height = RioCompanionMetrics.cornerPanelSize.height
@@ -348,24 +457,39 @@ final class RioCompanionHub: RioCompanionDirecting {
         panel?.orderFrontRegardless()
     }
 
-    /// Re-picks the redraw rate and keeps a light timer running while he is awake.
-    private func kick() {
+    /// Re-picks the redraw schedule and keeps a housekeeping timer running only as often as the
+    /// schedule needs (none while asleep or paused).
+    private func kick(notify: Bool = true) {
         let now = RioCompanionClock.now
         model.refreshTier(at: now)
-        model.objectWillChange.send()
-        guard tierTimer == nil, panel != nil else { return }
-        tierTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let t = RioCompanionClock.now
-                if let error = self.model.errorText, t >= error.until { self.model.errorText = nil }
-                if let notice = self.model.noticeText, t >= notice.until { self.model.noticeText = nil }
-                self.model.refreshTier(at: t)
-                if !self.model.needsTimer && self.model.machine.mode(at: t) == .asleep {
-                    self.tierTimer?.invalidate()
-                    self.tierTimer = nil
-                }
-            }
+        if notify { model.objectWillChange.send() }
+        guard panel != nil, let period = model.housekeepingInterval() else {
+            stopHousekeeping()
+            return
         }
+        if housekeepingTimer != nil, housekeepingPeriod == period { return }
+        housekeepingTimer?.invalidate()
+        housekeepingPeriod = period
+        let timer = Timer(timeInterval: period, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.housekeepingTick() }
+        }
+        timer.tolerance = period * 0.25
+        RunLoop.main.add(timer, forMode: .common)
+        housekeepingTimer = timer
+    }
+
+    private func stopHousekeeping() {
+        housekeepingTimer?.invalidate()
+        housekeepingTimer = nil
+        housekeepingPeriod = 0
+    }
+
+    private func housekeepingTick() {
+        let t = RioCompanionClock.now
+        if let error = model.errorText, t >= error.until { model.errorText = nil }
+        if let notice = model.noticeText, t >= notice.until { model.noticeText = nil }
+        // `kick` re-plans (or stops) the timer as the schedule changes. No forced redraw here:
+        // the schedule's own ticks draw, and a schedule change publishes itself.
+        kick(notify: false)
     }
 }

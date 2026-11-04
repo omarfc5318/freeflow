@@ -14,6 +14,24 @@ enum RioSystemControls {
         let output: String
     }
 
+    /// Thread-safe growing buffer for a child process's output.
+    private final class OutputCollector: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+
+        func append(_ chunk: Data) {
+            lock.lock()
+            data.append(chunk)
+            lock.unlock()
+        }
+
+        var string: String {
+            lock.lock()
+            defer { lock.unlock() }
+            return String(decoding: data, as: UTF8.self)
+        }
+    }
+
     private static func networksetup(_ arguments: [String]) async -> ToolOutput? {
         await withCheckedContinuation { (continuation: CheckedContinuation<ToolOutput?, Never>) in
             guard FileManager.default.isExecutableFile(atPath: RioNetworkSetup.executablePath) else {
@@ -27,9 +45,21 @@ enum RioSystemControls {
             process.standardOutput = pipe
             process.standardError = pipe
             process.standardInput = FileHandle.nullDevice
+            // Drain the pipe while the tool runs: reading only after exit would deadlock once the
+            // output outgrows the pipe buffer (the tool blocks on write, never exits).
+            let collected = OutputCollector()
+            pipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                if chunk.isEmpty {
+                    handle.readabilityHandler = nil
+                } else {
+                    collected.append(chunk)
+                }
+            }
             process.terminationHandler = { finished in
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                continuation.resume(returning: ToolOutput(status: finished.terminationStatus, output: String(decoding: data, as: UTF8.self)))
+                pipe.fileHandleForReading.readabilityHandler = nil
+                collected.append(pipe.fileHandleForReading.readDataToEndOfFile())
+                continuation.resume(returning: ToolOutput(status: finished.terminationStatus, output: collected.string))
             }
             do { try process.run() } catch { continuation.resume(returning: nil) }
         }

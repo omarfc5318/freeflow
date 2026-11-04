@@ -189,6 +189,7 @@ extension TeddyArt {
             )
             drawHead(in: &head, face: face, outfit: outfit, faceShift: CGFloat(pose.twist) * 2.2, look: look)
             if pose.headProp == .nightcap { drawNightcap(in: &head) }
+            if pose.headProp == .headphones { drawHeadphones(in: &head) }
         }
 
         // Arms last, so a paw reaching for the head passes in front of it.

@@ -107,6 +107,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioCalendarPhrases.swift \
 	Sources/RioActions/RioCalendarSummary.swift \
 	Sources/RioActions/RioClipboardCore.swift \
+	Sources/RioActions/RioOwnChangeCounts.swift \
 	Sources/RioActions/RioDateTimeParser.swift \
 	Sources/RioActions/RioFilesPhrases.swift \
 	Sources/RioActions/RioFilesQuery.swift \
@@ -118,6 +119,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioCompanion/RioDockRunCore.swift \
 	Sources/RioCompanion/RioScreenFollowCore.swift \
 	Sources/RioLaunchCore.swift \
+	Sources/RioCompanion/RioRedrawPolicyCore.swift \
 	Sources/RioCompanion/RioPersonalityCore.swift \
 	Sources/TranscriptionErrorPresentationCore.swift \
 	Sources/TextExpansionCore.swift \

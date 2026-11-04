@@ -98,3 +98,49 @@ enum RioMouthLevel {
         return min(1, max(0, envelope * size * flutter))
     }
 }
+
+/// Tells utterances apart by a token Rio mints, not by object identity (an `ObjectIdentifier`
+/// can be reused once an utterance is freed, so a late callback could match a new line).
+struct RioUtteranceTracker: Equatable {
+    private(set) var current: UUID?
+
+    /// Starts a new utterance; any earlier one stops counting.
+    mutating func begin() -> UUID {
+        let token = UUID()
+        current = token
+        return token
+    }
+
+    func isCurrent(_ token: UUID?) -> Bool { token != nil && token == current }
+
+    /// True when `token` was the current utterance (and it is now finished).
+    mutating func end(_ token: UUID?) -> Bool {
+        guard isCurrent(token) else { return false }
+        current = nil
+        return true
+    }
+
+    mutating func cancel() { current = nil }
+}
+
+/// Backstop for a missing `didFinish`, so `isSpeaking` can never stay true.
+enum RioSpeechWatchdog {
+    /// Silence after the last spoken word that counts as "he is done" once the synthesizer
+    /// itself reports it is no longer speaking.
+    static let idleGrace: TimeInterval = 1.5
+    /// A word is never more than this far apart from the next even for a slow voice.
+    static let hardSilence: TimeInterval = 8
+
+    /// A generous upper bound for how long `characterCount` characters can take to say.
+    static func maxDuration(characterCount: Int) -> TimeInterval {
+        10 + Double(characterCount) * 0.25
+    }
+
+    static func shouldForceFinish(
+        synthesizerIsSpeaking: Bool, secondsSinceWord: TimeInterval, secondsSinceStart: TimeInterval, maxDuration: TimeInterval
+    ) -> Bool {
+        if secondsSinceStart > maxDuration { return true }
+        if !synthesizerIsSpeaking { return secondsSinceWord > idleGrace }
+        return secondsSinceWord > hardSilence
+    }
+}
