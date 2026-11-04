@@ -4,11 +4,12 @@ import SwiftUI
 /// doing; this turns that into a drawable snapshot each frame.
 @MainActor
 final class RioCompanionModel: ObservableObject {
-    /// How often the panel redraws: slow while asleep, smooth while he acts.
-    @Published private(set) var frameInterval: TimeInterval = RioCompanionModel.sleepyInterval
+    /// How the panel redraws: paused when nothing can be seen, slow while asleep or counting a
+    /// timer, smooth while he acts (pure rules in RioRedrawPolicyCore.swift).
+    @Published private(set) var schedule: RioRedrawSchedule = .periodic(RioRedrawPolicy.sleepyInterval)
     @Published var showsStop = false
-
-    static let sleepyInterval: TimeInterval = 0.25
+    /// Display asleep, session inactive or panel covered: draw nothing.
+    var gate = RioRedrawGate()
 
     struct Run {
         let plan: RioDockRunPlan
@@ -24,6 +25,8 @@ final class RioCompanionModel: ObservableObject {
     var level: CGFloat = 0
     var outfit: TeddyOutfit = .hoodie
     var look: SpokenLook = .none
+    /// Over-ear headphones while Rio is translating.
+    var wearsHeadphones = false
     var homeX: CGFloat = 28
     var groundY: CGFloat = RioCompanionMetrics.cornerPanelSize.height - RioCompanionLayout.groundInset
     var run: Run?
@@ -64,6 +67,7 @@ final class RioCompanionModel: ObservableObject {
             moment: machine.activeMoment(at: now), run: runInfo,
             mood: mood, grumpy: machine.isGrumpy(at: now), timerText: machine.timerText()
         )
+        if wearsHeadphones, mode != .away { figure.pose.headProp = .headphones }
         var bubble: RioCompanionSnapshot.Bubble?
         if let moment = machine.activeMoment(at: now), mode == .moment {
             bubble = .init(caption: moment.caption, text: moment.text)
@@ -94,31 +98,45 @@ final class RioCompanionModel: ObservableObject {
             mood = RioDayMood.current()
         }
         let mode = machine.mode(at: now)
-        let interval: TimeInterval
-        switch mode {
-        case .asleep: interval = Self.sleepyInterval
-        case .away: interval = 0.5
-        case .resting: interval = 0.1
-        case .sprint, .punch, .returning: interval = 1.0 / 60
-        default: interval = 1.0 / 30
-        }
-        if let errorText, now < errorText.until, interval > 1.0 / 30 { frameInterval = 1.0 / 30; return }
-        if abs(interval - frameInterval) > 0.0001 { frameInterval = interval }
+        let next = RioRedrawPolicy.schedule(
+            mode: mode,
+            hasTimer: machine.timerText() != nil,
+            hasErrorCard: errorText.map { now < $0.until } ?? false,
+            gate: gate
+        )
+        if next != schedule { schedule = next }
     }
 
-    var needsTimer: Bool { frameInterval < Self.sleepyInterval - 0.001 || run != nil || errorText != nil || noticeText != nil }
+    /// The housekeeping timer period for the current schedule; nil means no timer is needed.
+    func housekeepingInterval() -> TimeInterval? {
+        if let interval = RioRedrawPolicy.housekeepingInterval(schedule: schedule, hasPendingExpiry: errorText != nil || noticeText != nil) {
+            return interval
+        }
+        // A Dock run is moving the panel: keep the timer that restores it.
+        return run != nil && !gate.isPaused ? 0.2 : nil
+    }
 }
 
 struct RioCompanionRootView: View {
     @ObservedObject var model: RioCompanionModel
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: model.frameInterval)) { _ in
-            RioCompanionSceneView(
-                snapshot: model.snapshot(at: RioCompanionClock.now),
-                showsStop: model.showsStop,
-                onStop: model.onStop
-            )
+        switch model.schedule {
+        case .paused:
+            // One frame, then nothing: no timeline ticks while the bear cannot be seen.
+            TimelineView(.explicit([Date()])) { _ in scene }
+        case let .periodic(interval):
+            TimelineView(.periodic(from: Date(timeIntervalSinceReferenceDate: 0), by: interval)) { _ in scene }
+        case let .animation(minimumInterval):
+            TimelineView(.animation(minimumInterval: minimumInterval)) { _ in scene }
         }
+    }
+
+    private var scene: some View {
+        RioCompanionSceneView(
+            snapshot: model.snapshot(at: RioCompanionClock.now),
+            showsStop: model.showsStop,
+            onStop: model.onStop
+        )
     }
 }

@@ -18,7 +18,7 @@ final class RioClipboardHistory {
     private var timer: Timer?
     private var lastChangeCount: Int
     /// Change counts caused by Rio's own paste and restore, which must not become history.
-    private var ownChangeCounts: Set<Int> = []
+    private var ownChangeCounts = RioOwnChangeCounts()
 
     init(pasteboard: NSPasteboard = .general) {
         self.pasteboard = pasteboard
@@ -49,7 +49,7 @@ final class RioClipboardHistory {
         let count = pasteboard.changeCount
         guard count != lastChangeCount else { return }
         lastChangeCount = count
-        if ownChangeCounts.remove(count) != nil { return }
+        if ownChangeCounts.consume(count) { return }
         guard let snapshot = readCurrent(), let text = snapshot.text, !snapshot.isConcealed else { return }
         if RioClipboardFilter.shouldSkip(sourceBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier) { return }
         buffer = buffer.adding(text, at: Date())

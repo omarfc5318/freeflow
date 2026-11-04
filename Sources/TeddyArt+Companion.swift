@@ -302,6 +302,27 @@ extension TeddyArt {
     }
 
     /// A slumped nightcap with a pom-pom, on the bear's head (head grid).
+    /// Over-ear headphones on the head grid (centre 16, 18.5): a charcoal band arching over the
+    /// top between the ears, and a yellow cushion cup over each side of the face.
+    static func drawHeadphones(in graphics: inout GraphicsContext) {
+        let band = Color(red: 0.20, green: 0.22, blue: 0.28)
+        var arch = Path()
+        arch.move(to: CGPoint(x: 3.4, y: 19.5))
+        arch.addCurve(to: CGPoint(x: 28.6, y: 19.5), control1: CGPoint(x: 1.4, y: -1.6), control2: CGPoint(x: 30.6, y: -1.6))
+        stroke(&graphics, arch, TeddyPalette.ink, width: 2.4 + outline * 2)
+        stroke(&graphics, arch, band, width: 2.4)
+        // A thin highlight along the top of the band.
+        let shine = arch.trimmedPath(from: 0.3, to: 0.5)
+        stroke(&graphics, shine, Color.white.opacity(0.35), width: 0.5)
+        for x in [3.0, 29.0] as [CGFloat] {
+            let cup = Path(roundedRect: CGRect(x: x - 2.6, y: 14.4, width: 5.2, height: 9.6), cornerRadius: 2.6)
+            sticker(&graphics, cup, TeddyPalette.impact, rim: outline)
+            // The darker speaker pad on the face side of each cup.
+            let pad = Path(roundedRect: CGRect(x: x - 1.5 + (x < 16 ? 1.3 : -1.3), y: 16.2, width: 3, height: 6), cornerRadius: 1.5)
+            fill(&graphics, pad, band)
+        }
+    }
+
     static func drawNightcap(in graphics: inout GraphicsContext) {
         var cap = Path()
         cap.move(to: CGPoint(x: 5.6, y: 12.4))
