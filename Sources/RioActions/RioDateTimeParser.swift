@@ -42,6 +42,27 @@ enum RioDateTimeParser {
         return Result(start: start, durationMinutes: duration ?? rangeDuration, remainder: cleanRemainder(work))
     }
 
+    /// A day without a clock time ("tomorrow", "tomorrow morning", "Friday", "tonight") placed at
+    /// a default hour: 9 AM, the morning 9, the afternoon 2 PM, the evening 7 PM, tonight 8 PM.
+    /// For reminders, where "remind me tomorrow to call Dad" needs a due time. Nil when no day is
+    /// named or the default hour has already passed ("tonight" said at 10 PM).
+    static func parseDay(_ text: String, now: Date, calendar: Calendar) -> Result? {
+        var work = normalize(text)
+        let saysTonight = RioText.matches(#"\btonight\b"#, work)
+        let dayPart = extractDayPart(&work)
+        var day = extractDay(&work, now: now, calendar: calendar)
+        if day == nil, dayPart.isToday { day = calendar.startOfDay(for: now) }
+        guard let date = day else { return nil }
+        let hour: Int
+        switch dayPart.kind {
+        case .morning, .none: hour = 9
+        case .afternoon: hour = 14
+        case .evening: hour = saysTonight ? 20 : 19
+        }
+        guard let start = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: date), start > now else { return nil }
+        return Result(start: start, durationMinutes: nil, remainder: cleanRemainder(work))
+    }
+
     // MARK: Normalising and regex helpers
 
     private static func normalize(_ text: String) -> String {

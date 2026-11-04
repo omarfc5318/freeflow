@@ -115,9 +115,12 @@ enum RioNotionPhrases {
            page.range(of: "notion", options: .caseInsensitive) == nil {
             return make(body, page: page)
         }
+        let saying = #"(?:(?:saying|that\s+says|that)\s+)?"#
         let leading = [
-            "^\(verb)\\s+(?:to|in|into)\\s+\(article)notion\\s*[:,]?\\s*(?:that\\s+)?(.+)$",
-            #"^(?:note|jot)\s+(?:in|on)\s+notion\s*[:,]?\s*(?:that\s+)?(.+)$"#,
+            "^\(verb)\\s+(?:to|in|into)\\s+\(article)notion\\s*[:,]?\\s*\(saying)(.+)$",
+            #"^(?:note|jot)\s+(?:in|on)\s+notion\s*[:,]?\s*"# + saying + "(.+)$",
+            // "add a note to Notion saying follow up with Sequoia", "take a note in Notion: ...".
+            #"^(?:take|add|make|jot|write|leave|put)\s+(?:down\s+)?(?:a\s+)?note\s+(?:to|in|into|on)\s+(?:my\s+|the\s+)?notion\s*[:,\-]?\s*"# + saying + "(.+)$",
         ]
         for pattern in leading {
             if let body = firstGroup(pattern, in: text) { return make(body, page: nil) }

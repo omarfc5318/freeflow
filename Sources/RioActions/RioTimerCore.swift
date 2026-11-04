@@ -105,12 +105,19 @@ enum RioTimerDuration {
         } else {
             return nil
         }
+        // "1 million minutes", "two thousand hours": far past the cap, but still a duration.
+        if next < tokens.count, let scale = scaleWords[tokens[next]] {
+            value *= scale
+            next += 1
+        }
         if startsAndAHalf(tokens, at: next), next + 3 < tokens.count, unitSeconds[tokens[next + 3]] != nil {
             value += 0.5
             next += 3
         }
         return (value, next)
     }
+
+    private static let scaleWords: [String: Double] = ["thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000]
 
     private static func startsAndAHalf(_ tokens: [String], at index: Int) -> Bool {
         index + 2 < tokens.count && tokens[index] == "and" && tokens[index + 1] == "a" && tokens[index + 2] == "half"
@@ -182,10 +189,19 @@ enum RioTimerPhrases {
         guard let first = tokens.first, !notTimerVerbs.contains(first),
               tokens.contains("timer") || tokens.contains("countdown"),
               startsLikeATimer(tokens),
-              let found = RioTimerDuration.scan(tokens: tokens),
-              (1...RioTimerDuration.maxSeconds).contains(found.seconds) else { return nil }
+              let found = RioTimerDuration.scan(tokens: tokens) else { return nil }
+        // "set a timer for -5 minutes": the minus was spelled out before the clause split.
+        if found.range.lowerBound > 0, ["minus", "negative"].contains(tokens[found.range.lowerBound - 1]) {
+            return .answer(negativeReply)
+        }
+        if found.seconds <= 0 { return .answer(zeroReply) }
+        if found.seconds > RioTimerDuration.maxSeconds { return .answer(tooLongReply) }
         return .startTimer(seconds: found.seconds, label: label(from: tokens, removing: found.range))
     }
+
+    static let zeroReply = "That timer would be zero seconds. Say how long, like set a timer for 5 minutes."
+    static let tooLongReply = "Timers go up to 24 hours."
+    static let negativeReply = "A timer can't run backwards. Say how long, like set a timer for 5 minutes."
 
     private static func startsLikeATimer(_ tokens: [String]) -> Bool {
         guard let first = tokens.first else { return false }
@@ -275,6 +291,11 @@ enum RioTimerPhrases {
     /// The parser splits a command on "and", which would cut "2 and a half minutes" in two. When
     /// a timer is meant, rewrite such a duration to plain seconds first. Nothing else changes.
     static func protectingDurations(in body: String) -> String {
+        var body = body
+        // "-5 minutes" would lose its sign when the text is simplified: spell it out.
+        if RioText.matches(#"\b(?:timer|countdown)\b"#, body) {
+            body = RioText.replacing(#"(?<![\w.])-\s*(?=\d)"#, with: "minus ", in: body)
+        }
         let words = RioWords.ranges(in: body)
         let tokens = words.map { $0.token }
         guard tokens.contains("timer") || tokens.contains("countdown"),

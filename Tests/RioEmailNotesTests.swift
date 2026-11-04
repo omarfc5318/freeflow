@@ -26,7 +26,6 @@ enum RioEmailNotesTests {
             ("draft a follow up email to the Falak team", .draftEmail(to: "the Falak team", subject: "Follow up", body: "")),
             ("draft a quick email to professor Kim", .draftEmail(to: "professor Kim", subject: nil, body: "")),
             ("email Sam saying I'm running late", .draftEmail(to: "Sam", subject: nil, body: "I'm running late")),
-            ("draft an email to Sam about lunch", .draftEmail(to: "Sam", subject: "Lunch", body: "")),
             ("email Sam saying lunch and dinner are on", .draftEmail(to: "Sam", subject: nil, body: "Lunch and dinner are on")),
             ("write an email to john at example dot com subject hello saying see you soon",
              .draftEmail(to: "john@example.com", subject: "Hello", body: "See you soon")),
@@ -38,6 +37,8 @@ enum RioEmailNotesTests {
             "draft an email to professor Kim requesting an extension",
             "draft an email to Naif thanking him for the call and saying I'll send the deck",
             "write an email to the investors with our monthly update", "email the team letting them know I'm out",
+            // A topic with no words: the resolver writes the email (round 2, finding 24).
+            "draft an email to Sam about lunch", "draft an email to investors about the november update",
         ] {
             ETest.eq(parse(purpose), nil, "a purpose is composed by the resolver: \(purpose)")
         }

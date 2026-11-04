@@ -68,6 +68,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioClickSafety.swift \
 	Sources/RioActions/RioVisionRequest.swift \
 	Sources/RioActions/RioMemoryPhrases.swift \
+	Sources/RioActions/RioReminderPhrases.swift \
 	Sources/RioActions/RioNumberWords.swift \
 	Sources/RioActions/RioCalcUnits.swift \
 	Sources/RioActions/RioCalcTime.swift \

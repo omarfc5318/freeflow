@@ -35,6 +35,9 @@ enum RioContextMemoryPhrases {
             guard let raw = RioText.firstMatch(pattern, in: text)?[1] else { continue }
             let query = clean(raw)
             if isAddressedToSomeone(query) || query.isEmpty || query.count > maxQueryLength { continue }
+            // "what did I say about the seed round" after "remember our seed round closes
+            // December 15": what Rio was told to remember comes first.
+            if RioRememberedFacts.knows(query) { return .recall(query: query) }
             return .searchHistory(query: query)
         }
         return nil

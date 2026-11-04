@@ -139,6 +139,9 @@ enum RioEmailPhrases {
 
         guard let parts = split(rest) else { return nil }
         guard parts.body.count <= maxBody else { return nil }
+        // "draft an email to the investors about the November update": a topic, not the words.
+        // The resolver writes the email; a blank draft with only a subject is not what was asked.
+        if parts.body.isEmpty, parts.subject != nil, parts.subjectIsTopic { return nil }
         let recipient = RioText.replacing(#"^(?:to|for)\s+"#, with: "", in: parts.head)
             .trimmingCharacters(in: CharacterSet(charactersIn: " ,"))
         let to: String?
@@ -159,29 +162,31 @@ enum RioEmailPhrases {
     }
 
     /// Recipient words, subject and body. Nil when the words give a purpose, not the text.
-    private static func split(_ rest: String) -> (head: String, subject: String?, body: String)? {
+    private static func split(_ rest: String) -> (head: String, subject: String?, body: String, subjectIsTopic: Bool)? {
         let padded = " " + rest
         let any = #"[\s,]+(?:("# + bodyMarker + #")|("# + purposeMarker + #")|("# + subjectMarker + #"))(?=[\s,:]|$)"#
         guard let regex = try? NSRegularExpression(pattern: any, options: [.caseInsensitive]),
               let match = regex.firstMatch(in: padded, range: NSRange(location: 0, length: padded.utf16.count)),
               let whole = Range(match.range, in: padded) else {
-            return (rest, nil, "")
+            return (rest, nil, "", false)
         }
         let head = String(padded[..<whole.lowerBound]).trimmingCharacters(in: .whitespaces)
         let after = String(padded[whole.upperBound...]).trimmingCharacters(in: CharacterSet(charactersIn: " ,:"))
         if match.range(at: 2).location != NSNotFound { return nil }
-        if match.range(at: 1).location != NSNotFound { return (head, nil, after) }
+        if match.range(at: 1).location != NSNotFound { return (head, nil, after, false) }
+        let marker = Range(match.range(at: 3), in: padded).map { padded[$0].lowercased() } ?? ""
+        let isTopic = marker.hasPrefix("about") || marker.hasPrefix("regarding")
         // A subject first: its text runs up to a body marker, if there is one.
         let bodyAfterSubject = #"[\s,]+"# + bodyMarker + #"(?=[\s,:]|$)"#
         guard let bodyRegex = try? NSRegularExpression(pattern: bodyAfterSubject, options: [.caseInsensitive]) else { return nil }
         let subjectPadded = " " + after
         guard let bodyMatch = bodyRegex.firstMatch(in: subjectPadded, range: NSRange(location: 0, length: subjectPadded.utf16.count)),
               let bodyRange = Range(bodyMatch.range, in: subjectPadded) else {
-            return (head, after, "")
+            return (head, after, "", isTopic)
         }
         let subject = String(subjectPadded[..<bodyRange.lowerBound]).trimmingCharacters(in: .whitespaces)
         let body = String(subjectPadded[bodyRange.upperBound...]).trimmingCharacters(in: CharacterSet(charactersIn: " ,:"))
-        return (head, subject, body)
+        return (head, subject, body, isTopic)
     }
 
     /// "john at example dot com" -> "john@example.com"; a name stays a name.

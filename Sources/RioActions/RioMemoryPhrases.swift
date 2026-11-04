@@ -19,7 +19,8 @@ enum RioMemoryPhrases {
     static func parseWhole(raw: String, simplified: String) -> RioAction? {
         let text = tidy(raw)
         guard !text.isEmpty else { return nil }
-        return remember(text) ?? note(text) ?? RioEmailPhrases.parse(text)
+        return remember(text) ?? RioReminderPhrases.parse(text) ?? note(text) ?? RioNotionPhrases.parse(text)
+            ?? RioEmailPhrases.parse(text)
             ?? RioMathPhrases.parse(raw: raw, simplified: simplified)
     }
 
@@ -72,7 +73,17 @@ enum RioMemoryPhrases {
             guard !query.isEmpty, !RioText.matches(systemTopics, query) else { return nil }
             return .recall(query: query)
         }
-        return nil
+        return rememberedThing(s)
+    }
+
+    /// "what's the staging url" / "what is our seed round date": recall only when a remembered
+    /// fact is about it, so "what's the time" or "what's the capital of France" stay elsewhere.
+    private static func rememberedThing(_ s: String) -> RioAction? {
+        guard let groups = RioText.firstMatch(#"^(?:what\s+(?:is|was|are|were)|whats)\s+(?:the|our)\s+(.+)$"#, in: s),
+              let raw = groups[1] else { return nil }
+        let query = RioText.replacing(#"\s+(?:is|are|was|were)$"#, with: "", in: raw).trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty, !RioText.matches(systemTopics, query), RioRememberedFacts.knows(query) else { return nil }
+        return .recall(query: query)
     }
 
     // MARK: Notes
@@ -97,6 +108,8 @@ enum RioMemoryPhrases {
         ]
         for pattern in patterns {
             guard let groups = RioText.firstMatch(pattern, in: text), var body = groups[1] else { continue }
+            // "add a note to Notion saying ..." is Notion's, not Rio Notes'.
+            if RioText.matches(#"^(?:to|in|into|on)\s+(?:my\s+|the\s+)?notion\b"#, body) { return nil }
             // "add a note to my MAT108 notes saying review chapter 3": the destination is not the text.
             if let named = namedNoteText(body) { return named }
             body = body.trimmingCharacters(in: CharacterSet(charactersIn: " .!\n\t"))
@@ -129,5 +142,16 @@ enum RioRememberedFacts {
         let facts = provider()
         guard !facts.isEmpty, !RioMemoryMatcher.tokens(thing).isEmpty else { return false }
         return !RioMemoryMatcher.best(query: thing, facts: facts, limit: 1).isEmpty
+    }
+}
+
+/// A memory miss on a real question ("what did I tell you about the seed round") looks through
+/// the owner's dictations before saying it knows nothing. The memory's own miss message stays
+/// when the dictations have nothing either. Only a miss falls back: a hit is answered as is.
+enum RioRecallFallback {
+    @MainActor static func resolve(memory result: RioActionResult, query: String, executor: RioActionExecuting) async -> RioActionResult {
+        guard case .failed = result, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return result }
+        if case .done(let summary) = await executor.execute(.searchHistory(query: query)) { return .done(summary: summary) }
+        return result
     }
 }

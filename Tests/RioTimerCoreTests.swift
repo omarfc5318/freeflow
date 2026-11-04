@@ -136,7 +136,7 @@ enum RioTimerCoreTests {
         let nothing = [
             "start a timer", "set a timer", "open timer", "open the timer app", "quit timer",
             "set an alarm for 7 am", "remind me in 10 minutes", "open Chrome", "open YouTube",
-            "close Spotify", "set the volume to 40", "what time is it", "set a timer for 25 hours",
+            "close Spotify", "set the volume to 40", "what time is it",
             "put Chrome on the left", "search for 10 minute timer", "type timer for 10 minutes",
         ]
         for text in nothing {
