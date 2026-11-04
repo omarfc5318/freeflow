@@ -827,6 +827,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private var rioActionCoordinator: RioActionCoordinator?
     /// One Rio command at a time, whichever way it was started (action key or conversation).
     private var isRioCommandRunning = false
+    /// Automation and phone commands that arrived while Rio was busy; they run, in order, once idle.
+    private var rioWaitingCommands = RioWaitingCommands<RioWaitingCommand>()
+    private var rioWaitingCommandsDrain: DispatchWorkItem?
+    /// A waiting command was taken off the line and is about to start.
+    private var isStartingWaitingRioCommand = false
+    /// The action key stops a running multi-step task, but only once the hold is known not to be
+    /// the start of the conversation chord.
+    private var rioPendingTaskStop: DispatchWorkItem?
     private var pendingShortcutStartTask: Task<Void, Never>?
     private var pendingShortcutStartMode: RecordingTriggerMode?
     private var realtimeService: RealtimeTranscriptionService?
@@ -2134,6 +2142,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
             return
         }
 
+        let configuration = activeShortcutConfiguration
+        shortcutSessionController.discardsShortHoldTaps = DictationShortcutSessionController.shortHoldTapsMayStartDoubleTap(
+            hold: configuration.hold, toggle: configuration.toggle
+        )
         guard let action = shortcutSessionController.handle(event: event, isTranscribing: isTranscribing) else {
             return
         }
@@ -2297,9 +2309,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     /// Left Fn + Control + Option: toggle conversation mode (or stop the translator). Whatever the
     /// Fn hold or Fn + Control had started is thrown away first: no paste, no action, no error.
+    /// A hands-free (toggle) session is the exception: it keeps recording, so a long dictation is
+    /// never lost to the chord.
     private func handleConversationChord() {
+        let handsFree = activeRecordingTriggerMode == .toggle || pendingShortcutStartMode == .toggle
         if shortcutSessionController.handle(event: .conversationChord, isTranscribing: isTranscribing) == .cancelSilently
-            || pendingShortcutStartMode != nil || isRecording {
+            || (!handsFree && (pendingShortcutStartMode != nil || isRecording)) {
             cancelShortcutSessionSilently(announceCancelled: false)
         }
         clearRioActionSession()
@@ -3227,6 +3242,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         activeOriginalFieldInsertionEnabled = false
         activeRecordingTriggerMode = nil
         activeTextInsertionTarget = nil
+        // An action session that ends before the chord wait is over still stops the task.
+        if rioPendingTaskStop != nil { stopRunningTaskForActionKey() }
         let isRioActionSession = rioActionSessionRequested
         rioActionSessionRequested = false
         // An action session is never a command-mode or dictation run: nothing is typed or pasted.
@@ -3239,7 +3256,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let boostsQuietSpeech = whisperModeEnabled
         audioRecorder.onRecordingReady = nil
         audioRecorder.onRecordingFailure = nil
-        // Read before the detector is cleared: a tap or a silent recording is never sent.
+        // Read before the detector is cleared: a tap or a silent recording is never sent, and the
+        // hallucination guard only judges recordings that held little speech.
+        let speechEvidence = silenceAutoStop.map {
+            WhisperHallucinationGuard.SpeechEvidence(recordedSeconds: recordedSeconds, heardSpeechSeconds: $0.heardSpeechSeconds)
+        }
         let skipsTranscription = TeddyShrug.shouldSkipTranscription(
             isCommandMode: sessionIntent.isCommandMode,
             recordedSeconds: recordedSeconds,
@@ -3361,11 +3382,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
                     let vocabularyStatus = transcriptionService.vocabularyReport?.statusSuffix ?? ""
                     // Whisper's inventions for quiet audio ("Thanks for watching", subtitle credits,
                     // "We are hoping for a win") are never typed and never run as a command.
-                    if WhisperHallucinationGuard.isHallucination(rawTranscript) {
+                    if WhisperHallucinationGuard.isHallucination(rawTranscript, evidence: speechEvidence) {
                         try Task.checkCancellation()
                         await MainActor.run { [weak self] in
                             self?.finishHallucinatedTranscript(
-                                isRioActionSession: isRioActionSession, savedAudioFileName: savedAudioFile?.fileName
+                                rawTranscript,
+                                isRioActionSession: isRioActionSession,
+                                savedAudioFileName: savedAudioFile?.fileName,
+                                vocabularyStatus: vocabularyStatus
                             )
                         }
                         return
@@ -3979,15 +4003,33 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     /// A recording with nothing in it (a tap of the shortcut, or silence): nothing is sent
     /// or saved, and the bear shrugs instead of the provider's error showing.
-    /// The transcript was one of Whisper's stock inventions for audio with no speech: say "I didn't
-    /// catch that" and do nothing. The recording is deleted either way.
-    @MainActor private func finishHallucinatedTranscript(isRioActionSession: Bool, savedAudioFileName: String?) {
+    /// The transcript looked like one of Whisper's stock inventions for audio with no speech: say
+    /// "I didn't catch that" and type or run nothing. A dictation keeps its recording and goes to
+    /// history (marked as not typed), so a wrong call can still be recovered from there. An action
+    /// session stores no audio, as always.
+    @MainActor private func finishHallucinatedTranscript(
+        _ rawTranscript: String, isRioActionSession: Bool, savedAudioFileName: String?, vocabularyStatus: String
+    ) {
         guard isTranscribing else { return }
         if isRioActionSession {
             failRioActionSession(RioActionText.didntCatchMessage, savedAudioFileName: savedAudioFileName)
             return
         }
-        if let savedAudioFileName { Self.deleteAudioFile(savedAudioFileName) }
+        recordPipelineHistoryEntry(
+            rawTranscript: rawTranscript,
+            postProcessedTranscript: "",
+            postProcessingPrompt: "",
+            systemPrompt: "",
+            context: AppContext(
+                appName: nil, bundleIdentifier: nil, windowTitle: nil, selectedText: nil,
+                currentActivity: "", contextSystemPrompt: nil, contextPrompt: nil,
+                screenshotDataURL: nil, screenshotMimeType: nil, screenshotError: "not captured"
+            ),
+            processingStatus: "Not typed: it looked like Whisper inventing words for quiet audio",
+            intent: .dictation,
+            audioFileName: savedAudioFileName,
+            debugStatusSuffix: vocabularyStatus
+        )
         finishWithoutTranscribing()
     }
 
@@ -4048,13 +4090,29 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private func beginRioActionSessionIfHolding() {
         guard rioActionsEnabled, shortcutSessionController.activeMode == .hold else { return }
         rioActionSessionRequested = true
-        // The action key also stops a running multi-step task.
-        MainActor.assumeIsolated { if RioTaskProgress.shared.isRunning { RioTaskActionHandler.shared.stop() } }
+        // The action key also stops a running multi-step task, after a moment: Fn, Control, Option
+        // in that order is the conversation chord, which must leave the task running.
+        rioPendingTaskStop?.cancel()
+        let stop = DispatchWorkItem { [weak self] in self?.stopRunningTaskForActionKey() }
+        rioPendingTaskStop = stop
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.rioTaskStopChordWait, execute: stop)
         setRioActionPhase(.listening)
+    }
+
+    /// Longer than the gap between the chord's keys, shorter than saying a command.
+    private static let rioTaskStopChordWait: TimeInterval = 0.35
+
+    private func stopRunningTaskForActionKey() {
+        rioPendingTaskStop?.cancel()
+        rioPendingTaskStop = nil
+        guard rioActionSessionRequested else { return }
+        MainActor.assumeIsolated { if RioTaskProgress.shared.isRunning { RioTaskActionHandler.shared.stop() } }
     }
 
     /// Drops a pending action request (session cancelled or never started).
     private func clearRioActionSession() {
+        rioPendingTaskStop?.cancel()
+        rioPendingTaskStop = nil
         rioActionSessionRequested = false
         if rioActionPhase == .listening { setRioActionPhase(.idle) }
     }
@@ -4119,38 +4177,132 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// Runs a spoken command (action key or conversation mode) and shows the result.
-    /// "Stop listening" ends conversation mode directly. Only one command runs at a time.
     /// Entry point for commands that don't come from the keyboard or the mic: scheduled commands,
-    /// triggers and macros (`.automation`) and texts from the owner's iPhone (`.phone`).
+    /// triggers and macros (`.automation`) and texts from the owner's iPhone (`.phone`). They wait
+    /// their turn while Rio is busy (see `RioWaitingCommands`) instead of being refused.
     @MainActor func runRioCommandText(_ text: String, source: RioCommandSource) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        Task { @MainActor [weak self] in await self?.runRioCommand(trimmed, source: source) }
+        enqueueRioCommand(text, source: source, reply: nil)
     }
 
-    @MainActor private func runRioCommand(_ spokenTranscript: String, source: RioCommandSource) async {
-        guard !isRioCommandRunning else {
-            finishRioAction(.failed("I'm still working on the last one"), transcript: "", actions: [])
+    /// Like `runRioCommandText`, and returns this command's own result (never another command's):
+    /// the phone texts it back. Nil when the command was dropped without running.
+    @MainActor func runRioCommandForReply(_ text: String, source: RioCommandSource) async -> (message: String, succeeded: Bool)? {
+        await withCheckedContinuation { continuation in
+            enqueueRioCommand(text, source: source) { continuation.resume(returning: $0) }
+        }
+    }
+
+    @MainActor private func enqueueRioCommand(
+        _ text: String, source: RioCommandSource, reply: (@MainActor ((message: String, succeeded: Bool)?) -> Void)?
+    ) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            reply?(nil)
             return
         }
-        isRioCommandRunning = true
-        defer { isRioCommandRunning = false }
-        // Arabic (or any non-English) commands become English before parsing: "ريو افتح كروم".
-        let transcript = await RioCommandTranslator.shared.englishCommand(from: spokenTranscript)
-        if RioConversationCommands.isStopListening(transcript) {
-            RioConversationMode.shared.stop(.stopListening)
-            statusText = "Stopped listening"
-            setRioActionPhase(.succeeded("Stopped listening"))
-            scheduleReadyStatusReset(after: 3, matching: ["Stopped listening"])
-            recordRioActionHistory(transcript: transcript, actions: [], outcomeText: "Stopped listening", didSucceed: true)
+        let now = Date()
+        let command = RioWaitingCommand(text: trimmed, source: source, since: now, reply: reply)
+        guard rioWaitingCommands.add(command, at: now) else {
+            noteDroppedRioCommand(command, reason: "Rio was busy and too many commands were waiting")
             return
+        }
+        drainRioWaitingCommands()
+    }
+
+    /// True while a waiting command must not start: something else has the pipeline, the
+    /// microphone or the screen.
+    @MainActor private var isRioBusyForWaitingCommands: Bool {
+        isRioCommandRunning || isStartingWaitingRioCommand || isRecording || isTranscribing
+            || pendingShortcutStartMode != nil
+            || RioConfirmationCenter.shared.isShowing || RioTaskProgress.shared.isRunning
+    }
+
+    /// Runs the next waiting command once Rio is free, and checks again every second while any wait.
+    @MainActor private func drainRioWaitingCommands() {
+        rioWaitingCommandsDrain?.cancel()
+        rioWaitingCommandsDrain = nil
+        while true {
+            switch rioWaitingCommands.next(now: Date(), isBusy: isRioBusyForWaitingCommands) {
+            case .wait:
+                guard !rioWaitingCommands.isEmpty else { return }
+                let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.drainRioWaitingCommands() } }
+                rioWaitingCommandsDrain = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+                return
+            case .expired(let command):
+                noteDroppedRioCommand(command, reason: "Rio was busy for too long")
+            case .run(let command):
+                isStartingWaitingRioCommand = true
+                Task { @MainActor [weak self] in
+                    guard let self else {
+                        command.reply?(nil)
+                        return
+                    }
+                    self.isStartingWaitingRioCommand = false
+                    // Something else started in the meantime (the action key): back to the front.
+                    guard !self.isRioBusyForWaitingCommands else {
+                        self.rioWaitingCommands.putBack(command, since: command.since)
+                        self.drainRioWaitingCommands()
+                        return
+                    }
+                    let result = await self.runRioCommand(command.text, source: command.source)
+                    command.reply?(result.map { RioPhoneReply.message(for: $0.outcome, summary: $0.summary) })
+                    self.drainRioWaitingCommands()
+                }
+                return
+            }
+        }
+    }
+
+    /// A waiting command that never ran: automations leave a note (no command text, which can be
+    /// private) and the phone is told.
+    @MainActor private func noteDroppedRioCommand(_ command: RioWaitingCommand, reason: String) {
+        if command.source == .automation {
+            let note = "\(reason), so a scheduled or triggered command was skipped."
+            RioAutomationCenter.shared.store.addNote(note)
+            RioAutomationCenter.shared.onNote?(note)
+        }
+        command.reply?((message: "\(reason), so I skipped that one. Try again?", succeeded: false))
+    }
+
+    /// Runs a spoken command (action key or conversation mode) and shows the result.
+    /// "Stop listening" ends conversation mode directly. Only one command runs at a time.
+    /// Returns how it ended and the line shown for it; nil when it was refused (another command
+    /// was running).
+    @discardableResult
+    @MainActor private func runRioCommand(
+        _ spokenTranscript: String, source: RioCommandSource
+    ) async -> (outcome: RioActionOutcome, summary: String)? {
+        guard !isRioCommandRunning else {
+            finishRioAction(.failed("I'm still working on the last one"), transcript: "", actions: [])
+            return nil
+        }
+        isRioCommandRunning = true
+        defer {
+            isRioCommandRunning = false
+            if !rioWaitingCommands.isEmpty { DispatchQueue.main.async { [weak self] in self?.drainRioWaitingCommands() } }
+        }
+        // "Thanks", or a yes or no with nothing to confirm: answered here, with no model call.
+        if let line = RioConversationCommands.quickReply(
+            spokenTranscript, isConfirmationShowing: RioConfirmationCenter.shared.isShowing
+        ) {
+            RioPersonality.registerVerbatim(line)
+            return finishRioAction(.succeeded(line), transcript: spokenTranscript)
+        }
+        // Arabic (or any non-English) commands become English before parsing: "ريو افتح كروم".
+        // An Arabic stop ("ريو بس") is already understood here; the translator would lose it.
+        let transcript = RioConversationCommands.bareStop(spokenTranscript) == .stop
+            && RioConversationCommands.commandWords(spokenTranscript).contains(where: { !$0.allSatisfy(\.isASCII) })
+            ? "stop"
+            : await RioCommandTranslator.shared.englishCommand(from: spokenTranscript)
+        if RioConversationCommands.isStopListening(transcript) {
+            finishStopListening(transcript: transcript)
+            return (.succeeded("Stopped listening"), "Stopped listening")
         }
         // "Rio, stop" while translating stops the translator (not a timer that isn't there).
         if RioConversationCommands.isBareStop(transcript), RioTranslatorMode.shared.isOn {
             RioTranslatorMode.shared.stop(.voice)
-            finishRioAction(.succeeded("Stopped translating"), transcript: transcript, actions: [.stopTranslation])
-            return
+            return finishRioAction(.succeeded("Stopped translating"), transcript: transcript, actions: [.stopTranslation])
         }
         let coordinator = rioActionCoordinator ?? RioActionsWiring.makeCoordinator(
             companion: RioCompanionHub.shared,
@@ -4161,9 +4313,18 @@ final class AppState: ObservableObject, @unchecked Sendable {
             self?.statusText = line
             self?.rioActionPhase = .working(line)
         }
-        finishRioAction(
+        return finishRioAction(
             outcome, transcript: transcript, actions: coordinator.lastActions, unrecognized: coordinator.lastUnrecognized
         )
+    }
+
+    /// "Rio, stop listening", from either the action key or conversation mode: one history row.
+    @MainActor private func finishStopListening(transcript: String) {
+        RioConversationMode.shared.stop(.stopListening)
+        statusText = "Stopped listening"
+        setRioActionPhase(.succeeded("Stopped listening"))
+        scheduleReadyStatusReset(after: 3, matching: ["Stopped listening"])
+        recordRioActionHistory(transcript: transcript, actions: [], outcomeText: "Stopped listening", didSucceed: true)
     }
 
     /// A command heard by conversation mode. Answers to a pending confirmation and the stop
@@ -4172,11 +4333,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @MainActor private func handleConversationCommand(_ transcript: String) {
         if RioConfirmationCenter.shared.answerSpoken(transcript) { return }
         if RioConversationCommands.isStopListening(transcript) {
-            RioConversationMode.shared.stop(.stopListening)
+            finishStopListening(transcript: transcript)
             return
         }
-        if RioConversationCommands.isBareStop(transcript) {
-            stopEverythingRioIsDoing()
+        if let stop = RioConversationCommands.bareStop(transcript) {
+            stopEverythingRioIsDoing(stop)
             return
         }
         guard !isRioCommandRunning, !RioConfirmationCenter.shared.isShowing,
@@ -4188,13 +4349,36 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// "Rio, stop": ends a running task, the live translator and Rio's own voice.
-    @MainActor private func stopEverythingRioIsDoing() {
-        if RioTaskProgress.shared.isRunning { RioTaskActionHandler.shared.stop() }
-        if RioTranslatorMode.shared.isOn { RioTranslatorMode.shared.stop(.voice) }
+    /// "Rio, stop": silences a ringing timer and ends a running task, the live translator and
+    /// Rio's own voice. When none of those was going, a plain stop goes on to the parser's own
+    /// stop handler (it pauses playing media and never cancels a running countdown); "wait" or
+    /// "forget it" with nothing running does nothing.
+    @MainActor private func stopEverythingRioIsDoing(_ kind: RioConversationCommands.BareStop) {
+        var stoppedSomething = false
+        if RioTimerCenter.shared.isRinging {
+            RioTimerCenter.shared.stopRinging()
+            stoppedSomething = true
+        }
+        if RioTaskProgress.shared.isRunning {
+            RioTaskActionHandler.shared.stop()
+            stoppedSomething = true
+        }
+        if RioTranslatorMode.shared.isOn {
+            RioTranslatorMode.shared.stop(.voice)
+            stoppedSomething = true
+        }
+        if RioVoice.shared.isSpeaking { stoppedSomething = true }
         RioVoice.shared.stopSpeaking()
-        statusText = "Stopped"
-        scheduleReadyStatusReset(after: 2, matching: ["Stopped"])
+        if !stoppedSomething, kind == .stop, !isRioCommandRunning, !RioConfirmationCenter.shared.isShowing,
+           !isRecording, !isTranscribing {
+            statusText = "Working..."
+            setRioActionPhase(.working("Working on it"))
+            Task { @MainActor [weak self] in await self?.runRioCommand("stop", source: .conversation) }
+            return
+        }
+        let status = stoppedSomething ? "Stopped" : "Okay"
+        statusText = status
+        scheduleReadyStatusReset(after: 2, matching: [status])
     }
 
     /// Fn + Control while offline: transcribe the recording on-device, then run it as usual.
@@ -4262,19 +4446,26 @@ final class AppState: ObservableObject, @unchecked Sendable {
         mode.onCommand = { [weak self] command in self?.handleConversationCommand(command) }
         mode.playSound = { [weak self] name in self?.playAlertSound(named: name) }
         mode.playChime = { [weak self] chime in self?.playAlertSound(data: chime.wavData()) }
-        // Also steps aside while Rio himself is talking, so the open mic never hears his own voice;
-        // listening resumes half a second after he finishes, past the room's echo.
-        Publishers.CombineLatest4(
-            $isRecording, $isTranscribing, RioVoice.shared.$isSpeaking, RioTranslatorMode.shared.speakerIsSpeaking
-        )
-            .map { ($0 || $1 || $2 || $3, $0 || $1) }
-            .removeDuplicates { $0 == $1 }
-            .sink { [weak self] active, dictating in
+        // While Rio himself is talking it keeps listening, but takes only a bare stop ("Rio,
+        // stop", "Rio, shut up"), so he can be interrupted and his own voice runs nothing
+        // (`RioConversationBargeIn`). With speakers rather than headphones his voice can keep the
+        // listener from hearing the end of the stop until he pauses.
+        Publishers.CombineLatest(RioVoice.shared.$isSpeaking, RioTranslatorMode.shared.speakerIsSpeaking)
+            .map { $0 || $1 }
+            .removeDuplicates()
+            .sink { speaking in RioConversationMode.shared.setRioSpeaking(speaking) }
+            .store(in: &rioCompanionStateSubscriptions)
+        // Dictation has the microphone: conversation mode steps aside and resumes half a second
+        // after it ends.
+        Publishers.CombineLatest($isRecording, $isTranscribing)
+            .map { $0 || $1 }
+            .removeDuplicates()
+            .sink { [weak self] dictating in
                 guard let self else { return }
                 // The live translator also stays out of the first moments of a dictation.
                 RioTranslatorMode.shared.setBusy(.dictation, dictating)
                 self.rioConversationResumeWork?.cancel()
-                guard !active else {
+                guard !dictating else {
                     RioConversationMode.shared.setDictationActive(true)
                     return
                 }
@@ -4285,12 +4476,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
             .store(in: &rioCompanionStateSubscriptions)
     }
 
+    @discardableResult
     @MainActor private func finishRioAction(
         _ outcome: RioActionOutcome,
         transcript: String,
         actions: [RioAction] = [],
         unrecognized: String? = nil
-    ) {
+    ) -> (outcome: RioActionOutcome, summary: String) {
         if let line = RioPersonality.spokenLine(for: outcome, hour: Calendar.current.component(.hour, from: Date())) {
             RioVoice.shared.speak(line)
         }
@@ -4300,11 +4492,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         case .nothing, .cancelled:
             setRioActionPhase(.idle)
             statusText = "Ready"
-            recordRioActionHistory(
-                transcript: transcript, actions: actions,
-                outcomeText: outcome == .cancelled ? "Cancelled" : "Nothing to do", didSucceed: false
-            )
-            return
+            let outcomeText = outcome == .cancelled ? "Cancelled" : "Nothing to do"
+            recordRioActionHistory(transcript: transcript, actions: actions, outcomeText: outcomeText, didSucceed: false)
+            return (outcome, outcomeText)
         case .succeeded(let text):
             summary = text
             didSucceed = true
@@ -4322,6 +4512,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         statusText = summary
         scheduleReadyStatusReset(after: 3, matching: [summary])
         recordRioActionHistory(transcript: transcript, actions: actions, outcomeText: summary, didSucceed: didSucceed)
+        return (outcome, summary)
     }
 
     /// History keeps the run log's transcript plus an outcome line, with one exception: anything
@@ -4885,4 +5076,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
             self.statusText = "Ready"
         }
     }
+}
+
+/// A command from a schedule, a trigger or the phone, waiting for Rio to be free.
+struct RioWaitingCommand {
+    let text: String
+    let source: RioCommandSource
+    let since: Date
+    /// Gets this command's own result (the phone texts it back); nil when it never ran.
+    let reply: (@MainActor ((message: String, succeeded: Bool)?) -> Void)?
 }

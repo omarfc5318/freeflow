@@ -42,9 +42,15 @@ enum RioRedrawPolicy {
     static let runInterval: TimeInterval = 1.0 / 60
     static let awayInterval: TimeInterval = 0.5
 
-    /// What the panel redraws at. `hasTimer` is a running countdown.
+    /// How long the listening pose animates smoothly after conversation mode comes on (or after
+    /// anything else happened) before it settles to the slow tier.
+    static let conversingSettleSeconds: TimeInterval = 3
+
+    /// What the panel redraws at. `hasTimer` is a running countdown. `secondsSinceLastEvent` is
+    /// how long the bear has been in this state; nil keeps the smooth rate (no clock known).
     static func schedule(
-        mode: RioCompanionMachine.Mode, hasTimer: Bool, hasErrorCard: Bool, gate: RioRedrawGate
+        mode: RioCompanionMachine.Mode, hasTimer: Bool, hasErrorCard: Bool, gate: RioRedrawGate,
+        secondsSinceLastEvent: TimeInterval? = nil
     ) -> RioRedrawSchedule {
         if gate.isPaused { return .paused }
         let interval: TimeInterval
@@ -52,9 +58,11 @@ enum RioRedrawPolicy {
         case .asleep: interval = sleepyInterval
         case .away: interval = awayInterval
         case .resting: interval = hasTimer ? timerInterval : restingInterval
-        // Conversation mode can stay on for many minutes: gentle waves at the resting rate, and
-        // almost nothing while it waits out a call.
-        case .conversing: interval = restingInterval
+        // Conversation mode can stay on for many minutes: smooth while the on-pose plays, then
+        // the slow tier for the gentle waves, and almost nothing while it waits out a call.
+        case .conversing:
+            let settled = secondsSinceLastEvent.map { $0 >= conversingSettleSeconds } ?? false
+            interval = settled ? sleepyInterval : restingInterval
         case .conversingPaused: interval = sleepyInterval
         case .sprint, .punch, .returning: interval = runInterval
         default: interval = actionInterval

@@ -7,6 +7,8 @@ enum RioFixATests {
         testFnHold()
         testDoubleTapStartsAndStopsHandsFree()
         testDoubleTapStopTapDoesNotRestart()
+        testDoubleTapFirstTapEndsSilently()
+        testChordDuringHandsFreeKeepsRecording()
         testTapThenHoldTiming()
         testFnControlStillEngagesActionKey()
         testChordInEveryKeyOrder()
@@ -38,9 +40,17 @@ enum RioFixATests {
 
     private struct Rig {
         var state = ShortcutInputState()
-        var controller = DictationShortcutSessionController()
+        var controller: DictationShortcutSessionController = {
+            let controller = DictationShortcutSessionController()
+            controller.discardsShortHoldTaps = DictationShortcutSessionController.shortHoldTapsMayStartDoubleTap(
+                hold: config.hold, toggle: config.toggle
+            )
+            return controller
+        }()
         var events: [ShortcutEvent] = []
         var actions: [DictationShortcutAction] = []
+        /// Like AppState: a normal stop leaves a transcription running until `finishTranscribing`.
+        var isTranscribing = false
 
         mutating func modifier(_ keyCode: UInt16, down: Bool, at time: TimeInterval) {
             let result = ShortcutMatcher.reduce(
@@ -52,7 +62,9 @@ enum RioFixATests {
             state = result.state
             events.append(contentsOf: result.emittedEvents)
             for event in result.emittedEvents {
-                if let action = controller.handle(event: event, isTranscribing: false) { actions.append(action) }
+                guard let action = controller.handle(event: event, isTranscribing: isTranscribing, now: time) else { continue }
+                actions.append(action)
+                if action == .stop { isTranscribing = true }
             }
         }
 
@@ -90,11 +102,11 @@ enum RioFixATests {
         TestSupport.expectEqual(rig.takeActions(), [.start(.toggle)])
         rig.modifier(63, down: false, at: 0.35)
         TestSupport.expectEqual(rig.take(), [.toggleDeactivated])
-        // Much later, one Fn press stops it.
+        // Much later, one Fn press stops it (on release, so the chord can still claim the press).
         rig.modifier(63, down: true, at: 5)
-        TestSupport.expectEqual(rig.takeActions(), [.stop])
-        rig.modifier(63, down: false, at: 5.05)
         TestSupport.expectEqual(rig.takeActions(), [])
+        rig.modifier(63, down: false, at: 5.05)
+        TestSupport.expectEqual(rig.takeActions(), [.stop])
     }
 
     private static func testDoubleTapStopTapDoesNotRestart() {
@@ -111,6 +123,57 @@ enum RioFixATests {
         rig.modifier(63, down: false, at: 3.3)
         TestSupport.expectEqual(rig.takeActions(), [.stop])
         TestSupport.expect(rig.controller.activeMode == nil, "no session after the stop double-tap")
+    }
+
+    /// The first tap of a double-tap must not start a transcription (Pop, a shrug, and
+    /// `isTranscribing` blocking the second press while the microphone shuts down).
+    private static func testDoubleTapFirstTapEndsSilently() {
+        var rig = Rig()
+        rig.modifier(63, down: true, at: 0)
+        rig.modifier(63, down: false, at: 0.12)
+        TestSupport.expectEqual(rig.takeActions(), [.start(.hold), .cancelSilently])
+        TestSupport.expect(!rig.isTranscribing, "a tap never starts a transcription")
+        rig.modifier(63, down: true, at: 0.3)
+        TestSupport.expectEqual(rig.takeActions(), [.start(.toggle)])
+
+        // Even if a transcription were still finishing, a plain hold is unaffected.
+        var hold = Rig()
+        hold.modifier(63, down: true, at: 0)
+        hold.modifier(63, down: false, at: 1.2)
+        TestSupport.expectEqual(hold.takeActions(), [.start(.hold), .stop])
+
+        // With a different toggle key, a short Fn hold still ends normally.
+        let other = DictationShortcutSessionController()
+        other.discardsShortHoldTaps = DictationShortcutSessionController.shortHoldTapsMayStartDoubleTap(
+            hold: .defaultHold, toggle: ShortcutPreset.f5.binding
+        )
+        TestSupport.expectEqual(other.handle(event: .holdActivated, isTranscribing: false, now: 0), .start(.hold))
+        TestSupport.expectEqual(other.handle(event: .holdDeactivated, isTranscribing: false, now: 0.1), .stop)
+    }
+
+    /// Fn first in the chord during a hands-free session: the Fn press must not stop (and paste)
+    /// the session before Control and Option arrive.
+    private static func testChordDuringHandsFreeKeepsRecording() {
+        var rig = Rig()
+        rig.modifier(63, down: true, at: 0)
+        rig.modifier(63, down: false, at: 0.1)
+        rig.modifier(63, down: true, at: 0.25)
+        rig.modifier(63, down: false, at: 0.35)
+        _ = rig.takeActions()
+        rig.modifier(63, down: true, at: 5)
+        rig.modifier(59, down: true, at: 5.05)
+        rig.modifier(58, down: true, at: 5.1)
+        TestSupport.expect(!rig.takeActions().contains(.stop), "the chord never stops a hands-free session")
+        rig.modifier(58, down: false, at: 5.3)
+        rig.modifier(59, down: false, at: 5.35)
+        rig.modifier(63, down: false, at: 5.4)
+        TestSupport.expect(!rig.takeActions().contains(.stop), "nor does letting go of it")
+        TestSupport.expectEqual(rig.controller.activeMode, .toggle)
+        // A plain Fn press still stops it, on release.
+        rig.modifier(63, down: true, at: 8)
+        TestSupport.expectEqual(rig.takeActions(), [])
+        rig.modifier(63, down: false, at: 8.1)
+        TestSupport.expectEqual(rig.takeActions(), [.stop])
     }
 
     private static func testTapThenHoldTiming() {
@@ -231,21 +294,35 @@ enum RioFixATests {
     // MARK: Hallucinations
 
     private static func testHallucinationGuard() {
+        let quiet = WhisperHallucinationGuard.SpeechEvidence(recordedSeconds: 4, heardSpeechSeconds: 0.2)
         let bad = [
             "Thanks for watching!", "Thank you for watching.", "We are hoping for a win.",
             "MBC 뉴스 이덕영입니다.", "Subtitles by the Amara.org community", "Please subscribe to my channel",
-            "[Music]", "Captions by John"
+            "[Music]", "Captions by John", "Thanks for watching, everyone"
         ]
         for text in bad {
             TestSupport.expect(WhisperHallucinationGuard.isHallucination(text), "should reject: \(text)")
+            TestSupport.expect(WhisperHallucinationGuard.isHallucination(text, evidence: quiet), "quiet audio, should reject: \(text)")
         }
         let good = [
             "Open Chrome", "Thank you", "you", "", "Remind me to subscribe to the newsletter after the meeting ends today because I keep forgetting about it entirely",
-            "Rio open Spotify", "set a timer for five minutes"
+            "Rio open Spotify", "set a timer for five minutes",
+            // Real dictations that merely contain a listed phrase.
+            "The book was translated by my professor.",
+            "Thank you for listening, I'll send the notes tonight.",
+            "Thank you for watching the kids yesterday.",
+            "Captions by the design team are due Friday."
         ]
         for text in good {
             TestSupport.expect(!WhisperHallucinationGuard.isHallucination(text), "should keep: \(text)")
+            TestSupport.expect(!WhisperHallucinationGuard.isHallucination(text, evidence: quiet), "quiet audio, should keep: \(text)")
         }
+        // A recording full of speech is never second-guessed, whatever Whisper wrote.
+        let spoken = WhisperHallucinationGuard.SpeechEvidence(recordedSeconds: 3, heardSpeechSeconds: 2.2)
+        TestSupport.expect(!WhisperHallucinationGuard.isHallucination("Thanks for watching!", evidence: spoken), "said out loud, it is kept")
+        // Speech that is a small share of a long recording (a TV in the room) still counts as quiet.
+        let background = WhisperHallucinationGuard.SpeechEvidence(recordedSeconds: 30, heardSpeechSeconds: 3)
+        TestSupport.expect(WhisperHallucinationGuard.isHallucination("Thanks for watching!", evidence: background), "background noise")
     }
 
     private static func testCommandPromptFitsBudget() {
