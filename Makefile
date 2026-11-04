@@ -20,6 +20,12 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioContextMemoryPhrases.swift \
 	Sources/RioActions/RioWritingPhrases.swift \
 	Sources/RioActions/RioAutomationPhrases.swift \
+	Sources/RioActions/RioAutomationModels.swift \
+	Sources/RioActions/RioScheduleCore.swift \
+	Sources/RioActions/RioTriggerCore.swift \
+	Sources/RioActions/RioMacroCore.swift \
+	Sources/RioActions/RioAutomationText.swift \
+	Sources/RioActions/RioAutomationStore.swift \
 	Sources/RioActions/RioFindPhrases.swift \
 	Sources/RioActions/RioOutsidePhrases.swift \
 	Sources/RioActions/RioMeetingPhrases.swift \
