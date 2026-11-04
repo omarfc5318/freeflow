@@ -549,6 +549,25 @@ unaffected (the key itself proves it was the owner).
   (`hasPersonalDetails`) or long free-text runs that aren't in the goal. The first navigation
   to a site named in the goal stays unconfirmed. Add tests.
 
+- OWNER-REPORTED (16:00): the action key heard "open chrome" as "We are hoping for a win." (a
+  Whisper hallucination; at 15:27 "Rio, open Chrome." worked). Fix: (1) on `.unknown`, the bear and
+  Rio's voice say what was heard ("I heard '…'. Try again?") instead of "I don't know how to do
+  that yet"; (2) action-key sessions give Whisper a command-biased prompt (installed app names +
+  command verbs, kept within the prompt budget); (3) a hallucination guard for action AND
+  dictation sessions: a mostly-silent recording (speech gate), or a transcript matching known
+  Whisper hallucinations ("Thanks for watching", "MBC 뉴스…", "We are hoping for a win", subtitle
+  credits…) → "I didn't catch that", nothing typed or run.
+- Tester misroutes (397-phrase corpus): "go back" (browser when a browser is frontmost),
+  bare "stop" with no timer (stop music/speech only), "press tab" → key, "open the website X dot
+  com" host bug, "go to amazon and search for X" → site search, chained app names ("open chrome
+  and safari", "quit Chrome and Safari"), "exit full screen" → ⌃⌘F, unmatched "open X" with no
+  installed app should go to the smart resolver (not openApp), "show desktop", "click the blue
+  button" keeps colour as a hint, mid-sentence fillers ("uh"), name mishearings ("Ria", "Rio's"),
+  "paste the link/address", offline email phrases → local draftEmail, Arabic table gaps
+  (الحاسبة Calculator, timers, help, search, time left).
+- Idle CPU measured 4–5% while asleep (machine was loaded): profile and cut it to near zero.
+- The Dock-click run is on branch feat/rio-dock-click (333edc5): merge it.
+
 ## Wave 4 (after this build is tested and shipped)
 
 Owner picks: #32 text Rio from your iPhone (Messages from the owner's own handle only, risky
