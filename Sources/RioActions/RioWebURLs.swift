@@ -91,6 +91,24 @@ enum RioWebURLs {
         return safeURL(string: "https://\(text)")
     }
 
+    // MARK: Local addresses
+
+    static let maxPort = 65_535
+
+    /// "localhost 3000", "localhost:8081", "127.0.0.1 8080 slash api" -> http://localhost:3000.
+    /// Only for the owner's own words: the smart resolver's URL rule still refuses local hosts.
+    static func localURL(fromSpoken spoken: String) -> URL? {
+        let text = RioText.collapseWhitespace(spoken.lowercased().replacingOccurrences(of: ":", with: " ")
+            .replacingOccurrences(of: "/", with: " slash "))
+        let pattern = #"^(localhost|local\s+host|127\.0\.0\.1)\s+(?:port\s+)?(\d{1,5})((?:\s+(?:slash\s+)?[a-z0-9_-]+)*)(?:\s+slash)?$"#
+        guard let groups = RioText.firstMatch(pattern, in: text), let hostWord = groups[1],
+              let portText = groups[2], let port = Int(portText), (1...maxPort).contains(port) else { return nil }
+        let host = hostWord == "127.0.0.1" ? "127.0.0.1" : "localhost"
+        let segments = (groups[3] ?? "").split(separator: " ").map(String.init).filter { $0 != "slash" }
+        let path = segments.isEmpty ? "" : "/" + segments.joined(separator: "/")
+        return safeURL(string: "http://\(host):\(port)\(path)")
+    }
+
     // MARK: Search
 
     static func googleSearchURL(query: String) -> URL? {
@@ -103,6 +121,29 @@ enum RioWebURLs {
 
     static func amazonSearchURL(query: String) -> URL? {
         searchURL(base: "https://www.amazon.com/s?k=", query: query)
+    }
+
+    static func githubSearchURL(query: String) -> URL? {
+        searchURL(base: "https://github.com/search?q=", query: query)
+    }
+
+    static func stackOverflowSearchURL(query: String) -> URL? {
+        searchURL(base: "https://stackoverflow.com/search?q=", query: query)
+    }
+
+    static func netflixSearchURL(query: String) -> URL? {
+        searchURL(base: "https://www.netflix.com/search?q=", query: query)
+    }
+
+    /// "open youtube and play X": the video site's own search, never Spotify. Nil when `site`
+    /// is not the home page of a video site.
+    static func videoSiteSearchURL(site: URL, query: String) -> URL? {
+        guard let host = site.host?.lowercased(), site.path.isEmpty || site.path == "/", site.query == nil else { return nil }
+        switch host {
+        case "www.youtube.com", "youtube.com", "m.youtube.com": return youtubeSearchURL(query: query)
+        case "www.netflix.com", "netflix.com": return netflixSearchURL(query: query)
+        default: return nil
+        }
     }
 
     private static func searchURL(base: String, query: String) -> URL? {

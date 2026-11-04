@@ -60,10 +60,16 @@ final class RioMacroRecorder: ObservableObject {
 
     @Published private(set) var isRecording = false
     @Published private(set) var stepCount = 0
+    /// False once a recording that ran too long stopped listening; the steps wait for "stop".
+    @Published private(set) var isCapturing = false
     private(set) var name = ""
     private var actions: [RioAction] = []
     private var monitor: Any?
     private var appObserver: NSObjectProtocol?
+    private var autoStopTask: Task<Void, Never>?
+    /// Called when a recording stops listening on its own after `RioMacroMapper.maxRecordingSeconds`
+    /// (for a spoken reminder to say "stop recording").
+    var onAutoStop: (@MainActor (_ name: String, _ steps: Int) -> Void)?
 
     nonisolated private static let ownBundleID = Bundle.main.bundleIdentifier
     nonisolated private static let keyNames: [UInt16: String] = {
@@ -79,6 +85,15 @@ final class RioMacroRecorder: ObservableObject {
         actions = []
         stepCount = 0
         isRecording = true
+        isCapturing = true
+        RioMacroRecordingState.isRecording = true
+        let limit = UInt64(RioMacroMapper.maxRecordingSeconds * 1_000_000_000)
+        autoStopTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: limit)
+            guard !Task.isCancelled, let self, self.isCapturing else { return }
+            self.endCapture()
+            self.onAutoStop?(self.name, self.actions.count)
+        }
         let mask: NSEvent.EventTypeMask = [.leftMouseDown, .keyDown]
         monitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
             let front = NSWorkspace.shared.frontmostApplication
@@ -119,18 +134,27 @@ final class RioMacroRecorder: ObservableObject {
     /// Ends the recording and returns what was seen (compacted). Empty when nothing was recorded.
     func stop() -> (name: String, steps: [RioAction]) {
         let result = (name: name, steps: RioMacroMapper.compact(actions))
+        autoStopTask?.cancel()
+        autoStopTask = nil
+        endCapture()
+        actions = []
+        stepCount = 0
+        isRecording = false
+        RioMacroRecordingState.isRecording = false
+        return result
+    }
+
+    /// Stops listening to keys, clicks and app switches; the steps so far are kept.
+    private func endCapture() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
         if let appObserver { NSWorkspace.shared.notificationCenter.removeObserver(appObserver) }
         appObserver = nil
-        actions = []
-        stepCount = 0
-        isRecording = false
-        return result
+        isCapturing = false
     }
 
     private func record(_ event: RioMacroEvent) {
-        guard isRecording, let action = RioMacroMapper.action(for: event) else { return }
+        guard isRecording, isCapturing, let action = RioMacroMapper.action(for: event) else { return }
         actions = RioMacroMapper.compact(actions + [action])
         stepCount = actions.count
     }

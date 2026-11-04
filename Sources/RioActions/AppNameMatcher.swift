@@ -3,9 +3,11 @@ import Foundation
 /// How a spoken name matched an installed app, strongest first. The parser uses the kind to let
 /// a well-known website beat a merely similar app name ("github" vs "GitHub Desktop").
 enum AppNameMatchKind: Int, Equatable {
-    case exact, alias, prefix, token, fuzzy
+    case exact, alias, prefix, token, fuzzy, partial
 
     var isStrong: Bool { self == .exact || self == .alias }
+    /// A mishearing or a part of a name is only a guess: the smart resolver gets the first say.
+    var isConfident: Bool { self != .fuzzy && self != .partial }
 }
 
 struct AppNameMatch: Equatable {
@@ -73,6 +75,9 @@ enum AppNameMatcher {
         if let app = fuzzyMatch(key, in: entries) {
             return AppNameMatch(app: app, kind: .fuzzy)
         }
+        if let app = uniqueCamelPartMatch(spoken, key: key, in: entries) {
+            return AppNameMatch(app: app, kind: .partial)
+        }
         return nil
     }
 
@@ -113,8 +118,9 @@ enum AppNameMatcher {
             .filter { !$0.isEmpty }
     }
 
-    /// Edit distance 1 (2 for long names) against app names and alias spellings; the first letter
-    /// must agree and the closest app must be unique.
+    /// Edit distance 1 (2 for long names) against real app names only; the first letter must
+    /// agree and the closest app must be unique. Aliases need an exact hit: "tests" is one edit
+    /// from the alias "texts", and "run the tests" must never open Messages.
     private static func fuzzyMatch(_ key: String, in entries: [Entry]) -> InstalledApp? {
         guard key.count >= 5, let first = key.first else { return nil }
         let allowed = key.count >= 9 ? 2 : 1
@@ -128,13 +134,41 @@ enum AppNameMatcher {
             best[id] = (app, distance)
         }
         for entry in entries { consider(entry.compact, app: entry.app) }
-        for (alias, target) in aliases {
-            let wanted = RioText.compact(target)
-            if let entry = entries.first(where: { $0.compact == wanted }) { consider(alias, app: entry.app) }
-        }
         guard let minimum = best.values.map(\.distance).min() else { return nil }
         let closest = best.values.filter { $0.distance == minimum }
         return closest.count == 1 ? closest[0].app : nil
+    }
+
+    /// "edit" for "TextEdit": one spoken word that is a whole camel-case part of exactly one app.
+    private static func uniqueCamelPartMatch(_ spoken: String, key: String, in entries: [Entry]) -> InstalledApp? {
+        guard key.count >= 4, tokens(spoken).count == 1 else { return nil }
+        return onlyCandidate(entries.filter { entry in
+            let parts = camelParts(entry.app.name)
+            return parts.count >= 2 && parts.contains(key)
+        })
+    }
+
+    /// "TextEdit" -> ["text", "edit"]; "GitHub Desktop" -> ["git", "hub", "desktop"].
+    static func camelParts(_ name: String) -> [String] {
+        var parts: [String] = []
+        var current = ""
+        var previousWasLower = false
+        for character in name {
+            guard character.isLetter || character.isNumber else {
+                if !current.isEmpty { parts.append(current.lowercased()) }
+                current = ""
+                previousWasLower = false
+                continue
+            }
+            if character.isUppercase, previousWasLower, !current.isEmpty {
+                parts.append(current.lowercased())
+                current = ""
+            }
+            current.append(character)
+            previousWasLower = character.isLowercase || character.isNumber
+        }
+        if !current.isEmpty { parts.append(current.lowercased()) }
+        return parts
     }
 
     /// The one candidate; nil when none or when several apps fit (ambiguous).
