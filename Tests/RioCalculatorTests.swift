@@ -38,7 +38,7 @@ enum RioCalculatorTests {
             ("what's 100 divided by 8", "12.5"), ("10 minus 3", "7"), ("what's 2 plus 3 times 4", "14"),
             ("(2 + 3) * 4", "20"), ("what's 2 to the power of 10", "1,024"), ("2 ^ 8", "256"),
             ("2 ^ 3 ^ 2", "512"), ("7 squared", "49"), ("3 cubed", "27"), ("square root of 144", "12"),
-            ("what's the square root of 2", "1.41"), ("1,000 + 250", "1,250"), ("0.1 + 0.2", "0.3"),
+            ("what's the square root of 2", "1.414"), ("1,000 + 250", "1,250"), ("0.1 + 0.2", "0.3"),
             ("10 / 4", "2.5"), ("what's 15 over 3", "5"), ("minus 5 plus 8", "3"), ("-5 * -5", "25"),
             ("what's 3.5 times 2", "7"), ("calculate 45 divided by 9", "5"), ("how much is 19 plus 23", "42"),
             ("what's 1000000 times 3", "3,000,000"), ("2 million plus 3 million", "5,000,000"),

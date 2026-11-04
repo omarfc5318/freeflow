@@ -114,23 +114,8 @@ enum RioSmartResponseParser {
     /// The validated plan, plus whether valid steps past `maxActions` were dropped (so Rio can
     /// say he only did the first six).
     static func plan(from content: String, now: Date, timeZone: TimeZone) -> (actions: [RioAction], wasCut: Bool) {
-        guard let json = decode(content) else { return ([], false) }
-        let items: [Any]
-        if let object = json as? [String: Any] {
-            if let list = object["actions"] as? [Any] {
-                items = list
-            } else if object["action"] != nil {
-                items = [object]
-            } else {
-                return ([], false)
-            }
-        } else if let list = json as? [Any] {
-            items = list
-        } else {
-            return ([], false)
-        }
         var actions: [RioAction] = []
-        for item in items {
+        for item in items(from: content) {
             guard let object = item as? [String: Any], let action = action(from: object, now: now, timeZone: timeZone) else { continue }
             guard actions.count < maxActions else { return (actions, true) }
             actions.append(action)
@@ -139,6 +124,49 @@ enum RioSmartResponseParser {
     }
 
     // MARK: Decoding
+
+    /// Keys a model sometimes uses for the spoken text instead of "text" (round 3, finding 74).
+    static let answerKeys = ["text", "answer", "response", "reply", "result", "message", "content"]
+
+    /// The reply's action objects: `{"actions":[...]}`, one bare action, a bare list, or a bare
+    /// `{"answer":"..."}` (read as one answer).
+    static func items(from content: String) -> [Any] {
+        guard let json = decode(content) else { return [] }
+        if let object = json as? [String: Any] {
+            if let list = object["actions"] as? [Any] { return list }
+            if object["action"] != nil { return [object] }
+            return answerText(object) == nil ? [] : [object]
+        }
+        return json as? [Any] ?? []
+    }
+
+    /// The question prompt's way of saying "this is about the owner's Mac, ask the full prompt".
+    static let needsContextAction = "needsContext"
+
+    static func asksForContext(_ content: String) -> Bool {
+        items(from: content).contains { ($0 as? [String: Any])?["action"] as? String == needsContextAction }
+    }
+
+    /// The spoken text of an answer object, under "text" or a key a model uses instead.
+    static func answerText(_ object: [String: Any]) -> String? {
+        for key in answerKeys {
+            if let value = text(object[key], max: 4_000, multiline: true) { return value }
+        }
+        return nil
+    }
+
+    /// For a world question whose reply held no usable action: prose instead of JSON ("About
+    /// 384,400 km."), cleaned and cut to two sentences. Nil when the reply is JSON, a code
+    /// fence's leftovers, or empty.
+    static func spokenProse(_ content: String) -> String? {
+        var text = RioText.replacing(#"<think>[\s\S]*?</think>"#, with: "", in: content)
+        text = RioText.replacing(#"<think>[\s\S]*$"#, with: "", in: text)
+        text = text.replacingOccurrences(of: "```", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !text.contains("{"), !text.contains("}"), !text.contains("["),
+              let cleaned = self.text(text, max: 4_000, multiline: true) else { return nil }
+        let limited = RioSmartText.limitSentences(cleaned, maxSentences: 2, maxCharacters: RioSmartText.maxAnswerCharacters)
+        return limited.isEmpty ? nil : limited
+    }
 
     private static func decode(_ content: String) -> Any? {
         var text = RioText.replacing(#"<think>[\s\S]*?</think>"#, with: "", in: content)
@@ -218,7 +246,9 @@ enum RioSmartResponseParser {
     // MARK: Action construction
 
     private static func action(from object: [String: Any], now: Date, timeZone: TimeZone) -> RioAction? {
-        guard let kind = object["action"] as? String, allowedActionNames.contains(kind) else { return nil }
+        // {"answer":"..."} with no action is an answer (finding 74).
+        let kind = (object["action"] as? String) ?? (answerText(object) != nil ? "answer" : "")
+        guard allowedActionNames.contains(kind) else { return nil }
         switch kind {
         case "openApp": return name(object["name"]).map(RioAction.openApp)
         case "quitApp": return name(object["name"]).map(RioAction.quitApp)
@@ -243,7 +273,7 @@ enum RioSmartResponseParser {
         case "selectionTask": return selectionTask(object)
         case "readAloud": return (object["target"] as? String).flatMap(ReadTarget.init(rawValue:)).map(RioAction.readAloud)
         case "answer":
-            guard let raw = text(object["text"], max: 4_000, multiline: true) else { return nil }
+            guard let raw = answerText(object) else { return nil }
             let limited = RioSmartText.limitSentences(raw, maxSentences: 2, maxCharacters: RioSmartText.maxAnswerCharacters)
             return limited.isEmpty ? nil : .answer(limited)
         case "startTimer": return timer(object)
