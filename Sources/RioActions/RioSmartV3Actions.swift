@@ -336,38 +336,76 @@ enum RioSmartPlanGuards {
         let commandWords = Set(words(command))
         let site = registrableDomain(host)
         guard siteIsNamed(site, commandWords: commandWords, command: command) || isKnownSite(site) else { return nil }
+        // One of Rio's own built-in addresses (Gmail's inbox link) carries nothing the model wrote.
+        if RioWebURLs.isBuiltInSiteURL(url) { return url }
+        // Security review: every host label beyond the site must be a word the owner said
+        // ("docs" in "open google docs"); otherwise the link goes to the site itself, so a
+        // hostile page can't hide data in a subdomain.
+        let bare = RioWebHostRules.bareHost(host)
+        let extra = bare == site ? [] : bare.dropLast(site.count + 1).split(separator: ".").map(String.init)
+        let saidHost = extra.allSatisfy({ commandWords.contains($0) }) || namedKnownHosts(command).contains(bare)
+        let www = host.hasPrefix("www.")
+        let keptHost = saidHost ? host : (www ? "www." + site : site)
+        // Path, query and fragment: every token (single letters too) must be a whole word the
+        // owner said, or the link is cut to the home page.
         let rest = [url.path, url.query, url.fragment].compactMap { $0 }.joined(separator: " ")
-        let restWords = words(rest.removingPercentEncoding ?? rest)
-        let compactCommand = RioText.compact(command)
-        if restWords.allSatisfy({ commandWords.contains($0) || compactCommand.contains($0) }) { return url }
+        let restTokens = tokens(rest.removingPercentEncoding ?? rest)
+        if saidHost, restTokens.allSatisfy({ commandWords.contains($0) }) { return url }
         var origin = URLComponents()
         origin.scheme = scheme
-        origin.host = host
+        origin.host = keptHost
         origin.port = url.port
         origin.path = "/"
+        if restTokens.allSatisfy({ commandWords.contains($0) }), let path = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            origin.path = path.path.isEmpty ? "/" : path.path
+            origin.query = path.query
+            origin.fragment = path.fragment
+        }
         return origin.url
     }
 
-    /// Lowercased runs of letters and digits, two or more long.
+    /// Lowercased runs of letters and digits, any length (so the owner's "r" in "r slash swift" counts).
     private static func words(_ text: String) -> [String] {
-        text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init).filter { $0.count >= 2 }
+        tokens(text)
     }
 
+    private static func tokens(_ text: String) -> [String] {
+        text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+    }
+
+    /// Hosts of Rio's built-in sites the owner named by their spoken name ("gmail" -> mail.google.com).
+    private static func namedKnownHosts(_ command: String) -> Set<String> {
+        let spoken = tokens(command)
+        var hosts = Set<String>()
+        for start in spoken.indices {
+            for end in start..<min(spoken.count, start + 3) {
+                if let host = RioWebURLs.knownSite(compactName: spoken[start...end].joined())?.host {
+                    hosts.insert(RioWebHostRules.bareHost(host))
+                }
+            }
+        }
+        return hosts
+    }
+
+    /// Words that are commands, not site names ("open" never names open.example).
+    private static let commandVocabulary: Set<String> = [
+        "open", "go", "goto", "show", "find", "search", "look", "new", "tab", "window", "page", "site", "website",
+        "link", "my", "the", "me", "to", "on", "in", "up", "get", "play", "watch", "read", "start", "take", "bring",
+        "launch", "visit", "check", "pull", "load", "a", "an", "and", "please", "rio",
+    ]
+
     /// "mail.google.com" -> "google.com"; "bbc.co.uk" -> "bbc.co.uk".
+    /// Shared hosting customers are separate sites (alice.github.io is not github.io).
     static func registrableDomain(_ host: String) -> String {
-        var labels = host.split(separator: ".").map(String.init)
-        if labels.first == "www" { labels.removeFirst() }
-        guard labels.count > 2 else { return labels.joined(separator: ".") }
-        let secondLevel = labels[labels.count - 2]
-        let isCountrySecondLevel = labels[labels.count - 1].count == 2 && ["co", "com", "org", "net", "ac", "gov", "edu"].contains(secondLevel)
-        return labels.suffix(isCountrySecondLevel ? 3 : 2).joined(separator: ".")
+        RioWebHostRules.registrableDomain(RioWebHostRules.bareHost(host))
     }
 
     /// The owner said the site: its name ("vercel"), its domain, or a known site's spoken name
     /// ("twitter" for x.com).
     private static func siteIsNamed(_ site: String, commandWords: Set<String>, command: String) -> Bool {
         guard let name = site.split(separator: ".").first.map(String.init) else { return false }
-        if commandWords.contains(name) || RioText.compact(command).contains(RioText.compact(site)) { return true }
+        if !commandVocabulary.contains(name), commandWords.contains(name) { return true }
+        if RioText.compact(command).contains(RioText.compact(site)) { return true }
         let spoken = command.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
         for start in spoken.indices {
             for end in start..<min(spoken.count, start + 3) {
