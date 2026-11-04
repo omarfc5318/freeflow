@@ -674,13 +674,24 @@ final class RioActionCoordinator {
         case .typeText, .pressKeys: break
         default: return false
         }
-        // The app this command brought forward is the target at this step.
-        for previous in actions[..<index].reversed() {
+        // The app this command brought forward is only a hint (security review): a later step that
+        // can move focus makes the target unknown, and the live frontmost app is always checked.
+        var namedTerminal = false
+        lookback: for previous in actions[..<index].reversed() {
             switch previous {
-            case .openApp(let name), .switchToApp(let name): return RioTaskSafety.isTerminal(appName: name)
-            default: continue
+            case .openApp(let name), .switchToApp(let name):
+                namedTerminal = RioTaskSafety.isTerminal(appName: name)
+                break lookback
+            case .pressKeys(let combo) where combo.command || combo.control || combo.option:
+                return true
+            case .click, .runTask:
+                return true
+            default:
+                continue
             }
         }
+        if namedTerminal { return true }
+        // The app's executor always reports the frontmost app; only test doubles may not.
         guard let reporter = executor as? RioFrontAppReporting else { return false }
         let front = reporter.frontmostApp()
         return RioTaskSafety.isTerminal(appName: front.name, bundleID: front.bundleID)
