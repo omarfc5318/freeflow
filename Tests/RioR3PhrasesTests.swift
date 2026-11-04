@@ -157,12 +157,10 @@ enum RioR3PhrasesTests {
         // A timer label never swallows the next command.
         ETest.eq(RioTimerPhrases.parseStart("set a timer for 10 minutes called pasta and remind me to stir"),
                  .startTimer(seconds: 600, label: "pasta"))
-        // End to end once "remind me to X" is also a clause parser (RioExtraPhrases, lead-owned):
-        // until then the sentence goes to the resolver whole, which is not a wrong action.
+        // End to end: "remind me to X" is also a clause parser (RioExtraPhrases).
         for (text, timerFirst) in [("set a timer for 10 minutes and remind me to take out the laundry", true),
                                    ("remind me to call mom and set a timer for 5 minutes", false)] {
             let result = parse(text)
-            if case .unknown = result { continue }
             guard case .actions(let list) = result, list.count == 2 else {
                 TestSupport.expect(false, "'\(text)' must give a timer and a reminder: \(result)")
                 continue

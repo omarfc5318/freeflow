@@ -54,6 +54,7 @@ enum RioActionCoordinatorTests {
         await testPhoneRefusesWritingAndReading()
         await testNeverMindDoesNothing()
         await testUnavailableAnswerIsNotContext()
+        await testEmptyWorldQuestionRetriesWithMacContext()
         await testAgainRerunsTheWholeCommand()
         await testAgainNeverRepeatsTyping()
         await testSameForReparsesTheWords()
@@ -253,6 +254,38 @@ enum RioActionCoordinatorTests {
         // "Try that again" asks the brain again; it doesn't replay the error.
         _ = await coordinator.run("Rio, try that again.")
         ETest.eq(resolver.calls, 2)
+    }
+
+    /// Answers the queued resolutions in order and keeps every request it saw.
+    private final class QueueResolver: RioSmartResolving, @unchecked Sendable {
+        private(set) var requests: [RioSmartRequest] = []
+        var queue: [RioSmartResolution]
+        init(_ queue: [RioSmartResolution]) { self.queue = queue }
+        func resolve(_ text: String) async throws -> [RioAction] { [] }
+        func resolve(_ request: RioSmartRequest) async -> RioSmartResolution {
+            requests.append(request)
+            return queue.isEmpty ? .actions([]) : queue.removeFirst()
+        }
+    }
+
+    @MainActor private final class FrontAppContext: RioSmartContextProviding {
+        func currentContext() async -> RioSmartContext { RioSmartContext(frontApp: "Preview") }
+    }
+
+    /// Round 3 finding 1: "what's the answer" looked like a world question, came back empty, and
+    /// goes once more with the Mac's context.
+    @MainActor private static func testEmptyWorldQuestionRetriesWithMacContext() async {
+        let resolver = QueueResolver([.actions([]), .actions([.answer("It's B")])])
+        let executor = FakeExecutor(results: [])
+        let coordinator = RioActionCoordinator(
+            parser: TableParser([:]), executor: executor, smartResolver: resolver,
+            smartContext: FrontAppContext(), followUps: RioFollowUpMemory()
+        )
+        _ = await coordinator.run("Rio, how far is the moon")
+        ETest.eq(resolver.requests.count, 2, "an empty world-question plan is asked again")
+        ETest.eq(resolver.requests.first?.context.frontApp, String?.none, "the first ask has no Mac context")
+        ETest.eq(resolver.requests.last?.context.frontApp, "Preview", "the retry has the Mac context")
+        ETest.eq(executor.executed, [.answer("It's B")])
     }
 
     @MainActor private static func testAgainRerunsTheWholeCommand() async {

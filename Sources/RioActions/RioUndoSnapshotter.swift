@@ -24,7 +24,7 @@ enum RioUndoSnapshotter {
             window = WindowController().captureSnapshot(for: command)
             snapshot.hasWindowSnapshot = window != nil
         case .media(let command) where RioMediaPlan.needsState(command):
-            switch MacControls.playbackState() {
+            switch MacControls.playbackState(for: command) {
             case .playing: snapshot.wasPlaying = true
             case .notPlaying: snapshot.wasPlaying = false
             case .unknown: break

@@ -38,6 +38,7 @@ enum RioExtraPhrases {
         { RioScreenPhrases.parse(raw: $0, simplified: $1) },         // J
         { RioVoicePhrases.parse(raw: $0, simplified: $1) },          // G
         { RioKnowledgePhrases.parse(raw: $0, simplified: $1) },      // H
+        { raw, _ in RioReminderPhrases.parse(raw) },                 // reminder clause ("... and remind me to X")
         { RioMemoryPhrases.parse(raw: $0, simplified: $1) },         // L
         { RioSystemPhrases.parse(raw: $0, simplified: $1) },         // I
         { RioTaskPhrases.parse(raw: $0, simplified: $1) },           // K (last: the broadest)

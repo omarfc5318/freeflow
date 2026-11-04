@@ -51,6 +51,13 @@ enum RioActionOutcome: Equatable {
     case unknown
 }
 
+/// The source of the command the coordinator is running right now (nil outside `run`), for
+/// handlers that behave differently for the owner's own key ("what did I tell you about X" may
+/// read the dictations from the action key, never from room audio).
+@MainActor enum RioActiveCommandSource {
+    static var current: RioCommandSource?
+}
+
 /// Where a spoken command came from. The action key (Fn + Control) proves the owner is
 /// speaking; conversation mode hears the room, so some actions need a second check there.
 enum RioCommandSource: Equatable {
@@ -451,6 +458,8 @@ final class RioActionCoordinator {
             guard !RioFollowUpRewriter.isRepeatRequest(RioText.simplify(last.command)) else { return .unknown }
             return await run(last.command, source: source, progress: progress)
         }
+        // One chain per spoken command: "do the same for Warp" repeats every step of it.
+        followUps.beginCommand()
         let followUpContext = followUps.snapshot(now: now())
         // "Do the same for Slack" after "open Chrome" is parsed as "open Slack" would be.
         let text = RioFollowUpRewriter.commandText(simplified, context: followUpContext) ?? stripped
@@ -458,6 +467,9 @@ final class RioActionCoordinator {
         let previousStop = RioStopRequest.current
         RioStopRequest.current = RioTimerPhrases.stopKind(RioText.simplify(text))
         defer { RioStopRequest.current = previousStop }
+        let previousSource = RioActiveCommandSource.current
+        RioActiveCommandSource.current = source
+        defer { RioActiveCommandSource.current = previousSource }
         isUnresolvedRun = false
         defer { rememberCommand(text) }
         // "Do the same for Slack" after a text: Rio only texts over iMessage, and the message body
@@ -487,8 +499,16 @@ final class RioActionCoordinator {
             guard let smartResolver else { return .unknown }
             // "Rio, how far is the moon": a question about the world goes without the Mac's
             // context, so the spoken answer comes back sooner (and less leaves the Mac).
-            let request = await makeRequest(unrecognized, includingMac: !RioQuestionShape.isGeneralQuestion(unrecognized))
-            switch await smartResolver.resolve(request) {
+            let isWorldQuestion = RioQuestionShape.isGeneralQuestion(unrecognized)
+            var request = await makeRequest(unrecognized, includingMac: !isWorldQuestion)
+            var resolution = await smartResolver.resolve(request)
+            if isWorldQuestion, case .actions(let plan) = resolution, plan.isEmpty {
+                // It looked like a world question but needs the Mac after all ("what's the answer"
+                // on screen): ask once more with the front app, the window and the rest.
+                request = await makeRequest(unrecognized, includingMac: true)
+                resolution = await smartResolver.resolve(request)
+            }
+            switch resolution {
             case .actions(let plan):
                 guard !plan.isEmpty else { return .unknown }
                 return await runPlan(plan, request: request, resolver: smartResolver, source: source, progress: progress)

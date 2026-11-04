@@ -19,6 +19,14 @@ enum RioReminderPhrasesTests {
         leftAlone()
         throughTheRealParser()
         dayOnly()
+        timeOnly()
+    }
+
+    /// "remind me in 10 minutes": a time and no title is a plain "Reminder" (finding 55).
+    private static func timeOnly() {
+        ETest.eq(parse("remind me in 10 minutes"), .createReminder(title: "Reminder", due: date(11, 3, 10, 10)))
+        ETest.eq(parse("Rio remind me in five minutes"), .createReminder(title: "Reminder", due: date(11, 3, 10, 5)))
+        ETest.eq(parse("remind me"), nil)
     }
 
     private static func dated() {
@@ -65,7 +73,7 @@ enum RioReminderPhrasesTests {
         for text in [
             "remind me at 13 pm", "remind me to call mom at 13 pm", "remind me to call mom at 9",
             "remind me to call mom an hour from now", "remind me to take vitamins every day at 9 am",
-            "remind me my locker code is 4321", "remind me", "set a reminder", "remind me in 10 minutes",
+            "remind me my locker code is 4321", "remind me", "set a reminder",
             "remember to call mom", "remind me tonight to call mom later", "open reminders",
             "add milk to my reminders", "what are my reminders",
         ] {

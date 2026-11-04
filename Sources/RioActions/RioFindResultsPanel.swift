@@ -65,9 +65,8 @@ private let rioFindEscapeKeyCode: UInt16 = 53
 
     private func frame(for size: CGSize) -> CGRect {
         guard let screen = RioCompanionHub.homeScreen() ?? NSScreen.screens.first else { return CGRect(origin: .zero, size: size) }
-        let visible = screen.visibleFrame
-        let x = min(visible.minX + RioCompanionLayout.edgeInset + 84, visible.maxX - size.width - 16)
-        return CGRect(origin: CGPoint(x: max(x, visible.minX + 16), y: visible.minY + 16), size: size)
+        // Never above the top of the screen, however long the list (finding 75).
+        return RioPanelPlacement.frame(size: size, visible: screen.visibleFrame, leftInset: RioCompanionLayout.edgeInset + 84, margin: 16)
     }
 
     /// Esc and clicks outside the panel close it. The handlers read only the key code and event type.

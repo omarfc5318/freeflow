@@ -40,6 +40,11 @@ enum RioReminderPhrases {
 
     /// "remind me (when) to X" / "remind me to X (when)" / "remind me about X".
     private static func remindMe(_ rest: String, now: Date, calendar: Calendar) -> RioAction? {
+        // "remind me in five minutes": a time and nothing else is a plain "Reminder" then.
+        if let alone = RioDateTimeParser.parse(rest, now: now, calendar: calendar)
+            ?? RioDateTimeParser.parseDay(rest, now: now, calendar: calendar), alone.remainder.isEmpty {
+            return .createReminder(title: "Reminder", due: alone.start)
+        }
         guard let groups = RioText.firstMatch(#"^(.*?)\b(?:to|that|about)\s+(.+)$"#, in: rest),
               let prefix = groups[1]?.trimmingCharacters(in: .whitespaces), let title = groups[2] else { return nil }
         // Anything before "to" must be a time, all of it: "remind me tomorrow morning to ...".
