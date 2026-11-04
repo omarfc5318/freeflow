@@ -12,6 +12,54 @@ enum RioPhoneTests {
         access()
         filterOverRows()
         syntheticDatabase()
+        strictHandles()
+        outcomeReplies()
+        waitingCommands()
+    }
+
+    private static func strictHandles() {
+        // Both with a country code: they must be identical.
+        TestSupport.expect(!RioPhoneHandle.matches("+15550100100", "+445550100100"), "same last 10 digits, another country")
+        TestSupport.expect(!RioPhoneHandle.matches("+15550100100", "+5550100100"), "different country codes")
+        // Only one with a country code: the other must be the whole national number.
+        TestSupport.expect(RioPhoneHandle.matches("+97455501001", "55501001") == false, "too short to trust")
+        TestSupport.expect(RioPhoneHandle.matches("+445550100100", "5550100100"), "a national number behind its country code")
+        TestSupport.expect(!RioPhoneHandle.matches("+12345550100100", "5550100100"), "four extra digits is not a country code")
+        TestSupport.expect(!RioPhoneHandle.matches("5550100100", "15550100100"), "without a plus, numbers must be equal")
+        // A family member's number never matches the owner's.
+        let rows = [RioChatRow(rowID: 1, text: "Rio open Notes", attributedBody: nil, isFromMe: true,
+                               chatIdentifier: "+445550100100", participantCount: 1)]
+        TestSupport.expect(RioPhoneFilter.scan(rows, ownerHandles: ["+15550100100"], after: 0).commands.isEmpty,
+                           "a chat with another country's number is ignored")
+    }
+
+    private static func outcomeReplies() {
+        TestSupport.expect(RioPhoneReply.message(for: .succeeded("Opened Notes"), summary: "Opened Notes") == ("Opened Notes", true), "success")
+        TestSupport.expect(RioPhoneReply.message(for: .failed("No"), summary: "No") == ("No", false), "failure")
+        TestSupport.expectEqual(RioPhoneReply.message(for: .unknown, summary: "I heard \"x\". Try again?").message, "I heard \"x\". Try again?")
+        for outcome in [RioActionOutcome.nothing, .cancelled] {
+            let reply = RioPhoneReply.message(for: outcome, summary: "")
+            TestSupport.expect(!reply.message.isEmpty && !reply.succeeded, "\(outcome) gets a real reply")
+        }
+    }
+
+    private static func waitingCommands() {
+        let t0 = Date(timeIntervalSince1970: 5_000)
+        var line = RioWaitingCommands<String>()
+        TestSupport.expect(line.add("open notes", at: t0), "added")
+        TestSupport.expect(line.add("play music", at: t0.addingTimeInterval(1)), "added")
+        if case .wait = line.next(now: t0.addingTimeInterval(5), isBusy: true) {} else { TestSupport.expect(false, "waits while busy") }
+        if case .run(let item) = line.next(now: t0.addingTimeInterval(6), isBusy: false) {
+            TestSupport.expectEqual(item, "open notes")
+        } else { TestSupport.expect(false, "runs the first once free") }
+        let late = t0.addingTimeInterval(RioWaitingCommands<String>.maxWaitSeconds + 5)
+        if case .expired(let item) = line.next(now: late, isBusy: true) {
+            TestSupport.expectEqual(item, "play music")
+        } else { TestSupport.expect(false, "a command that waited too long expires, even while busy") }
+        TestSupport.expect(line.isEmpty, "nothing left")
+        var full = RioWaitingCommands<Int>()
+        for index in 0..<RioWaitingCommands<Int>.capacity { _ = full.add(index, at: t0) }
+        TestSupport.expect(!full.add(99, at: t0), "a full line refuses more")
     }
 
     private static func handles() {

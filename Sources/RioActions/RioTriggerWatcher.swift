@@ -6,16 +6,70 @@ import CoreWLAN
 /// Watches the Mac for the events triggers care about: a display connecting, the default audio
 /// output changing (AirPods) and joining a Wi-Fi network. Observers are only installed for the
 /// kinds a stored trigger needs, and removed when none is left. Never created in tests.
+///
+/// Sleep and wake are not connections: displays drop out while the Mac sleeps and come back on
+/// wake, and Wi-Fi rejoins the same network. So for a minute after a wake only a display or a
+/// network that was not there before the sleep counts. The built-in screen (lid opened in
+/// clamshell mode) is never "connecting a display".
 @MainActor
 final class RioTriggerWatcher: NSObject, CWEventDelegate {
     private let onEvent: (RioSystemEvent) -> Void
     private var screenObserver: NSObjectProtocol?
-    private var screenCount = NSScreen.screens.count
+    private var knownDisplays = RioTriggerWatcher.currentExternalDisplayIDs()
     private var audioListener: AudioObjectPropertyListenerBlock?
     private var isWatchingWiFi = false
     private var lastOutputName: String?
+    private var sleepObservers: [NSObjectProtocol] = []
+    /// Displays and the network as they were when the Mac (or its screens) went to sleep.
+    private var displaysBeforeSleep: Set<CGDirectDisplayID>?
+    private var ssidBeforeSleep: String?
+    private var lastSSID: String?
+    /// Until when after a wake the before-sleep snapshot is used.
+    private var compareUntil: Date?
+    /// Long enough for slow docks to bring their displays back.
+    private static let wakeCompareSeconds: TimeInterval = 60
 
-    init(onEvent: @escaping (RioSystemEvent) -> Void) { self.onEvent = onEvent }
+    init(onEvent: @escaping (RioSystemEvent) -> Void) {
+        self.onEvent = onEvent
+        super.init()
+        observeSleep()
+    }
+
+    // MARK: Sleep and wake
+
+    private func observeSleep() {
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
+            sleepObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.noteSleep() }
+            })
+        }
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
+            sleepObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.noteWake() }
+            })
+        }
+    }
+
+    private func noteSleep() {
+        // The first notification wins: by the second, displays may already have dropped out.
+        expireSleepSnapshot()
+        compareUntil = nil
+        if displaysBeforeSleep == nil { displaysBeforeSleep = knownDisplays }
+        if ssidBeforeSleep == nil { ssidBeforeSleep = lastSSID }
+    }
+
+    private func noteWake() {
+        compareUntil = Date().addingTimeInterval(Self.wakeCompareSeconds)
+    }
+
+    /// Drops the before-sleep snapshot once the minute after a wake is over.
+    private func expireSleepSnapshot() {
+        guard let compareUntil, Date() >= compareUntil else { return }
+        self.compareUntil = nil
+        displaysBeforeSleep = nil
+        ssidBeforeSleep = nil
+    }
 
     func update(for kinds: [RioTriggerKind]) {
         setDisplay(kinds.contains(.displayConnected))
@@ -27,21 +81,34 @@ final class RioTriggerWatcher: NSObject, CWEventDelegate {
 
     private func setDisplay(_ on: Bool) {
         if on, screenObserver == nil {
-            screenCount = NSScreen.screens.count
+            knownDisplays = Self.currentExternalDisplayIDs()
             screenObserver = NotificationCenter.default.addObserver(
                 forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
             ) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    let count = NSScreen.screens.count
-                    if count > self.screenCount { self.onEvent(.displayConnected) }
-                    self.screenCount = count
-                }
+                MainActor.assumeIsolated { self?.screensChanged() }
             }
         } else if !on, let screenObserver {
             NotificationCenter.default.removeObserver(screenObserver)
             self.screenObserver = nil
         }
+    }
+
+    private func screensChanged() {
+        expireSleepSnapshot()
+        let displays = Self.currentExternalDisplayIDs()
+        defer { knownDisplays = displays }
+        var added = displays.subtracting(knownDisplays)
+        // Back from sleep: a display that was attached before it is not new.
+        if let before = displaysBeforeSleep { added.subtract(before) }
+        guard !added.isEmpty else { return }
+        onEvent(.displayConnected)
+    }
+
+    /// Attached displays other than the built-in screen.
+    private static func currentExternalDisplayIDs() -> Set<CGDirectDisplayID> {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        let ids = NSScreen.screens.compactMap { ($0.deviceDescription[key] as? NSNumber)?.uint32Value }
+        return Set(ids.filter { CGDisplayIsBuiltin($0) == 0 })
     }
 
     // MARK: Audio output
@@ -94,6 +161,7 @@ final class RioTriggerWatcher: NSObject, CWEventDelegate {
         let client = CWWiFiClient.shared()
         if on, !isWatchingWiFi {
             client.delegate = self
+            lastSSID = client.interface()?.ssid()
             try? client.startMonitoringEvent(with: .ssidDidChange)
             isWatchingWiFi = true
         } else if !on, isWatchingWiFi {
@@ -106,7 +174,15 @@ final class RioTriggerWatcher: NSObject, CWEventDelegate {
     nonisolated func ssidDidChangeForWiFiInterface(withName interfaceName: String) {
         // The name is only readable with Location permission; without it nothing can match.
         guard let ssid = CWWiFiClient.shared().interface(withName: interfaceName)?.ssid(), !ssid.isEmpty else { return }
-        Task { @MainActor in self.onEvent(.wifiJoined(ssid: ssid)) }
+        Task { @MainActor in self.wifiJoined(ssid) }
+    }
+
+    private func wifiJoined(_ ssid: String) {
+        expireSleepSnapshot()
+        defer { lastSSID = ssid }
+        // Rejoining the network it was on before the Mac slept is not arriving somewhere.
+        if let before = ssidBeforeSleep, before == ssid { return }
+        onEvent(.wifiJoined(ssid: ssid))
     }
 }
 

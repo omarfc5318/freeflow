@@ -38,6 +38,9 @@ import Foundation
     private var listenerStarting = false
     private var pollTask: Task<Void, Never>?
     private var announceTask: Task<Void, Never>?
+    /// Rio is talking: only a bare stop is taken (`RioConversationBargeIn`).
+    private var rioSpeaking = false
+    private var rioStoppedSpeakingAt: Date?
 
     private init() {}
 
@@ -66,8 +69,18 @@ import Foundation
         reconcile()
     }
 
+    /// Rio's own voice (or the translator's) is playing. Listening goes on so "Rio, stop" can
+    /// interrupt him; everything else heard meanwhile, and just after, is dropped.
+    func setRioSpeaking(_ speaking: Bool) {
+        guard speaking != rioSpeaking else { return }
+        rioSpeaking = speaking
+        if !speaking { rioStoppedSpeakingAt = Date() }
+    }
+
     private func handle(command: String) {
         guard core.isOn, !core.isPaused else { return }
+        let sinceSpoke = rioStoppedSpeakingAt.map { Date().timeIntervalSince($0) }
+        guard RioConversationBargeIn.accepts(command, isRioSpeaking: rioSpeaking, secondsSinceRioSpoke: sinceSpoke) else { return }
         core.commandHeard(now: Date())
         onCommand?(command)
     }
@@ -140,6 +153,8 @@ import Foundation
         }
     }
 
+    /// The listener couldn't start, or stopped on its own (the microphone went away). Settings
+    /// shows why, and Rio says it, so a hands-free owner isn't left talking to nobody.
     private func failToStart(_ message: String) {
         listener?.stop()
         listener = nil
@@ -147,6 +162,7 @@ import Foundation
         statusMessage = message
         playSound?("Basso")
         apply(core.turnOff(.unavailable))
+        RioVoice.shared.speak(message)
     }
 
     private func stopListener() {

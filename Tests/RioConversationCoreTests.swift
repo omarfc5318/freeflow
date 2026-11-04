@@ -24,6 +24,12 @@ enum RioConversationCoreTests {
         testTurnOffClearsPauseState()
         testMicUsageMonitorDecisionDebounce()
         testStopListeningDetection()
+        testPanickedAndSilenceStops()
+        testArabicStops()
+        testStopKinds()
+        testDeclineWords()
+        testQuickReplies()
+        testBargeInOnlyTakesStops()
     }
 
     private static func testStartsOff() {
@@ -196,5 +202,83 @@ enum RioConversationCoreTests {
                        "stop listening to the podcast", "volume down"] {
             TestSupport.expect(!RioConversationCommands.isStopListening(phrase), "'\(phrase)' must not stop listening")
         }
+    }
+
+    private static func testPanickedAndSilenceStops() {
+        let stops = [
+            "Rio stop stop stop", "Rio no stop", "Rio cancel cancel", "Rio wait", "Rio hold on", "Rio forget it",
+            "Rio scratch that", "Rio no no no", "Rio shut up", "Rio stop talking", "Rio be quiet", "Rio quiet",
+            "Rio enough", "Rio that's enough", "Rio okay okay stop", "Rio stop please", "Rio stop it", "Rio cancel",
+            "Rio, stop it stop it", "hey Rio stop now"
+        ]
+        for text in stops {
+            TestSupport.expect(RioConversationCommands.isBareStop(text), "bare stop: \(text)")
+        }
+        let notStops = [
+            "Rio stop the timer", "Rio stop music", "Rio stop listening", "Rio no", "Rio okay", "Rio",
+            "Rio wait for the download", "Rio shut down the computer", "Rio quiet mode on", "Rio please open chrome"
+        ]
+        for text in notStops {
+            TestSupport.expect(!RioConversationCommands.isBareStop(text), "not a bare stop: \(text)")
+        }
+    }
+
+    private static func testArabicStops() {
+        for text in ["بس", "ريو بس", "ريو خلاص", "ريو اسكت", "ريو كفاية", "ريو وقف", "ريو بس خلاص", "يا ريو بس",
+                     "Rio بس", "ريو وَقِّف", "ريو لا لا بس"] {
+            TestSupport.expect(RioConversationCommands.isBareStop(text), "Arabic bare stop: \(text)")
+        }
+        for text in ["ريو افتح كروم", "ريو", "ريو بس افتح سفاري"] {
+            TestSupport.expect(!RioConversationCommands.isBareStop(text), "not a bare stop: \(text)")
+        }
+    }
+
+    private static func testStopKinds() {
+        TestSupport.expectEqual(RioConversationCommands.bareStop("Rio stop"), .stop)
+        TestSupport.expectEqual(RioConversationCommands.bareStop("Rio shut up"), .stop)
+        TestSupport.expectEqual(RioConversationCommands.bareStop("ريو بس"), .stop)
+        TestSupport.expectEqual(RioConversationCommands.bareStop("Rio okay okay stop"), .stop)
+        // These only interrupt what is running; with nothing running they do nothing.
+        TestSupport.expectEqual(RioConversationCommands.bareStop("Rio forget it"), .abort)
+        TestSupport.expectEqual(RioConversationCommands.bareStop("Rio cancel"), .abort)
+        TestSupport.expectEqual(RioConversationCommands.bareStop("Rio no no no"), .abort)
+        TestSupport.expectEqual(RioConversationCommands.bareStop("Rio wait"), .abort)
+        TestSupport.expectEqual(RioConversationCommands.bareStop("Rio open chrome"), nil)
+    }
+
+    private static func testDeclineWords() {
+        for text in ["ريو لا", "لا", "لا لا", "لأ", "Rio no no", "Rio nah", "Rio don't", "Rio no thank you"] {
+            TestSupport.expect(RioConversationCommands.declinesBySpeech(text), "\(text) declines")
+        }
+        for text in ["Rio yeah do it", "نعم", "Rio sure"] {
+            TestSupport.expectEqual(RioConversationCommands.spokenAnswer(text), .yes)
+        }
+        TestSupport.expectEqual(RioConversationCommands.spokenAnswer("Rio open chrome"), nil)
+    }
+
+    private static func testQuickReplies() {
+        let welcome = RioConversationCommands.welcomeLine
+        let nothing = RioConversationCommands.nothingToConfirmLine
+        for text in ["Rio thank you", "Rio thanks", "Rio thank you so much", "thanks Rio", "ريو شكرا", "Rio thanks a lot"] {
+            TestSupport.expectEqual(RioConversationCommands.quickReply(text, isConfirmationShowing: false), welcome)
+        }
+        for text in ["Rio yes", "Rio no", "Rio nah", "Rio yeah do it"] {
+            TestSupport.expectEqual(RioConversationCommands.quickReply(text, isConfirmationShowing: false), nothing)
+            TestSupport.expectEqual(RioConversationCommands.quickReply(text, isConfirmationShowing: true), nil)
+        }
+        // Stop words and real commands are not answered here.
+        for text in ["Rio cancel", "Rio no no no", "Rio open chrome", "Rio thank you for the help with the email"] {
+            TestSupport.expectEqual(RioConversationCommands.quickReply(text, isConfirmationShowing: false), nil)
+        }
+    }
+
+    private static func testBargeInOnlyTakesStops() {
+        let policy = RioConversationBargeIn.self
+        TestSupport.expect(policy.accepts("stop", isRioSpeaking: true, secondsSinceRioSpoke: nil), "a stop interrupts him")
+        TestSupport.expect(policy.accepts("shut up", isRioSpeaking: true, secondsSinceRioSpoke: nil), "so does shut up")
+        TestSupport.expect(!policy.accepts("open chrome", isRioSpeaking: true, secondsSinceRioSpoke: nil), "his own voice runs nothing")
+        TestSupport.expect(!policy.accepts("delete the file", isRioSpeaking: false, secondsSinceRioSpoke: 1), "nor its echo tail")
+        TestSupport.expect(policy.accepts("open chrome", isRioSpeaking: false, secondsSinceRioSpoke: 10), "later, anything goes")
+        TestSupport.expect(policy.accepts("open chrome", isRioSpeaking: false, secondsSinceRioSpoke: nil), "he hasn't spoken")
     }
 }

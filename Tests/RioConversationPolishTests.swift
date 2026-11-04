@@ -162,6 +162,17 @@ enum RioConversationPolishTests {
         TestSupport.expect(listening.redrawsPerSecond >= 2, "but the waves still move")
         let paused = RioRedrawPolicy.schedule(mode: .conversingPaused, hasTimer: false, hasErrorCard: false, gate: gate)
         TestSupport.expect(paused.redrawsPerSecond <= 2, "a long call costs almost nothing: \(paused)")
+        // Once the on-pose has settled, listening costs about as little as sleeping.
+        let settled = RioRedrawPolicy.schedule(
+            mode: .conversing, hasTimer: false, hasErrorCard: false, gate: gate,
+            secondsSinceLastEvent: RioRedrawPolicy.conversingSettleSeconds + 1
+        )
+        TestSupport.expectEqual(settled, .periodic(RioRedrawPolicy.sleepyInterval))
+        TestSupport.expectEqual(RioRedrawPolicy.housekeepingInterval(schedule: settled, hasPendingExpiry: false), nil)
+        let fresh = RioRedrawPolicy.schedule(
+            mode: .conversing, hasTimer: false, hasErrorCard: false, gate: gate, secondsSinceLastEvent: 0.5
+        )
+        TestSupport.expectEqual(fresh, listening)
         var hidden = gate
         hidden.displayAsleep = true
         TestSupport.expectEqual(RioRedrawPolicy.schedule(mode: .conversing, hasTimer: false, hasErrorCard: false, gate: hidden), .paused)

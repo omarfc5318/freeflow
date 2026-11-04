@@ -950,7 +950,9 @@ struct SetupView: View {
                 if appState.hasEnabledToggleShortcut {
                     HowToRow(icon: "switch.2", text: "\(appState.toggleShortcut.tapPhrase.prefix(1).uppercased() + appState.toggleShortcut.tapPhrase.dropFirst()) to start and stop")
                 }
-                if appState.hasEnabledHoldShortcut && appState.hasEnabledToggleShortcut {
+                // A double-tap toggle can't be pressed while the hold key is held, so there is no latch.
+                if appState.hasEnabledHoldShortcut && appState.hasEnabledToggleShortcut
+                    && appState.toggleShortcut.kind != .doubleTapModifierKey {
                     HowToRow(icon: "arrow.triangle.branch", text: "While holding, press the toggle shortcut to latch on")
                 }
                 if appState.isCommandModeEnabled {

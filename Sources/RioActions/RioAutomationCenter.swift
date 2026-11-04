@@ -1,7 +1,7 @@
 import AppKit
 
-/// Owns the live side of automations: a timer for scheduled commands that also re-checks when the
-/// Mac wakes, and the watcher for triggers. The lead starts it once at launch:
+/// Owns the live side of automations: a one-shot timer set for the next scheduled command (none
+/// at all while nothing is scheduled), a re-check when the Mac wakes, and the watcher for triggers. The lead starts it once at launch:
 /// `RioAutomationCenter.shared.start(run: { [appState] in appState.runRioCommandText($0, source: .automation) })`
 @MainActor
 final class RioAutomationCenter {
@@ -16,7 +16,10 @@ final class RioAutomationCenter {
     private var watcher: RioTriggerWatcher?
     private var observers: [NSObjectProtocol] = []
     private var isTicking = false
-    private static let tickSeconds: TimeInterval = 15
+    /// The timer re-checks at least this often, so a long wait never drifts.
+    private static let maxTimerSeconds: TimeInterval = 3600
+    /// How late a scheduled command may run; it never needs to be to the second.
+    private static let maxToleranceSeconds: TimeInterval = 5
     private static let gapBetweenRuns: UInt64 = 4_000_000_000
 
     init(store: RioAutomationStore = .shared) { self.store = store }
@@ -24,12 +27,6 @@ final class RioAutomationCenter {
     func start(run: @escaping RunCommand) {
         guard self.run == nil else { return }
         self.run = run
-        let timer = Timer(timeInterval: Self.tickSeconds, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.tick() }
-        }
-        timer.tolerance = 5
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
 
         let workspace = NSWorkspace.shared.notificationCenter
         observers.append(workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -46,7 +43,12 @@ final class RioAutomationCenter {
         }
         observers.append(NotificationCenter.default.addObserver(
             forName: RioAutomationStore.changedNotification, object: nil, queue: .main
-        ) { [weak self] _ in Task { @MainActor in self?.refreshWatcher() } })
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshWatcher()
+                self?.rearmTimer()
+            }
+        })
 
         watcher = RioTriggerWatcher { [weak self] event in self?.handle(event) }
         refreshWatcher()
@@ -55,6 +57,20 @@ final class RioAutomationCenter {
 
     func refreshWatcher() {
         watcher?.update(for: store.data.triggers.map(\.kind))
+    }
+
+    /// One timer for the soonest scheduled command, or none when nothing is scheduled.
+    private func rearmTimer() {
+        timer?.invalidate()
+        timer = nil
+        guard run != nil, let soonest = store.data.schedules.map(\.nextFire).min() else { return }
+        let delay = min(Self.maxTimerSeconds, max(1, soonest.timeIntervalSinceNow))
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor in await self?.tick() }
+        }
+        timer.tolerance = min(Self.maxToleranceSeconds, delay / 10)
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
     /// After a clock or time zone change every recurring schedule is placed again from now.
@@ -75,7 +91,10 @@ final class RioAutomationCenter {
     func tick() async {
         guard !isTicking, let run else { return }
         isTicking = true
-        defer { isTicking = false }
+        defer {
+            isTicking = false
+            rearmTimer()
+        }
         let now = Date()
         let calendar = Calendar.current
         var keep: [RioScheduledCommand] = []
