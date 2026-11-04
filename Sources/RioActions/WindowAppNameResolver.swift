@@ -42,3 +42,46 @@ enum WindowAppNameResolver {
         return words.joined(separator: " ")
     }
 }
+
+/// The app Rio itself just opened, switched to or arranged. "Move this window to the left"
+/// right after Rio opened TextEdit means TextEdit's window, even when focus churn has already put
+/// the owner's chat or editor back in front (review F29/F30). Pure and in memory only.
+final class RioRecentWindowTarget: @unchecked Sendable {
+    static let shared = RioRecentWindowTarget()
+    /// How long the app Rio touched stays the target of an unnamed window command.
+    static let lifetime: TimeInterval = 45
+
+    struct Entry: Equatable {
+        let processIdentifier: Int32
+        let name: String
+        let at: Date
+    }
+
+    private let lock = NSLock()
+    private var entry: Entry?
+
+    init() {}
+
+    func note(processIdentifier: Int32, name: String, now: Date = Date()) {
+        lock.lock()
+        defer { lock.unlock() }
+        entry = Entry(processIdentifier: processIdentifier, name: name, at: now)
+    }
+
+    func clear() {
+        lock.lock()
+        defer { lock.unlock() }
+        entry = nil
+    }
+
+    /// The app to use when a window command names none, or nil to use the frontmost app.
+    /// `isUsable` says whether the process still runs, visible, as a regular app.
+    func current(now: Date = Date(), isUsable: (Int32) -> Bool) -> Entry? {
+        lock.lock()
+        let found = entry
+        lock.unlock()
+        guard let found, now.timeIntervalSince(found.at) >= 0, now.timeIntervalSince(found.at) <= Self.lifetime,
+              isUsable(found.processIdentifier) else { return nil }
+        return found
+    }
+}

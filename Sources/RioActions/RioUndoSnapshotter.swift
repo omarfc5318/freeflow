@@ -23,8 +23,17 @@ enum RioUndoSnapshotter {
         case .window(let command):
             window = WindowController().captureSnapshot(for: command)
             snapshot.hasWindowSnapshot = window != nil
+        case .media(let command) where RioMediaPlan.needsState(command):
+            switch MacControls.playbackState() {
+            case .playing: snapshot.wasPlaying = true
+            case .notPlaying: snapshot.wasPlaying = false
+            case .unknown: break
+            }
         case .cancelTimer:
-            if let timer = timers.countdown {
+            // A bare "stop" or "be quiet" never cancels a running countdown, so there is nothing
+            // to restart on undo (RioStopPlan).
+            if RioVoiceActionHandler.stopStep(kind: RioStopRequest.current, timers: timers) == .cancelCountdown,
+               let timer = timers.countdown {
                 snapshot.timerRemaining = Int(timer.remaining(at: timers.now).rounded(.up))
                 snapshot.timerLabel = timer.label
             }

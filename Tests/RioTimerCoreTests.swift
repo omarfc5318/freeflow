@@ -17,6 +17,49 @@ enum RioTimerCoreTests {
         testCountdownMath()
         testSpokenDurations()
         testRealParserKeepsTimerPhrases()
+        testStopKinds()
+        testStopPlan()
+    }
+
+    /// F14/K52/F20: only words naming the timer cancel a countdown; silence words only quiet Rio.
+    private static func testStopKinds() {
+        let cases: [(String, RioStopKind?)] = [
+            ("cancel the timer", .timer), ("stop the alarm", .timer), ("never mind the timer", .timer), ("stop ringing", .timer),
+            ("stop", .bare), ("stop it", .bare), ("Stop that.", .bare), ("cancel", .bare), ("okay okay stop", .bare),
+            ("please stop", .bare),
+            ("stop talking", .silence), ("be quiet", .silence), ("quiet", .silence), ("hush", .silence), ("enough", .silence),
+            ("that's enough", .silence), ("shut up", .silence), ("shush", .silence), ("stop speaking", .silence),
+            ("stop the music", nil), ("stop listening", nil), ("open Chrome", nil), ("stop recording", nil),
+        ]
+        for (text, kind) in cases {
+            ETest.eq(RioTimerPhrases.stopKind(RioText.simplify(text)), kind, "stop kind of \"\(text)\"")
+        }
+        for text in ["shut up", "okay okay stop", "stop speaking", "be silent"] {
+            ETest.eq(parse(text), .cancelTimer, "\"\(text)\" stays local (never the brain's mute)")
+        }
+    }
+
+    private static func testStopPlan() {
+        let running = RioStopState(hasCountdown: true)
+        // A bare stop or a silence word never cancels a running countdown.
+        ETest.eq(RioStopPlan.step(kind: .bare, state: running), .nothing)
+        ETest.eq(RioStopPlan.step(kind: .silence, state: running), .nothing)
+        ETest.eq(RioStopPlan.step(kind: .silence, state: RioStopState(hasCountdown: true, isSpeaking: true)), .stopSpeaking)
+        ETest.eq(RioStopPlan.step(kind: .timer, state: running), .cancelCountdown)
+        // The bare stop order: ringing, task, speech, translator, music.
+        ETest.eq(RioStopPlan.step(kind: .bare, state: RioStopState(isRinging: true, isTaskRunning: true)), .stopRinging)
+        ETest.eq(RioStopPlan.step(kind: .bare, state: RioStopState(isTaskRunning: true, isSpeaking: true)), .stopTask)
+        ETest.eq(RioStopPlan.step(kind: .bare, state: RioStopState(isSpeaking: true, isTranslating: true)), .stopSpeaking)
+        ETest.eq(RioStopPlan.step(kind: .bare, state: RioStopState(isTranslating: true, isMediaPlaying: true)), .stopTranslator)
+        ETest.eq(RioStopPlan.step(kind: .bare, state: RioStopState(hasCountdown: true, isMediaPlaying: true)), .pauseMedia)
+        ETest.eq(RioStopPlan.step(kind: .silence, state: RioStopState(isMediaPlaying: true)), .nothing, "be quiet leaves the music")
+        ETest.eq(RioStopPlan.step(kind: .silence, state: RioStopState(isRinging: true)), .stopRinging)
+        // A planned cancelTimer (no words to go by) still cancels the timer.
+        ETest.eq(RioStopPlan.step(kind: nil, state: running), .cancelCountdown)
+        ETest.eq(RioStopPlan.step(kind: nil, state: RioStopState(hasCountdown: true, isTaskRunning: true)), .stopTask)
+        ETest.eq(RioStopPlan.nothingMessage(kind: .silence), nil, "nothing to quiet: say nothing")
+        ETest.eq(RioStopPlan.nothingMessage(kind: .bare), "There's nothing to stop")
+        ETest.eq(RioStopPlan.nothingMessage(kind: .timer), "There's no timer running")
     }
 
     private static func testDurationParsing() {

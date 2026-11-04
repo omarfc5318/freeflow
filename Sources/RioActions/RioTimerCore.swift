@@ -223,11 +223,27 @@ enum RioTimerPhrases {
 
     // MARK: Cancel and status
 
-    private static let cancelPatterns = [
+    /// Phrases that name the timer or the alarm: the only ones that cancel a running countdown.
+    private static let timerCancelPatterns = [
         #"^(?:cancel|stop|delete|clear|remove|end|kill|dismiss|silence|turn off|shut off|switch off)\s+(?:\w+\s+){0,3}(?:timer|timers|alarm|ringing)$"#,
         #"^(?:never mind|nevermind|forget(?: about)?)\s+(?:the|my|that)\s+(?:\w+\s+)?timer$"#,
-        #"^(?:(?:ok|okay|alright)\s+)?(?:stop(?: it| that| talking| please)?|enough|that is enough|thats enough|be quiet|quiet|hush|shush|silence)$"#,
     ]
+    private static let interjection = #"^(?:(?:ok|okay|alright|oh|hey|no)\s+){0,2}"#
+    /// A bare stop: whatever Rio is doing (a ringing timer, a task, his voice, the translator,
+    /// the music), never a countdown that is still running.
+    private static let bareStopPattern = interjection + #"(?:(?:please\s+)?stop(?: it| that| please)?|cancel(?: it| that)?)$"#
+    /// Words that only ask Rio to stop talking (or a ringing timer to stop).
+    private static let silencePattern = interjection
+        + #"(?:stop (?:talking|speaking)|enough|that is enough|thats enough|be quiet|quiet|hush|shush|silence|shut up|be silent)$"#
+
+    /// What kind of stop `simplified` is, or nil when it isn't one.
+    static func stopKind(_ simplified: String) -> RioStopKind? {
+        let text = normalized(simplified)
+        if timerCancelPatterns.contains(where: { RioText.matches($0, text) }) { return .timer }
+        if RioText.matches(silencePattern, text) { return .silence }
+        if RioText.matches(bareStopPattern, text) { return .bare }
+        return nil
+    }
 
     private static let statusPatterns = [
         #"^(?:how much time|how long)(?: is| do i have| have i got)? (?:left|remaining)(?: on| for| in)?(?: (?:the|my|that) (?:\w+ )?timer)?(?: now)?$"#,
@@ -237,9 +253,10 @@ enum RioTimerPhrases {
         #"^(?:timer status|check (?:the|my) timer|how is (?:the|my) timer|is (?:the|my) timer (?:still )?running|how long until (?:the|my) timer(?: goes off| rings| is done)?|when does (?:the|my) timer (?:go off|ring|end|finish))$"#,
     ]
 
+    /// Every stop phrase parses to `.cancelTimer`; the handler tells them apart with
+    /// `RioStopRequest` (no new action case needed).
     static func isCancel(_ simplified: String) -> Bool {
-        let text = normalized(simplified)
-        return cancelPatterns.contains { RioText.matches($0, text) }
+        stopKind(simplified) != nil
     }
 
     static func isStatus(_ simplified: String) -> Bool {
@@ -265,6 +282,80 @@ enum RioTimerPhrases {
               found.range.contains(where: { tokens[$0] == "and" }) else { return body }
         let span = words[found.range.lowerBound].range.lowerBound..<words[found.range.upperBound - 1].range.upperBound
         return body.replacingCharacters(in: span, with: "\(found.seconds) seconds")
+    }
+}
+
+// MARK: Stop semantics
+
+/// How a spoken stop was phrased.
+enum RioStopKind: Equatable {
+    /// "Cancel the timer", "stop the alarm".
+    case timer
+    /// "Stop", "stop it", "cancel".
+    case bare
+    /// "Be quiet", "stop talking", "shut up", "enough".
+    case silence
+}
+
+/// The stop kind of the command running now. The coordinator sets it from the words for the
+/// length of one command; nil means a `.cancelTimer` the resolver planned (it cancels the timer).
+@MainActor enum RioStopRequest {
+    static var current: RioStopKind?
+}
+
+/// What is going on when a stop arrives.
+struct RioStopState: Equatable {
+    var isRinging = false
+    var hasCountdown = false
+    var isTaskRunning = false
+    var isSpeaking = false
+    var isTranslating = false
+    var isMediaPlaying = false
+}
+
+enum RioStopStep: Equatable {
+    case stopRinging
+    case cancelCountdown
+    case stopTask
+    case stopSpeaking
+    case stopTranslator
+    case pauseMedia
+    case nothing
+}
+
+/// Which one thing a stop stops. Pure.
+enum RioStopPlan {
+    static func step(kind: RioStopKind?, state: RioStopState) -> RioStopStep {
+        switch kind {
+        case .timer?:
+            if state.isRinging { return .stopRinging }
+            return state.hasCountdown ? .cancelCountdown : .nothing
+        case .silence?:
+            if state.isRinging { return .stopRinging }
+            return state.isSpeaking ? .stopSpeaking : .nothing
+        case .bare?:
+            if state.isRinging { return .stopRinging }
+            if state.isTaskRunning { return .stopTask }
+            if state.isSpeaking { return .stopSpeaking }
+            if state.isTranslating { return .stopTranslator }
+            return state.isMediaPlaying ? .pauseMedia : .nothing
+        case nil:
+            // A planned cancelTimer: the task first (as before), then the timer.
+            if state.isTaskRunning { return .stopTask }
+            if state.isRinging { return .stopRinging }
+            if state.hasCountdown { return .cancelCountdown }
+            if state.isSpeaking { return .stopSpeaking }
+            return state.isTranslating ? .stopTranslator : .nothing
+        }
+    }
+
+    /// What Rio says when there was nothing to stop; nil means say nothing at all.
+    static func nothingMessage(kind: RioStopKind?) -> String? {
+        switch kind {
+        case .timer?: return "There's no timer running"
+        case .silence?: return nil
+        case .bare?, nil: return "There's nothing to stop"
+        }
     }
 }
 

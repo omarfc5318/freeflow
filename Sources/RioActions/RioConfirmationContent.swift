@@ -49,4 +49,59 @@ struct RioConfirmationContent: Equatable {
             return nil
         }
     }
+
+    // MARK: Conversation mode
+
+    /// The question for an action conversation mode heard while "Trust conversation mode" is off
+    /// (or one it always confirms). It shows exactly what will happen, never a generic line: the
+    /// owner can only approve what the panel shows (security review).
+    static func conversation(for action: RioAction) -> RioConfirmationContent {
+        RioConfirmationContent(
+            title: "Run this from conversation mode?", detail: conversationDetail(for: action), confirmLabel: "Run it"
+        )
+    }
+
+    static func conversationDetail(for action: RioAction) -> String {
+        switch action {
+        case .typeText(let text): return text
+        case .fillField(let label, let text): return "\(label): \(text)"
+        case .click(let label, _): return "Click \(label)"
+        case .runTask(let goal): return goal
+        case .pressKeys(let combo): return "Press \(RioKeyCombos.describe(combo))"
+        case .quitApp(let name): return "Quit \(name)"
+        case .systemToggle(let setting, let isOn): return "Turn \(settingName(setting)) \(isOn ? "on" : "off")"
+        case .clipboard(.pasteRecent(let hint)):
+            if let hint = hint?.trimmingCharacters(in: .whitespaces), !hint.isEmpty {
+                return "Paste the recent clipboard item matching \u{201C}\(hint)\u{201D}"
+            }
+            return "Paste the most recent clipboard item"
+        case .startTranslation:
+            return "Your microphone's sound will be sent to your transcription provider until you stop it."
+        case .claudeCode(.send(let text)): return "Send to Claude Code: \(text)"
+        case .scheduleCommand(let command, let when): return "Schedule \"\(command)\" \(when)"
+        case .addTrigger(let command, let trigger): return "\(trigger), \(command)"
+        case .runMacro(let name): return "Run the macro \"\(name)\""
+        case .recordMacro(let name): return "Start recording a macro called \"\(name)\""
+        case .removeAutomation(let name): return "Remove \"\(name)\""
+        // Waves 4–5 writing and recording.
+        case .writeForMe(let instruction): return "Write and type into the focused field: \(instruction)"
+        case .smartPaste(let instruction):
+            return "Send your clipboard to your AI provider, then paste the result: \(instruction)"
+        case .editLastDictation(let instruction): return "Rewrite your last dictation in place: \(instruction)"
+        case .selectionTask(.improve): return "Rewrite the selected text in place"
+        case .notionAdd(let text, let page):
+            return page.map { "Add to Notion (\($0)): \(text)" } ?? "Add to Notion: \(text)"
+        case .meeting(.start): return "Start keeping the last few minutes of call audio (microphone and system sound)"
+        default: return RioActionText.working(for: action)
+        }
+    }
+
+    private static func settingName(_ setting: SystemSetting) -> String {
+        switch setting {
+        case .wifi: return "Wi-Fi"
+        case .bluetooth: return "Bluetooth"
+        case .darkMode: return "dark mode"
+        case .nightShift: return "Night Shift"
+        }
+    }
 }

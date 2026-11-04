@@ -7,6 +7,8 @@ enum RioActionArgumentsTests {
         testScreenshot()
         testShortcuts()
         testMediaKeys()
+        testMediaPlan()
+        testRecentWindowTarget()
         testURLs()
         testCatalog()
     }
@@ -52,8 +54,45 @@ enum RioActionArgumentsTests {
         TestSupport.expectEqual(RioMediaKey.keyCode(for: .playPause), 16)
         TestSupport.expectEqual(RioMediaKey.keyCode(for: .next), 17)
         TestSupport.expectEqual(RioMediaKey.keyCode(for: .previous), 18)
+        TestSupport.expectEqual(RioMediaKey.keyCode(for: .play), 16)
+        TestSupport.expectEqual(RioMediaKey.keyCode(for: .pause), 16)
         TestSupport.expectEqual(RioMediaKey.eventData(key: 16, isDown: true), (16 << 16) | 0xA00)
         TestSupport.expectEqual(RioMediaKey.eventData(key: 16, isDown: false), (16 << 16) | 0xB00)
+    }
+
+    /// F22/K51: "pause" when nothing plays must not start music; "play" while playing must not pause.
+    private static func testMediaPlan() {
+        TestSupport.expectEqual(RioPlaybackState.combine([]), .unknown)
+        TestSupport.expectEqual(RioPlaybackState.combine([nil]), .unknown)
+        TestSupport.expectEqual(RioPlaybackState.combine(["paused", nil]), .notPlaying)
+        TestSupport.expectEqual(RioPlaybackState.combine(["stopped", "Playing\n"]), .playing)
+        let pause = RioMediaPlan.decide(.pause, state: .notPlaying)
+        TestSupport.expectEqual(pause, RioMediaPlan.Decision(pressesKey: false, summary: "Nothing is playing"))
+        TestSupport.expectEqual(RioMediaPlan.decide(.pause, state: .playing), RioMediaPlan.Decision(pressesKey: true, summary: "Paused"))
+        TestSupport.expectEqual(RioMediaPlan.decide(.play, state: .playing).pressesKey, false)
+        TestSupport.expectEqual(RioMediaPlan.decide(.play, state: .notPlaying), RioMediaPlan.Decision(pressesKey: true, summary: "Playing"))
+        TestSupport.expectEqual(RioMediaPlan.decide(.play, state: .unknown).pressesKey, true)
+        TestSupport.expectEqual(RioMediaPlan.decide(.playPause, state: .playing).summary, "Toggled play and pause")
+        TestSupport.expectEqual(RioMediaPlan.needsState(.next), false)
+        TestSupport.expectEqual(RioMediaPlan.needsState(.pause), true)
+        TestSupport.expectEqual(RioMediaPlan.stateScript(bundleIdentifier: "com.example.evil"), nil)
+        let script = RioMediaPlan.stateScript(bundleIdentifier: "com.spotify.client") ?? ""
+        TestSupport.expect(script.contains("tell application id \"com.spotify.client\"") && script.contains("with timeout"), "fixed script")
+    }
+
+    /// F29/F30: an unnamed window command right after Rio opened an app acts on that app.
+    private static func testRecentWindowTarget() {
+        let target = RioRecentWindowTarget()
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        TestSupport.expect(target.current(now: start, isUsable: { _ in true }) == nil, "nothing yet")
+        target.note(processIdentifier: 42, name: "TextEdit", now: start)
+        TestSupport.expectEqual(target.current(now: start.addingTimeInterval(10), isUsable: { _ in true })?.name, "TextEdit")
+        TestSupport.expect(target.current(now: start.addingTimeInterval(10), isUsable: { _ in false }) == nil, "quit or hidden")
+        TestSupport.expect(
+            target.current(now: start.addingTimeInterval(RioRecentWindowTarget.lifetime + 1), isUsable: { _ in true }) == nil, "expired"
+        )
+        target.clear()
+        TestSupport.expect(target.current(now: start, isUsable: { _ in true }) == nil, "cleared")
     }
 
     private static func testURLs() {

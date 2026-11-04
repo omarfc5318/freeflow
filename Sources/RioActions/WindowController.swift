@@ -37,7 +37,12 @@ import Foundation
         if boolAttribute(window, kAXMinimizedAttribute) == true {
             _ = AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
         }
-        return place(window, placement: command.placement, appName: appName)
+        let result = place(window, placement: command.placement, appName: appName)
+        // The window Rio just arranged stays the target of the next "this window".
+        if case .done = result {
+            RioRecentWindowTarget.shared.note(processIdentifier: app.processIdentifier, name: appName)
+        }
+        return result
     }
 
     // MARK: Placement
@@ -87,6 +92,7 @@ import Foundation
 
     private func resolveApp(named spoken: String?) -> Result<NSRunningApplication, AppLookupFailure> {
         guard let spoken, !spoken.trimmingCharacters(in: .whitespaces).isEmpty else {
+            if let recent = Self.recentTarget() { return .success(recent) }
             guard let front = NSWorkspace.shared.frontmostApplication else {
                 return .failure(AppLookupFailure(message: "I couldn't tell which app to move"))
             }
@@ -100,6 +106,16 @@ import Foundation
             return .failure(AppLookupFailure(message: "I couldn't find \(spoken) running"))
         }
         return .success(candidates[index])
+    }
+
+    /// The app Rio opened, switched to or arranged in the last few seconds, while it still runs
+    /// visibly (`RioRecentWindowTarget`). Shared with the undo snapshot so both see one window.
+    static func recentTarget(now: Date = Date()) -> NSRunningApplication? {
+        guard let entry = RioRecentWindowTarget.shared.current(now: now, isUsable: { pid in
+            guard let app = NSRunningApplication(processIdentifier: pid) else { return false }
+            return !app.isTerminated && !app.isHidden && app.activationPolicy == .regular
+        }) else { return nil }
+        return NSRunningApplication(processIdentifier: entry.processIdentifier)
     }
 
     private func windowElement(of app: AXUIElement) -> AXUIElement? {

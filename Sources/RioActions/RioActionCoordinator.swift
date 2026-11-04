@@ -74,7 +74,7 @@ enum RioCommandSource: Equatable {
         }
         guard self == .phone else { return false }
         return action.requiresConfirmation || action.conversationAlwaysNeedsConfirmation
-            || action.conversationNeedsConfirmationWhenUntrusted
+            || action.conversationNeedsConfirmationWhenUntrusted || action.readsPrivateContent
     }
 }
 
@@ -91,9 +91,31 @@ extension RioAction {
         switch self {
         case .typeText, .pressKeys, .fillField, .click, .runTask, .systemToggle, .quitApp:
             return true
+        // Waves 4–5: these type, paste or replace text in the focused app, write to Notion, or
+        // start recording call audio.
+        case .writeForMe, .smartPaste, .editLastDictation, .notionAdd, .meeting(.start), .selectionTask(.improve):
+            return true
         case .clipboard(let command):
             if case .pasteRecent = command { return true }
             return false
+        default:
+            return false
+        }
+    }
+
+    /// Reads something private on the Mac (the screen, the selection, the clipboard, dictation
+    /// history, memories, a call, Claude Code's terminal) and says it back. A reply to the phone
+    /// lands in Messages and iCloud on every device, so the phone never asks for these.
+    var readsPrivateContent: Bool {
+        switch self {
+        case .meeting, .readAloud, .describeScreen, .copyTextFromScreen, .searchHistory, .recall, .selectionTask,
+             .findThing, .claudeCode(.status):
+            return true
+        case .clipboard(let command):
+            switch command {
+            case .readCurrent, .showHistory: return true
+            case .pasteRecent: return false
+            }
         default:
             return false
         }
@@ -140,6 +162,7 @@ enum RioActionText {
         return "I heard \"\(clipped)\". Try again?"
     }
     static let resolverFailedMessage = "I couldn't work that out"
+    static let cantRepeatMessage = "I won't repeat that one. Say it again if you mean it."
 
     /// After the first plan and every re-plan failed: what went wrong, said plainly.
     static func couldNotFinish(_ reason: String) -> String {
@@ -257,6 +280,18 @@ enum RioActionTranscript {
         return joined.trimmingCharacters(in: CharacterSet.whitespaces.union(.punctuationCharacters))
             .isEmpty ? "" : joined
     }
+
+    /// "Never mind", "nevermind", "uh, never mind", "forget it": the owner changed their mind, so
+    /// nothing happens (never an undo). `text` has the name stripped already.
+    static func isDismissal(_ text: String) -> Bool {
+        let cleaned = RioText.collapseWhitespace(
+            RioText.simplify(text.replacingOccurrences(of: "\u{2026}", with: " ")).lowercased()
+        ).trimmingCharacters(in: CharacterSet(charactersIn: " ."))
+        return RioText.matches(
+            #"^(?:(?:uh|uhm|um|er|erm|oh|ah|ok|okay|no|oops|actually|sorry)\s+)*(?:never\s?mind|forget\s+(?:it|about\s+it)|no\s+worries)(?:\s+(?:then|rio))?$"#,
+            cleaned
+        )
+    }
 }
 
 @MainActor
@@ -272,12 +307,19 @@ final class RioActionCoordinator {
     var plannedTargetResolver: RioTaskTargetResolving?
     private let isTrustingConversation: () -> Bool
     private let now: () -> Date
+    private let followUps: RioFollowUpMemory
     /// The words the last run could not place (set when it ends `.unknown`, cleared otherwise).
     private(set) var lastUnrecognized: String?
     /// The actions the last run parsed (or the resolver produced), for the history label.
     private(set) var lastActions: [RioAction] = []
     /// The previous command and what it did, so the resolver can follow "do that again".
     private var previous: (command: String, actions: [String], at: Date)?
+    /// The last command's words, for "try that again": re-run whole (every step, or the resolver
+    /// again when the brain was unavailable), never a replay of only its last step.
+    private var lastRun: (command: String, isRepeatable: Bool, at: Date)?
+    /// The current run ended in Rio's own error line, which must never become "that" or the
+    /// previous command.
+    private var isUnresolvedRun = false
 
     init(
         parser: RioActionParsing,
@@ -287,8 +329,10 @@ final class RioActionCoordinator {
         observer: RioActionObserving? = nil,
         confirmer: RioConfirming? = nil,
         isTrustingConversation: @escaping () -> Bool = { RioTrustSetting.isTrusting },
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        followUps: RioFollowUpMemory = .shared
     ) {
+        self.followUps = followUps
         self.isTrustingConversation = isTrustingConversation
         self.parser = parser
         self.executor = executor
@@ -313,8 +357,21 @@ final class RioActionCoordinator {
     ) async -> RioActionOutcome {
         lastUnrecognized = nil
         lastActions = []
-        let text = RioActionTranscript.stripName(from: transcript)
-        guard !text.isEmpty else { return .nothing }
+        let stripped = RioActionTranscript.stripName(from: transcript)
+        guard !stripped.isEmpty, !RioActionTranscript.isDismissal(stripped) else { return .nothing }
+        let simplified = RioText.simplify(stripped)
+        if RioFollowUpRewriter.isRepeatRequest(simplified), let last = lastRun,
+           now().timeIntervalSince(last.at) <= RioFollowUpMemory.lifetime {
+            guard last.isRepeatable else { return .failed(RioActionText.cantRepeatMessage) }
+            return await run(last.command, source: source, progress: progress)
+        }
+        // "Do the same for Slack" after "open Chrome" is parsed as "open Slack" would be.
+        let text = RioFollowUpRewriter.commandText(simplified, context: followUps.snapshot(now: now())) ?? stripped
+        // A bare "stop" or "be quiet" must not cancel the owner's countdown (RioStopPlan).
+        let previousStop = RioStopRequest.current
+        RioStopRequest.current = RioTimerPhrases.stopKind(RioText.simplify(text))
+        defer { RioStopRequest.current = previousStop }
+        isUnresolvedRun = false
         defer { rememberCommand(text) }
 
         let analysis = parser.analyze(text)
@@ -342,8 +399,11 @@ final class RioActionCoordinator {
                 guard !plan.isEmpty else { return .unknown }
                 return await runPlan(plan, request: request, resolver: smartResolver, source: source, progress: progress)
             case .unavailable(let message):
-                return await executeLocal([.answer(message)], source: source, progress: progress)
+                // Spoken, but never "that" for a follow-up nor the previous command.
+                markUnresolved()
+                return await executeLocal([.answer(message)], source: source, recordsFollowUps: false, progress: progress)
             case .failed(let message):
+                markUnresolved()
                 return .failed(message)
             }
         }
@@ -375,9 +435,16 @@ final class RioActionCoordinator {
     }
 
     private func rememberCommand(_ command: String) {
-        guard !lastActions.isEmpty else { return }
+        guard !lastActions.isEmpty || isUnresolvedRun || lastUnrecognized != nil else { return }
+        lastRun = (command, RioFollowUpRewriter.isRepeatable(lastActions), now())
+        guard !lastActions.isEmpty, !isUnresolvedRun else { return }
         let steps = lastActions.prefix(RioSmartContextLimits.maxPreviousActions).map(RioSmartPlanText.describe)
         previous = (command, Array(steps), now())
+    }
+
+    private func markUnresolved() {
+        isUnresolvedRun = true
+        followUps.noteUnresolved()
     }
 
     // MARK: Running
@@ -392,10 +459,11 @@ final class RioActionCoordinator {
 
     /// A local parse: runs as before, first failure ends the run.
     private func executeLocal(
-        _ actions: [RioAction], source: RioCommandSource, progress: @MainActor (String) -> Void
+        _ actions: [RioAction], source: RioCommandSource, recordsFollowUps: Bool = true,
+        progress: @MainActor (String) -> Void
     ) async -> RioActionOutcome {
         lastActions = actions
-        switch await runSteps(actions, planned: false, source: source, progress: progress) {
+        switch await runSteps(actions, planned: false, source: source, recordsFollowUps: recordsFollowUps, progress: progress) {
         case .finished(let summaries): return Self.outcome(summaries)
         case .stopped(let outcome): return outcome
         case .failed(_, let message, _): return .failed(message)
@@ -427,7 +495,10 @@ final class RioActionCoordinator {
                 lastActions = attempted
                 summaries += done
                 completed += current.prefix(index).map(RioSmartPlanText.describe)
-                guard round < RioSmartRouting.maxReplans else { return .failed(RioActionText.couldNotFinish(message)) }
+                guard round < RioSmartRouting.maxReplans else {
+                    followUps.noteUnresolved()
+                    return .failed(RioActionText.couldNotFinish(message))
+                }
                 round += 1
                 var retry = request
                 retry.context = await currentContext()
@@ -436,6 +507,7 @@ final class RioActionCoordinator {
                 )
                 progress("Trying another way")
                 guard case .actions(let next) = await resolver.resolve(retry), !next.isEmpty else {
+                    followUps.noteUnresolved()
                     return .failed(RioActionText.couldNotFinish(message))
                 }
                 current = next
@@ -446,7 +518,8 @@ final class RioActionCoordinator {
     /// `planned` is true for the resolver's steps (not the owner's own words), where a risky click
     /// or fill asks first (`RioSmartRouting.plannedStepNeedsConfirmation`).
     private func runSteps(
-        _ actions: [RioAction], planned: Bool, source: RioCommandSource, progress: @MainActor (String) -> Void
+        _ actions: [RioAction], planned: Bool, source: RioCommandSource, recordsFollowUps: Bool = true,
+        progress: @MainActor (String) -> Void
     ) async -> StepsResult {
         var summaries: [String] = []
         for (index, action) in actions.enumerated() {
@@ -492,7 +565,7 @@ final class RioActionCoordinator {
             switch result {
             case .done(let summary):
                 // So the next command can say "it", "that" or "the same" (see RioFollowUp.swift).
-                RioFollowUpMemory.shared.record(action)
+                if recordsFollowUps { followUps.record(action, now: now()) }
                 summaries.append(summary)
             case .failed(let message):
                 return .failed(index: index, message: message, summaries: summaries)
@@ -503,7 +576,9 @@ final class RioActionCoordinator {
         return .finished(summaries: summaries)
     }
 
+    /// An empty summary is a step that chose to say nothing ("be quiet" with Rio already quiet).
     private static func outcome(_ summaries: [String]) -> RioActionOutcome {
-        summaries.isEmpty ? .nothing : .succeeded(summaries.joined(separator: ", "))
+        let said = summaries.filter { !$0.isEmpty }
+        return said.isEmpty ? .nothing : .succeeded(said.joined(separator: ", "))
     }
 }

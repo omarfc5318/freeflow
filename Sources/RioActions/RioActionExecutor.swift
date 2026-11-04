@@ -24,6 +24,10 @@ final class RioActionExecutor {
         self.companion = companion
         self.typeText = typeText
         self.handlers = handlers
+        // "Close it" may only quit the app that is really in front (RioFollowUpRewriter).
+        RioFollowUpMemory.shared.setEnvironmentProvider {
+            RioFollowUpEnvironment(frontApp: NSWorkspace.shared.frontmostApplication?.localizedName)
+        }
     }
 
     func execute(_ action: RioAction) async -> RioActionResult {
@@ -48,12 +52,12 @@ final class RioActionExecutor {
         case .volume(let change):
             return changeVolume(change)
         case .media(let command):
-            MacControls.pressMediaKey(command)
-            switch command {
-            case .playPause: return .done(summary: "Toggled play and pause")
-            case .next: return .done(summary: "Skipped to the next track")
-            case .previous: return .done(summary: "Went back a track")
-            }
+            // "Pause" when nothing plays must not start music, and "play" while music plays
+            // must not pause it: check first where Rio can (RioMediaPlan).
+            let state = RioMediaPlan.needsState(command) ? MacControls.playbackState() : .unknown
+            let decision = RioMediaPlan.decide(command, state: state)
+            if decision.pressesKey { MacControls.pressMediaKey(command) }
+            return .done(summary: decision.summary)
         case .lockScreen:
             MacControls.lockScreen()
             return .done(summary: "Locked the screen")
@@ -138,6 +142,10 @@ final class RioActionExecutor {
             return .failed(message: "I couldn't open \(app.name): \(message)")
         }
         lastFocusedApp = app
+        // An unnamed window command right after this means this app's window (F29/F30).
+        if let running = runningApplication(for: app) {
+            RioRecentWindowTarget.shared.note(processIdentifier: running.processIdentifier, name: app.name)
+        }
         return .done(summary: "\(verb) \(app.name)")
     }
 

@@ -33,7 +33,9 @@ enum RioMediaKey {
     // NX_KEYTYPE_* values from IOKit's ev_keymap.h.
     static func keyCode(for command: MediaCommand) -> Int32 {
         switch command {
-        case .playPause: return 16
+        // There is no separate play or pause key: both press the toggle, and only when
+        // `RioMediaPlan` says it changes something.
+        case .playPause, .play, .pause: return 16
         case .next: return 17
         case .previous: return 18
         }
@@ -42,6 +44,65 @@ enum RioMediaKey {
     /// data1 of an NX_SYSDEFINED (subtype 8) event: key code, then 0xA for down or 0xB for up.
     static func eventData(key: Int32, isDown: Bool) -> Int {
         Int((key << 16) | ((isDown ? 0xA : 0xB) << 8))
+    }
+}
+
+/// Whether Spotify or Music is playing, as far as Rio can tell without asking for a permission.
+enum RioPlaybackState: Equatable {
+    case playing
+    case notPlaying
+    /// Neither app is running, or Rio may not ask them.
+    case unknown
+
+    /// Each running player's `player state` as text ("playing", "paused", "stopped"), or nil
+    /// when it could not be read. Any player playing wins.
+    static func combine(_ answers: [String?]) -> RioPlaybackState {
+        let known = answers.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        if known.contains("playing") { return .playing }
+        return known.isEmpty ? .unknown : .notPlaying
+    }
+}
+
+/// What a media command does given the playback state: press the key or not, and what Rio says.
+enum RioMediaPlan {
+    struct Decision: Equatable {
+        let pressesKey: Bool
+        let summary: String
+    }
+
+    /// Players Rio can ask, by bundle identifier. Fixed strings only.
+    static let players = ["com.spotify.client", "com.apple.Music"]
+
+    /// Fixed AppleScript per player (never user text), with a short timeout so a hung player
+    /// can't stall Rio.
+    static func stateScript(bundleIdentifier: String) -> String? {
+        guard players.contains(bundleIdentifier) else { return nil }
+        return "with timeout of 2 seconds\n tell application id \"\(bundleIdentifier)\" to return (player state as text)\nend timeout"
+    }
+
+    static func decide(_ command: MediaCommand, state: RioPlaybackState) -> Decision {
+        switch command {
+        case .playPause: return Decision(pressesKey: true, summary: "Toggled play and pause")
+        case .next: return Decision(pressesKey: true, summary: "Skipped to the next track")
+        case .previous: return Decision(pressesKey: true, summary: "Went back a track")
+        case .pause:
+            switch state {
+            case .playing: return Decision(pressesKey: true, summary: "Paused")
+            case .notPlaying: return Decision(pressesKey: false, summary: "Nothing is playing")
+            case .unknown: return Decision(pressesKey: true, summary: "Pressed pause")
+            }
+        case .play:
+            switch state {
+            case .playing: return Decision(pressesKey: false, summary: "It's already playing")
+            case .notPlaying: return Decision(pressesKey: true, summary: "Playing")
+            case .unknown: return Decision(pressesKey: true, summary: "Pressed play")
+            }
+        }
+    }
+
+    /// Whether the command needs the playback state at all (so next/previous never pay for it).
+    static func needsState(_ command: MediaCommand) -> Bool {
+        command == .play || command == .pause
     }
 }
 

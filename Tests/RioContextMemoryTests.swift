@@ -20,8 +20,19 @@ enum RioContextMemoryTests {
         return memory.snapshot(now: now)!
     }
 
+    /// A context whose actions ran `age` seconds ago, with `front` as the frontmost app.
+    private static func context(_ actions: [RioAction], front: String?, age: TimeInterval = 2) -> RioFollowUpContext {
+        let memory = RioFollowUpMemory()
+        for action in actions { memory.record(action, now: now.addingTimeInterval(-age)) }
+        memory.setEnvironmentProvider { RioFollowUpEnvironment(frontApp: front) }
+        return memory.snapshot(now: now)!
+    }
+
     static func run() {
         followUpRewriter()
+        followUpCloseNeedsAFreshFrontApp()
+        followUpSameForUsesTheParser()
+        followUpRepeatAndSendable()
         followUpNotStealing()
         followUpMemoryBehaviour()
         historyPhrases()
@@ -38,16 +49,17 @@ enum RioContextMemoryTests {
 
     private static func followUpRewriter() {
         let afterOpen = context([.openApp(name: "Spotify")])
+        let afterOpenFront = context([.openApp(name: "Spotify")], front: "Spotify")
         ETest.eq(parse("open it again", afterOpen), .openApp(name: "Spotify"))
         ETest.eq(parse("open that again", afterOpen), .openApp(name: "Spotify"))
         ETest.eq(parse("open it", afterOpen), .openApp(name: "Spotify"))
-        ETest.eq(parse("close that", afterOpen), .quitApp(name: "Spotify"))
-        ETest.eq(parse("quit it", afterOpen), .quitApp(name: "Spotify"))
-        ETest.eq(parse("hide that", afterOpen), .hideApp(name: "Spotify"))
+        ETest.eq(parse("close that", afterOpenFront), .quitApp(name: "Spotify"))
+        ETest.eq(parse("quit it", afterOpenFront), .quitApp(name: "Spotify"))
+        ETest.eq(parse("hide that", afterOpenFront), .hideApp(name: "Spotify"))
         ETest.eq(parse("go back to it", afterOpen), .switchToApp(name: "Spotify"))
-        ETest.eq(parse("do that again", afterOpen), .openApp(name: "Spotify"))
-        ETest.eq(parse("again", afterOpen), .openApp(name: "Spotify"))
-        ETest.eq(parse("one more time", afterOpen), .openApp(name: "Spotify"))
+        // "Again" re-runs the whole previous command in the coordinator, not here.
+        ETest.eq(parse("do that again", afterOpen), nil)
+        ETest.eq(parse("again", afterOpen), nil)
 
         ETest.eq(parse("do the same for Safari", afterOpen), .openApp(name: "Safari"))
         ETest.eq(parse("do the same thing with Safari", afterOpen), .openApp(name: "Safari"))
@@ -67,12 +79,88 @@ enum RioContextMemoryTests {
         ETest.eq(parse("do the same for Ali", sent), .sendMessage(to: "Ali", body: "running ten minutes late"))
         ETest.eq(parse("send that to Ali", context([.answer("Doha is three hours ahead of New York in summer")])),
                  .sendMessage(to: "Ali", body: "Doha is three hours ahead of New York in summer"))
-        // The repeat of a message is the message again (it still needs its confirmation downstream).
-        ETest.eq(parse("do that again", sent), .sendMessage(to: "Sara", body: "running ten minutes late"))
-        // App context survives a later non-app action.
-        let mixed = context([.openApp(name: "Chrome"), .volume(.up)])
-        ETest.eq(parse("close that", mixed), .quitApp(name: "Chrome"))
-        ETest.eq(parse("again", mixed), .volume(.up))
+        ETest.eq(parse("and Ali too", sent), .sendMessage(to: "Ali", body: "running ten minutes late"))
+        // App context survives a later non-app action for opening, but "close that" no longer
+        // means the app: the last thing Rio did was the volume.
+        let mixed = context([.openApp(name: "Chrome"), .volume(.up)], front: "Chrome")
+        ETest.eq(parse("open it again", mixed), .openApp(name: "Chrome"))
+        ETest.eq(parse("close that", mixed), .pressKeys(cmdW))
+    }
+
+    private static let cmdW = KeyCombo(key: "w", command: true, shift: false, option: false, control: false)
+
+    /// K45, K33, F35: "close this" quit the last app Rio touched up to 15 minutes ago.
+    private static func followUpCloseNeedsAFreshFrontApp() {
+        let fresh = context([.openApp(name: "Google Chrome")], front: "Google Chrome", age: 5)
+        ETest.eq(parse("close this", fresh), .quitApp(name: "Google Chrome"))
+        ETest.eq(parse("hide this", fresh), .hideApp(name: "Google Chrome"))
+        // Stale: closes the front window instead of quitting, and never quits or hides by pronoun.
+        let stale = context([.openApp(name: "Google Chrome")], front: "Google Chrome", age: RioFollowUpRewriter.quitReferentLifetime + 1)
+        for text in ["close this", "close it", "close that"] {
+            ETest.eq(parse(text, stale), .pressKeys(cmdW), "stale: \(text)")
+        }
+        ETest.eq(parse("quit it", stale), nil)
+        ETest.eq(parse("hide this", stale), nil)
+        ETest.eq(parse("close the app", stale), nil)
+        ETest.eq(parse("open it again", stale), .openApp(name: "Google Chrome"), "reopening is harmless")
+        // Not in front any more.
+        let behind = context([.openApp(name: "Google Chrome")], front: "Claude", age: 3)
+        ETest.eq(parse("close it", behind), .pressKeys(cmdW))
+        ETest.eq(parse("quit that", behind), nil)
+        // A tab or window action since: "close it" is about the window, not the app.
+        let afterTab = context([.openApp(name: "Google Chrome"), .browser(.newTab)], front: "Google Chrome", age: 3)
+        ETest.eq(parse("close this", afterTab), .pressKeys(cmdW))
+        ETest.eq(parse("close the app", afterTab), nil)
+        // F35: the referent was quit already; Stickies is in front.
+        let afterQuit = context([.openApp(name: "Stickies"), .quitApp(name: "Chess")], front: "Stickies", age: 3)
+        ETest.eq(parse("close that", afterQuit), .pressKeys(cmdW))
+        // Unknown front app fails closed.
+        ETest.eq(parse("quit it", context([.openApp(name: "Spotify")])), nil)
+        // A named window move counts as app-level.
+        let moved = context([.window(WindowCommand(appName: "Notes", placement: .leftHalf))], front: "Notes", age: 3)
+        ETest.eq(parse("close it", moved), .quitApp(name: "Notes"))
+    }
+
+    private static func followUpSameForUsesTheParser() {
+        let afterOpen = context([.openApp(name: "Google Chrome")])
+        ETest.eq(RioFollowUpRewriter.commandText("do the same for Slack", context: afterOpen), "open Slack")
+        ETest.eq(RioFollowUpRewriter.commandText("and now Warp", context: afterOpen), "open Warp")
+        ETest.eq(RioFollowUpRewriter.commandText("and Warp too", context: afterOpen), "open Warp")
+        ETest.eq(RioFollowUpRewriter.commandText("and Warp as well", context: afterOpen), "open Warp")
+        ETest.eq(RioFollowUpRewriter.commandText("and now open Spotify", context: afterOpen), nil)
+        ETest.eq(RioFollowUpRewriter.commandText("and thank you too", context: afterOpen), nil)
+        ETest.eq(RioFollowUpRewriter.commandText("Warp too", context: afterOpen), nil, "a bare \"X too\" is left alone")
+        ETest.eq(RioFollowUpRewriter.commandText("and volume up too", context: afterOpen), nil)
+        ETest.eq(RioFollowUpRewriter.commandText("open Chrome", context: afterOpen), nil)
+        ETest.eq(RioFollowUpRewriter.commandText("do the same for Safari", context: context([.quitApp(name: "Notes")])), "quit Safari")
+        ETest.eq(RioFollowUpRewriter.commandText("do the same for Warp", context: context([.openURL(URL(string: "https://app.slack.com")!)])), "open Warp")
+        let sent = context([.sendMessage(to: "Sara", body: "running late")])
+        ETest.eq(RioFollowUpRewriter.commandText("do the same for Ali", context: sent), nil)
+        // A messaging app is not a contact: the brain decides.
+        for app in ["Slack", "WhatsApp", "Telegram", "Discord"] {
+            ETest.eq(parse("do the same for \(app)", sent), nil, "\(app) is not a contact")
+        }
+        ETest.eq(parse("do the same on Slack", sent), nil)
+        ETest.eq(parse("do the same for Ali", sent), .sendMessage(to: "Ali", body: "running late"))
+    }
+
+    private static func followUpRepeatAndSendable() {
+        for text in ["again", "try that again", "do it one more time", "repeat the last command", "do that again please", "redo that"] {
+            ETest.eq(RioFollowUpRewriter.isRepeatRequest(text), true, "repeat: \(text)")
+        }
+        for text in ["again and again please no", "open it again", "try again later"] {
+            ETest.eq(RioFollowUpRewriter.isRepeatRequest(text), false, "not a repeat: \(text)")
+        }
+        ETest.eq(RioFollowUpRewriter.isRepeatable([.openApp(name: "Notes"), .volume(.up)]), true)
+        ETest.eq(RioFollowUpRewriter.isRepeatable([.typeText("x")]), false)
+        ETest.eq(RioFollowUpRewriter.isRepeatable([.undoLast]), false)
+        let memory = RioFollowUpMemory()
+        memory.record(.answer("Paris"), now: now)
+        ETest.eq(memory.snapshot(now: now)?.sendableBody, "Paris")
+        memory.noteUnresolved()
+        ETest.eq(memory.snapshot(now: now)?.sendableBody, nil, "an older answer is not the reply to a failed command")
+        memory.record(.answer("Rome"), now: now)
+        ETest.eq(memory.snapshot(now: now)?.sendableBody, "Rome")
     }
 
     private static func followUpNotStealing() {
@@ -340,7 +428,11 @@ enum RioContextMemoryTests {
     private static func throughTheRealParser() {
         let memory = RioFollowUpMemory.shared
         memory.clear()
-        defer { memory.clear() }
+        memory.setEnvironmentProvider { RioFollowUpEnvironment(frontApp: "Spotify") }
+        defer {
+            memory.clear()
+            memory.setEnvironmentProvider(nil)
+        }
         let parser = RioActionParser(installedApps: [InstalledApp(name: "Spotify", bundleIdentifier: nil, url: URL(fileURLWithPath: "/Applications/Spotify.app"))])
         ETest.eq(parser.parse("what did I say about the budget"), .actions([.searchHistory(query: "the budget")]))
         ETest.eq(parser.parse("what did I say on Monday"), .actions([.searchHistory(query: "monday")]))

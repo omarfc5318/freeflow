@@ -32,7 +32,7 @@ import Foundation
             let started = timers.start(seconds: seconds, label: label)
             return .done(summary: started.startedSummary(replacing: previous, at: timers.now))
         case .cancelTimer:
-            return cancelTimer()
+            return await stop(executor: executor)
         case .timerStatus:
             return timerStatus()
         case .undoLast:
@@ -45,28 +45,53 @@ import Foundation
         }
     }
 
-    private func cancelTimer() -> RioActionResult {
-        // "Rio, stop" first stops a running multi-step task (builder K).
-        if RioTaskProgress.shared.isRunning {
+    /// Stops the one thing the words were about (RioStopPlan): a bare "stop" or "be quiet"
+    /// never cancels a running countdown, only words that name the timer do.
+    private func stop(executor: RioActionExecuting) async -> RioActionResult {
+        let kind = RioStopRequest.current
+        var state = Self.stopState(timers: timers, voice: voice)
+        if kind == .bare, RioStopPlan.step(kind: kind, state: state) == .nothing {
+            // Only now ask the players: it costs an Apple Event.
+            state.isMediaPlaying = MacControls.playbackState() == .playing
+        }
+        switch RioStopPlan.step(kind: kind, state: state) {
+        case .stopRinging:
+            timers.stopRinging()
+            return .done(summary: "Okay, stopped")
+        case .cancelCountdown:
+            timers.cancel()
+            return .done(summary: "Timer cancelled")
+        case .stopTask:
             RioTaskActionHandler.shared.stop()
             return .done(summary: "Okay, I stopped")
-        }
-        switch timers.cancel() {
-        case .cancelled: return .done(summary: "Timer cancelled")
-        case .stoppedRinging: return .done(summary: "Okay, stopped")
+        case .stopSpeaking:
+            voice.stopSpeaking()
+            return .done(summary: kind == .silence ? "" : "Okay, quiet")
+        case .stopTranslator:
+            RioTranslatorMode.shared.stop(.voice)
+            return .done(summary: "Stopped translating")
+        case .pauseMedia:
+            return await executor.execute(.media(.pause))
         case .nothing:
-            // "Rio, stop" while he is talking just means be quiet.
-            if voice.isSpeaking {
-                voice.stopSpeaking()
-                return .done(summary: "Okay, quiet")
-            }
-            // "Rio, stop" while the live translator is on means stop translating.
-            if RioTranslatorMode.shared.isOn {
-                RioTranslatorMode.shared.stop(.voice)
-                return .done(summary: "Stopped translating")
-            }
-            return .failed(message: "There's nothing to stop")
+            guard let message = RioStopPlan.nothingMessage(kind: kind) else { return .done(summary: "") }
+            return .failed(message: message)
         }
+    }
+
+    /// What a stop would find right now (the players are not asked here).
+    static func stopState(timers: RioTimerCenter, voice: RioVoice) -> RioStopState {
+        RioStopState(
+            isRinging: timers.isRinging,
+            hasCountdown: timers.countdown != nil,
+            isTaskRunning: RioTaskProgress.shared.isRunning,
+            isSpeaking: voice.isSpeaking,
+            isTranslating: RioTranslatorMode.shared.isOn
+        )
+    }
+
+    /// The step a stop of `kind` would take now, for the undo snapshot.
+    static func stopStep(kind: RioStopKind?, timers: RioTimerCenter) -> RioStopStep {
+        RioStopPlan.step(kind: kind, state: stopState(timers: timers, voice: RioVoice.shared))
     }
 
     private func timerStatus() -> RioActionResult {

@@ -209,9 +209,14 @@ enum VolumeChange: Equatable, Codable {
 }
 
 enum MediaCommand: String, Equatable, Codable {
+    /// A blind toggle ("play/pause", "toggle playback").
     case playPause
     case next
     case previous
+    /// Pause only: nothing happens when nothing is playing ("pause", "stop the music").
+    case pause
+    /// Play only: nothing happens when something already plays ("play", "resume").
+    case play
 }
 
 enum ScreenshotKind: String, Equatable, Codable {
