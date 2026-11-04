@@ -5,6 +5,7 @@ import Foundation
 /// matching and corner layout. Synthetic data only; no AppKit, no Accessibility, no clock.
 enum RioCompanionCoreTests {
     static func run() {
+        testDockClickHitTest()
         testStyleDefaultsToCorner()
         testStartsAsleepAndSleepsAgainAfterIdle()
         testDictationWakesThenTalks()
@@ -404,5 +405,26 @@ enum RioCompanionCoreTests {
         machine.actionPhaseChanged(.listening, at: 10)
         TestSupport.expect(machine.isGrumpy(at: 10.5), "Third wake in 30 s: grumpy")
         TestSupport.expect(!machine.isGrumpy(at: 10 + Machine.grumpyDuration + 0.1), "Grumpiness passes")
+    }
+
+    /// The owner's own Dock clicks make the bear run (2026-11-03): which app icon is under the
+    /// pointer, in AX (top-left origin) coordinates; never folders, the Trash or a drag.
+    private static func testDockClickHitTest() {
+        let chrome = DockItemSnapshot(title: "Google Chrome", urlString: "file:///Applications/Google%20Chrome.app/",
+                                      subrole: "AXApplicationDockItem", frame: CGRect(x: 600, y: 900, width: 56, height: 56))
+        let downloads = DockItemSnapshot(title: "Downloads", urlString: "file:///Users/x/Downloads/",
+                                         subrole: "AXFolderDockItem", frame: CGRect(x: 700, y: 900, width: 56, height: 56))
+        let trash = DockItemSnapshot(title: "Trash", urlString: nil, subrole: "AXTrashDockItem",
+                                     frame: CGRect(x: 760, y: 900, width: 56, height: 56))
+        let items = [chrome, downloads, trash]
+        TestSupport.expectEqual(DockClickHitTest.appItem(atAX: CGPoint(x: 620, y: 930), items: items), chrome)
+        TestSupport.expect(DockClickHitTest.appItem(atAX: CGPoint(x: 720, y: 930), items: items) == nil, "folders don't count")
+        TestSupport.expect(DockClickHitTest.appItem(atAX: CGPoint(x: 780, y: 930), items: items) == nil, "the Trash doesn't count")
+        TestSupport.expect(DockClickHitTest.appItem(atAX: CGPoint(x: 620, y: 500), items: items) == nil, "a click off the Dock")
+        // A click is a press and release in nearly the same spot; a drag (rearranging icons) isn't.
+        TestSupport.expect(DockClickHitTest.isClick(down: CGPoint(x: 620, y: 930), up: CGPoint(x: 623, y: 932)), "small jitter is a click")
+        TestSupport.expect(!DockClickHitTest.isClick(down: CGPoint(x: 620, y: 930), up: CGPoint(x: 680, y: 930)), "a drag is not")
+        // AppKit (bottom-left) to AX (top-left) on a 1000-pt-tall primary screen.
+        TestSupport.expectEqual(DockClickHitTest.axPoint(fromAppKit: CGPoint(x: 620, y: 70), primaryHeight: 1000), CGPoint(x: 620, y: 930))
     }
 }

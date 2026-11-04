@@ -28,10 +28,21 @@ final class RioDockLocator {
         }
     }
 
-    /// The icon for `appURL`, from the cache only; nil when the Dock can't be run to.
-    func target(for appURL: URL, primaryScreen: CGRect) -> DockRunTarget? {
+    /// The application icon the owner just clicked (AX coordinates), from the last snapshot even
+    /// if it is a little old: icons only move when the Dock changes, which triggers a refresh.
+    func clickedAppURL(atAX point: CGPoint) -> URL? {
         preferences = Self.readPreferences()
-        guard preferences.allowsRun, let snapshot, snapshot.isFresh(at: RioCompanionClock.now),
+        guard preferences.allowsRun, let snapshot,
+              let item = DockClickHitTest.appItem(atAX: point, items: snapshot.items),
+              let string = item.urlString else { return nil }
+        return URL(string: string)
+    }
+
+    /// The icon for `appURL`, from the cache only; nil when the Dock can't be run to.
+    /// `allowStale` is for the owner's own Dock clicks, where the icon was just hit-tested.
+    func target(for appURL: URL, primaryScreen: CGRect, allowStale: Bool = false) -> DockRunTarget? {
+        preferences = Self.readPreferences()
+        guard preferences.allowsRun, let snapshot, allowStale || snapshot.isFresh(at: RioCompanionClock.now),
               let item = DockItemMatcher.match(snapshot.items, appURL: appURL) else { return nil }
         return DockRunGeometry.target(iconFrameAX: item.frame, primaryScreen: primaryScreen)
     }
