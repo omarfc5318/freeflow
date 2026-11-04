@@ -18,6 +18,10 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioActionTypes.swift \
 	Sources/RioActions/RioActionHandlers.swift \
 	Sources/RioActions/RioContextMemoryPhrases.swift \
+	Sources/RioActions/RioFollowUp.swift \
+	Sources/RioActions/RioHistorySearch.swift \
+	Sources/RioActions/RioStyleProfile.swift \
+	Sources/RioActions/RioStyleProfileProvider.swift \
 	Sources/RioActions/RioWritingPhrases.swift \
 	Sources/RioActions/RioAutomationPhrases.swift \
 	Sources/RioActions/RioAutomationModels.swift \
