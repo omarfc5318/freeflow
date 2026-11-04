@@ -13,8 +13,10 @@ final class RioConfirmationCenter: RioConfirming, RioConversationConfirming {
     private var timeout: Task<Void, Never>?
     /// The last action the owner approved, so a handler that would ask again for the very same
     /// action (Claude Code send in auto-accept mode) can see it was just approved.
+    /// Recorded only by the conversation panel, used once, and only within a few seconds, so
+    /// an action-key approval can't be replayed by a repeat (security review).
     private var lastApproval: (action: RioAction, at: Date)?
-    static let approvalReuseWindow: TimeInterval = 15
+    static let approvalReuseWindow: TimeInterval = 5
 
     /// True while a question is on screen.
     var isShowing: Bool { panel != nil }
@@ -22,8 +24,9 @@ final class RioConfirmationCenter: RioConfirming, RioConversationConfirming {
     func confirm(_ action: RioAction) async -> Bool {
         // Only one question at a time; a newer one cancels the older.
         finish(false)
+        lastApproval = nil
         guard let content = content(for: action) else { return false }
-        return noteApproval(of: action, await ask(content))
+        return await ask(content)
     }
 
     /// Conversation mode with "Trust conversation mode" off (or any translator start from it):

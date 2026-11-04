@@ -159,6 +159,8 @@ enum RioFollowUpRewriter {
         !actions.contains { action in
             switch action {
             case .undoLast, .typeText, .stopListening: return true
+            // Each Claude Code send or approval is decided on its own, never replayed.
+            case .claudeCode(.send), .claudeCode(.approve): return true
             default: return false
             }
         }

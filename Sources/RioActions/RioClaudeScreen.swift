@@ -98,8 +98,9 @@ enum RioClaudeScreen {
     // MARK: Permission prompt
 
     static func permissionPrompt(in text: String) -> RioClaudePrompt? {
-        let lines = cleanedLines(text, last: 40)
-        return numberedPrompt(lines) ?? yesNoPrompt(lines)
+        let raw = Array(text.components(separatedBy: .newlines).suffix(40))
+        let lines = raw.map(clean)
+        return numberedPrompt(lines, raw: raw) ?? yesNoPrompt(lines, raw: raw)
     }
 
     private static func optionMatch(_ line: String) -> (number: Int, label: String)? {
@@ -108,12 +109,19 @@ enum RioClaudeScreen {
         return (number, label.trimmingCharacters(in: .whitespaces))
     }
 
+    /// The previous Claude message: a status glyph that starts the raw line (not indented, not
+    /// inside a box), and not the owner's ">" input line.
+    private static func isMessageBoundary(_ line: String, raw: String) -> Bool {
+        guard isStatusLine(line), line.first != ">", let first = raw.first else { return false }
+        return first == line.first
+    }
+
     private static func isStatusLine(_ line: String) -> Bool {
         guard let first = line.first else { return false }
         return glyphStarts.contains(first)
     }
 
-    private static func numberedPrompt(_ lines: [String]) -> RioClaudePrompt? {
+    private static func numberedPrompt(_ lines: [String], raw: [String]) -> RioClaudePrompt? {
         guard let lastIndex = lines.lastIndex(where: { optionMatch($0) != nil }) else { return nil }
         var start = lastIndex
         while start > 0, let current = optionMatch(lines[start]), let previous = optionMatch(lines[start - 1]),
@@ -133,7 +141,7 @@ enum RioClaudeScreen {
         guard options.contains(where: { RioText.matches(#"^yes\b"#, $0.label) }) else { return nil }
         let approve = options.first { RioText.matches(#"^yes\b"#, $0.label) && !isStanding($0.label) }
         let deny = options.first { RioText.matches(#"^no\b"#, $0.label) }
-        let above = context(above: questionIndex, in: lines)
+        let above = context(above: questionIndex, in: lines, raw: raw)
         return RioClaudePrompt(
             question: lines[questionIndex],
             context: above.text,
@@ -144,13 +152,13 @@ enum RioClaudeScreen {
         )
     }
 
-    private static func yesNoPrompt(_ lines: [String]) -> RioClaudePrompt? {
+    private static func yesNoPrompt(_ lines: [String], raw: [String]) -> RioClaudePrompt? {
         let pattern = #"\?\s*[\(\[]\s*y\s*/\s*n\s*[\)\]]\s*:?$"#
         let nonEmpty = lines.indices.filter { !lines[$0].isEmpty }
         guard let index = nonEmpty.suffix(2).first(where: { RioText.matches(pattern, lines[$0]) }) else { return nil }
         let after = nonEmpty.filter { $0 > index }
         guard after.isEmpty else { return nil }
-        let above = context(above: index, in: lines)
+        let above = context(above: index, in: lines, raw: raw)
         return RioClaudePrompt(
             question: lines[index], context: above.text, options: [], approveKey: "y", denyKey: "n",
             isContextComplete: above.isComplete
@@ -165,21 +173,20 @@ enum RioClaudeScreen {
     static let maxContextLines = 14
 
     /// Up to `maxContextLines` lines above the question, stopping at the previous Claude message.
-    /// Incomplete when the limit cut off more of the request above.
-    private static func context(above index: Int, in lines: [String]) -> (text: String, isComplete: Bool) {
+    /// Complete only when that message's line is found: a glyph at column 0 of the raw screen
+    /// (the request itself is boxed or indented, so a glyph inside the command can't pass for it,
+    /// security review). No visible start, or the limit reached first, means incomplete.
+    private static func context(above index: Int, in lines: [String], raw: [String]) -> (text: String, isComplete: Bool) {
         var collected = [String]()
         var cursor = index - 1
+        var foundStart = false
         while cursor >= 0, collected.count < maxContextLines {
-            let line = lines[cursor]
-            if isStatusLine(line), line.first != ">" { break }
-            collected.append(line)
+            if isMessageBoundary(lines[cursor], raw: raw[cursor]) { foundStart = true; break }
+            collected.append(lines[cursor])
             cursor -= 1
         }
-        var isComplete = true
-        if collected.count >= maxContextLines, cursor >= 0 {
-            let next = lines[cursor]
-            isComplete = isStatusLine(next) && next.first != ">"
-        }
+        if !foundStart, cursor >= 0 { foundStart = isMessageBoundary(lines[cursor], raw: raw[cursor]) }
+        let isComplete = foundStart
         var result = [String]()
         for line in collected.reversed() {
             if line.isEmpty, result.last?.isEmpty ?? true { continue }

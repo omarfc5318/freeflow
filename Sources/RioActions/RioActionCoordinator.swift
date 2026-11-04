@@ -65,6 +65,8 @@ enum RioCommandSource: Equatable {
 
     /// Whether this source refuses `action` outright.
     func refuses(_ action: RioAction) -> Bool {
+        // Local addresses ("open localhost 3000") are for the owner's own key only.
+        if self == .phone || self == .automation, action.opensLocalAddress { return true }
         // Claude Code can run commands: an automation never drives or approves it.
         if self == .automation, case .claudeCode(let command) = action {
             switch command {
@@ -123,7 +125,15 @@ extension RioAction {
 
     /// Starting the translator sends the room's audio to a provider, so it is always confirmed
     /// when conversation mode asked for it, trusted or not.
+    /// An `openURL` to this Mac or the local network (localhost, IP literals, .local).
+    var opensLocalAddress: Bool {
+        guard case .openURL(let url) = self else { return false }
+        guard let host = url.host, !host.isEmpty else { return true }
+        return RioWebHostRules.isLocalHost(host)
+    }
+
     var conversationAlwaysNeedsConfirmation: Bool {
+        if opensLocalAddress { return true }
         switch self {
         case .startTranslation:
             return true
