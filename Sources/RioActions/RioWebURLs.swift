@@ -91,6 +91,12 @@ enum RioWebURLs {
         knownSites[compactName].flatMap { URL(string: $0) }
     }
 
+    /// Exactly one of Rio's own built-in site addresses (fixed in the app, never model-written).
+    static func isBuiltInSiteURL(_ url: URL) -> Bool {
+        let canonical = url.absoluteString.lowercased()
+        return knownSites.values.contains { $0.lowercased() == canonical }
+    }
+
     static func isKnownSite(spoken: String) -> Bool {
         knownSites[RioText.compact(spoken)] != nil
     }

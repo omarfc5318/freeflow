@@ -42,10 +42,31 @@ enum RioR3SmartTests {
         .pressKeys(KeyCombo(key: key, command: command, shift: false, option: false, control: false))
     }
 
+    /// Security review: a planned link may not smuggle data in extra host labels, a shared-hosting
+    /// customer name, single-letter path pieces or substrings of the command.
+    private static func testPlannedURLsCarryOnlyTheOwnersWords() {
+        func vet(_ url: String, _ command: String) -> String? {
+            RioSmartPlanGuards.vettedURL(URL(string: url)!, command: command)?.absoluteString
+        }
+        // Extra subdomain labels the owner never said are cut back to the site.
+        TestSupport.expect(vet("https://a1b2c3secret.google.com/", "open google") == "https://google.com/", "extra label dropped")
+        // A shared-hosting customer is its own site: not named by "vercel", not well known.
+        TestSupport.expect(vet("https://leak-abc.vercel.app/", "open my vercel dashboard") == nil, "other customer refused")
+        // A command word is not a site name ("open" does not name open.ai.evil).
+        TestSupport.expect(vet("https://open.example/", "open google docs") == nil, "command word isn't a site")
+        // Path pieces must be whole words the owner said; single letters count too.
+        TestSupport.expect(vet("https://github.com/s/e/c/r/e/t", "open github") == "https://github.com/", "letters dropped")
+        TestSupport.expect(vet("https://github.com/oc", "open github docs") == "https://github.com/", "no substring match")
+        // The owner's own words survive.
+        TestSupport.expect(vet("https://github.com/anthropics", "open github anthropics") == "https://github.com/anthropics", "said words kept")
+        TestSupport.expect(vet("https://docs.google.com/", "open google docs") == "https://docs.google.com/", "said subdomain kept")
+    }
+
     static func run() async {
         RioSpokenLanguageMemory.shared.clear()
         failures = []
         testOwnerQuestionsKeepTheContext()
+        testPlannedURLsCarryOnlyTheOwnersWords()
         testWorldQuestionsStayShort()
         testPromptRules()
         await testShortPromptFallsBackToTheFullOne()
@@ -277,8 +298,10 @@ enum RioR3SmartTests {
         same(RioSmartPlanGuards.apply([.openURL(url("https://x.com"))], command: "open twitter"), [.openURL(url("https://x.com"))], "known spoken name")
         same(RioSmartPlanGuards.apply([.openURL(url("https://example.org/docs"))], command: "open example.org slash docs"),
              [.openURL(url("https://example.org/docs"))], "an address the owner said")
+        // "u" and "0" were never said (security review): the named site's own host is kept, the
+        // model-written path is not.
         same(RioSmartPlanGuards.apply([.openURL(url("https://mail.google.com/mail/u/0/"))], command: "check my gmail"),
-             [.openURL(url("https://mail.google.com/mail/u/0/"))], "a known site's path made of the owner's words")
+             [.openURL(url("https://mail.google.com/"))], "a named known site keeps its host, not an unsaid path")
         same(RioSmartPlanGuards.registrableDomain("news.bbc.co.uk"), "bbc.co.uk", "country second level")
     }
 
