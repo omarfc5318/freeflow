@@ -23,6 +23,18 @@ enum RioContextPhrases {
     private static let subject =
         #"(?:this|that|it|the selection|my selection|selection|the selected text|selected text|this text|that text|the text|what i selected|the highlighted text|the paragraph|this (?:paragraph|email|message|article|code|error|passage|sentence|section|snippet))"#
 
+    /// "this theorem", "that slide", "the selected code": a pointer plus one or two noun words,
+    /// with no verb or clause after it (finding 8a). Not the screen, page or window (the screen
+    /// parser describes those), a meeting or call (the copilot), or a time ("this week").
+    private static let pointedThing: String = {
+        let notNouns = "to|for|and|or|with|in|on|at|of|from|about|by|into|me|us|him|her|them|you|it|please|again|now|so|"
+            + "because|like|is|was|are|were|be|but|then|than|as|if|when|which|who|whats|what|how|why|im|youre|"
+            + "screen|page|webpage|web|window|tab|website|site|desktop|display|meeting|call|"
+            + "week|weekend|month|year|morning|afternoon|evening|night|day|semester|quarter|time"
+        let noun = "(?!(?:\(notNouns))\\b)[a-z][a-z0-9]*"
+        return "(?:(?:this|that|the selected|the highlighted)\\s+\(noun)(?:\\s+\(noun))?)"
+    }()
+
     /// The selection named outright: never a bare this/that/it (those mean the last dictation for edits).
     private static let namedSelection =
         #"(?:the selection|my selection|selection|the selected text|selected text|this text|that text|the text|what i selected|the highlighted text|the paragraph|this (?:paragraph|email|message|article|code|error|passage|sentence|section|snippet))"#
@@ -86,8 +98,16 @@ enum RioContextPhrases {
     // MARK: Selection tasks
 
     private static func parseSelectionTask(_ s: String) -> RioAction? {
-        if RioText.matches(#"^(?:summarize|summarise|sum up|tldr)\s+"# + subject + "$", s) { return .selectionTask(.summarize) }
-        if RioText.matches(#"^explain\s+"# + subject + #"(?:\s+to me)?$"#, s) { return .selectionTask(.explain) }
+        let thing = "(?:" + subject + "|" + pointedThing + ")"
+        if RioText.matches(#"^(?:summarize|summarise|sum up|tldr)\s+"# + thing + "$", s) { return .selectionTask(.summarize) }
+        if RioText.matches(#"^explain\s+"# + thing + #"(?:\s+to me)?$"#, s) { return .selectionTask(.explain) }
+        // "what does this mean", "explain what this means", "solve this problem": explain the
+        // selection (or the window when nothing is selected). "What does this error mean" stays
+        // with the screen parser, which reads the error off the screen.
+        if RioText.matches(#"^(?:what\s+does\s+|explain\s+what\s+)(?:this|that|it)\s+means?$"#, s)
+            || RioText.matches(#"^(?:solve|help\s+me\s+(?:with|solve|understand))\s+"# + thing + "$", s) {
+            return .selectionTask(.explain)
+        }
         let translate = #"^translate\s+(?:"# + subject + #"\s+)?(?:to|into|in)\s+([a-z]+(?:\s+[a-z]+)?)$"#
         if let groups = RioText.firstMatch(translate, in: s), let language = groups[1] {
             let lower = language.lowercased()

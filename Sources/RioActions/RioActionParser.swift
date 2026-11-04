@@ -23,19 +23,32 @@ struct RioActionParser {
     /// A parse is a guess when an app or window target did not resolve to an installed app.
     func analyze(_ transcript: String) -> RioParseAnalysis {
         // "2 and a half minutes" must not split into two clauses on "and" (timers only).
-        let body = RioWebSearchRewrite.apply(to: RioTimerPhrases.protectingDurations(in: Self.stripEnvelope(transcript)))
+        let said = RioWebSearchRewrite.apply(to: RioTimerPhrases.protectingDurations(in: Self.stripEnvelope(transcript)))
+        // "quit Safari, wait no": the last command is taken back; what came before it still runs.
+        let takeBack = Self.trailingTakeBack(said)
+        let takenBack = takeBack?.remainder
+        let body = takenBack ?? said
         func sure(_ parse: RioActionParse) -> RioParseAnalysis {
-            RioParseAnalysis(parse: parse, isConfident: true, resolverText: unknownText(body, lastWasGreedy: false))
+            RioParseAnalysis(parse: parse, isConfident: true, resolverText: unknownText(said, lastWasGreedy: false))
+        }
+        func whole(_ actions: [RioAction]) -> RioParseAnalysis {
+            sure(takenBack == nil ? .actions(actions) : .empty)
         }
         guard !body.isEmpty else { return sure(.empty) }
         // "open Chrome... actually never mind" takes the whole thing back.
-        if Self.cancelsItself(body) { return sure(.empty) }
+        if Self.cancelsItself(said) || takeBack?.cancelsAll == true { return sure(.empty) }
         // Remember, notes and maths keep "and", "plus" and commas: claim the whole sentence first.
         // Recall is not here: "what's my next class" must reach the calendar parser first.
-        if let whole = RioPersonalPhrases.wholeUtterance(body) { return sure(.actions([whole])) }
-        if let layout = parseSideBySide(body) { return layout }
-        if let task = RioTaskPhrases.wholeUtterance(body) { return sure(.actions([task])) }
-        if let whole = wholeSentence(body) { return sure(.actions(whole)) }
+        if let personal = RioPersonalPhrases.wholeUtterance(body) { return whole([personal]) }
+        if let layout = parseSideBySide(body) { return takenBack == nil ? layout : sure(.empty) }
+        if let task = RioTaskPhrases.wholeUtterance(body) { return whole([task]) }
+        if let sentence = wholeSentence(body) { return whole(sentence) }
+        // "Do the same for Warp" after "open Chrome and put it on the left": both steps for Warp.
+        if let chain = sameForChain(body) {
+            guard takenBack == nil else { return sure(.empty) }
+            return RioParseAnalysis(parse: .actions([chain.action] + chain.more), isConfident: chain.isConfident,
+                                    resolverText: unknownText(said, lastWasGreedy: false))
+        }
 
         var parts = Self.splitClauseParts(Self.normalizingKeyCombos(body))
         if let last = parts.last, !Self.startsGreedyCommand(last.text) {
@@ -44,9 +57,11 @@ struct RioActionParser {
         }
         // "open Chrome, thanks Rio, quit Xcode": a filler clause in the middle is not a command.
         parts = parts.filter { Self.startsGreedyCommand($0.text) || !Self.stripTrailingFiller($0.text).isEmpty }
+        if takenBack != nil, !parts.isEmpty { parts.removeLast() }
         guard !parts.isEmpty else { return sure(.empty) }
 
-        let resolverText = unknownText(body, lastWasGreedy: parts.last.map { Self.startsGreedyCommand($0.text) } ?? false)
+        // The resolver hears the take-back too: it must not run what the owner took back.
+        let resolverText = unknownText(said, lastWasGreedy: parts.last.map { Self.startsGreedyCommand($0.text) } ?? false)
         var state = ClauseState()
         for part in parts {
             let before = part.isCorrection ? state.undoingLast() : state
@@ -136,6 +151,8 @@ struct RioActionParser {
            let action = RioMeetingPhrases.parse(raw: claude, simplified: RioText.simplify(claude)) {
             return [action]
         }
+        // "Claude run the tests", "cloud code status", "ask Claude how do I ...".
+        if let action = Self.claudeAtStart(body) { return [action] }
         if Self.splitClauses(body).count > 1,
            let action = RioAutomationPhrases.parse(raw: body, simplified: simple) {
             return [action]
@@ -199,6 +216,9 @@ struct RioActionParser {
 
     private func parseClause(_ raw: String, state: ClauseState) -> ParsedClause? {
         if let app = state.lastApp, let pronoun = Self.pronounAppVerb(raw, app: app) { return pronoun }
+        if let bigger = Self.makeItBigger(raw, app: state.lastApp) { return bigger }
+        // "search the codebase for useAuth" is the editor's search: the resolver plans it.
+        if Self.isCodeScopeSearch(raw) { return nil }
         // "search for cats and open the first result": a pick from results that haven't loaded yet
         // is the brain's job. On its own, "open the first one" clicks what is on screen.
         if !state.actions.isEmpty, RioText.matches(Self.resultPick, RioText.simplify(raw)) { return nil }
@@ -390,14 +410,22 @@ struct RioActionParser {
 
     // MARK: Stop listening
 
-    /// "stop listening", "that's all", "mic off", "go away", with any thanks or name after.
-    /// "that's it", "I'm done" and "we're done" only count as the whole sentence, so "open
-    /// Chrome and that's it" never ends the conversation by accident.
+    /// Structural: Rio himself is told to stop listening, rest, go, go quiet or switch off, or
+    /// is told goodbye ("stop listening", "go to sleep", "take a break", "turn yourself off",
+    /// "you can go now", "good night"), with any thanks or name after. "that's it", "I'm done",
+    /// a bare "sleep" or "off" only count as the whole sentence, so "open Chrome and that's it"
+    /// never ends the conversation by accident. The meeting's mic ("mic off", "mute the mic") is
+    /// not Rio's: those go on to the other paths (finding 64, 97b).
     static func isStopListening(_ s: String, wholeSentence: Bool) -> Bool {
-        let lead = #"^(?:(?:ok|okay|alright|all right|so|thanks|thank you|cool|great|perfect)\s+)*(?:you can\s+)?"#
-        let phrases = #"stop listening(?: to me)?|quit listening|go to sleep|thats all(?: for now)?|that is all(?: for now)?|thatll be all|that will be all|stop (?:the )?conversation(?: mode)?|end (?:the )?conversation(?: mode)?|conversation mode off|turn off conversation mode|good ?bye|bye(?: bye)?|good ?night|go away|leave me alone|(?:the )?mic(?:rophone)? off|(?:turn|switch|shut) (?:the |your )?mic(?:rophone)? off|(?:turn|switch|shut) off (?:the |your )?mic(?:rophone)?"#
-        let whole = #"|thats it|that is it|(?:were|we are|im|i am) done(?: here)?"#
-        let tail = "(?:\\s+(?:\(nameVariants)|thanks|thank you|now|for now|here))*$"
+        let lead = #"^(?:(?:ok|okay|alright|all right|so|thanks|thank you|cool|great|perfect)\s+)*"#
+        let yourself = #"(?:yourself|urself)"#
+        let listen = #"stop listening(?: to me)?|quit listening|stop (?:the )?conversation(?: mode)?|end (?:the )?conversation(?: mode)?|conversation mode off|turn off conversation mode|thats all(?: for now)?|that is all(?: for now)?|thatll be all|that will be all"#
+        let rest = #"go (?:to )?sleep|go (?:rest|quiet|offline|away)|(?:take|have) a (?:break|rest|nap|breather)|take (?:five|ten)|quiet mode|sleep mode|leave me alone|(?:you can|you may) (?:go|leave|rest|sleep|stop listening)(?: now)?"#
+        let off = "(?:turn|switch|shut|power) \(yourself) (?:off|down)|(?:turn|switch|shut|power) (?:off|down) \(yourself)|mute \(yourself)|(?:turn|switch|shut) off your (?:mic|microphone|ears)|(?:turn|switch|shut) your (?:mic|microphone|ears) off"
+        let goodbye = #"good ?bye|bye(?: bye)?|good ?night|night night"#
+        let whole = #"|thats it|that is it|(?:were|we are|im|i am) done(?: here)?|sleep|rest|off|leave|see (?:you|ya)(?: later)?|take care"#
+        let tail = "(?:\\s+(?:\(nameVariants)|thanks|thank you|now|for now|here|for (?:a )?(?:bit|while|minute|second|sec)|buddy|bro|man))*$"
+        let phrases = [listen, rest, off, goodbye].joined(separator: "|")
         return RioText.matches(lead + "(?:" + phrases + (wholeSentence ? whole : "") + ")" + tail, s)
     }
 
@@ -422,6 +450,8 @@ struct RioActionParser {
         var text = raw.trimmingCharacters(in: CharacterSet(charactersIn: " .!,;:"))
         // A polite tail never belongs to the query.
         text = RioText.replacing(#"[,\s]+(?:please|bro)$"#, with: "", in: text)
+        // "search that on Amazon", "look it up": the last search or the selection, never the word.
+        if Self.isPronounSearch(text) { return nil }
 
         let sites: [(name: String, build: (String) -> URL?)] = [
             (#"(?:youtube|you\s?tube)"#, RioWebURLs.youtubeSearchURL(query:)),
@@ -459,6 +489,7 @@ struct RioActionParser {
         if RioText.matches(#"^search\s+(?:through\s+)?my\s+(?:dictations?|history|timeline|transcripts?|past\s+dictations?)\s+for\b"#, text) {
             return nil
         }
+        if let local = Self.localScopeSearch(text) { return local }
         let webPatterns = [
             #"^search\s+(?:(?:the\s+web|google|online|the\s+internet|bing)\s+)?(?:for\s+|up\s+)?(.+)$"#,
             #"^look\s+up\s+(.+)$"#,
@@ -489,7 +520,7 @@ struct RioActionParser {
     private static func cleanQuery(_ raw: String?) -> String? {
         guard var query = raw?.trimmingCharacters(in: CharacterSet(charactersIn: " .!;:\"")) else { return nil }
         query = RioText.collapseWhitespace(query)
-        if RioText.matches(#"^(?:for|up|the web|google|youtube)$"#, query) { return nil }
+        if RioText.matches(#"^(?:for|up|the web|google|youtube)$"#, query) || isPronounQuery(query) { return nil }
         return query.isEmpty ? nil : query
     }
 
@@ -524,6 +555,9 @@ struct RioActionParser {
             "^(?:yeah|yep|yea|yup)\\b[\\s,.!?]*(?=(?:\(nameVariants)|\(leadVerbs))\\b)",
             #"^(?:can|could|would|will)\s+you\s*,?\s+(?:please\s*,?\s+)?"#,
             #"^(?:i\s+(?:want|need)\s+you\s+to|i\s*(?:'|\x{2019})?d\s+like\s+you\s+to|go\s+ahead\s+and|just)\s+"#,
+            // "do this, open Chrome", "do me a favor and open Chrome": only when a command follows,
+            // so a bare "do this" still reaches the resolver whole (finding 20a).
+            "^do\\s+(?:this|the\\s+following|me\\s+a\\s+(?:favou?r|solid))(?:\\s+for\\s+me)?(?:\\s*[,.:;!?-]+\\s*(?:and\\s+)?|\\s+and\\s+)(?=(?:\(leadVerbs)|reply|respond|answer|snap)\\b)",
         ]
         var changed = true
         while changed {
@@ -565,7 +599,10 @@ struct RioActionParser {
         let arabic = "[\\s,.!?;:]+(?:\(arabicFillers))\\s*[.!?]*$"
         let stripsArabic = RioText.matches(trailingArabicCommand, text)
         while true {
-            var next = RioText.replacing(pattern, with: "", in: RioText.replacing(thanks, with: "", in: result))
+            let withoutThanks = RioText.replacing(thanks, with: "", in: result)
+            // "say thanks", "tell Ahmed thank you": the thanks is the message.
+            if withoutThanks != result, isBareMessageVerb(withoutThanks) { break }
+            var next = RioText.replacing(pattern, with: "", in: withoutThanks)
             if stripsArabic { next = RioText.replacing(arabic, with: "", in: next) }
             if next == result { break }
             result = next
@@ -581,8 +618,9 @@ struct RioActionParser {
     // MARK: Clause splitting
 
     // Message bodies keep "and" and trailing words too: "text Ali saying I'm late and I'll call".
-    private static let greedyStart = #"^(?:type|write|search|google|look\s+up|youtube\s+search|you\s?tube\s+search|amazon\s+search|reply|tell\s+(?:them|him|her)|text|message|send\s+(?:a\s+)?(?:text|message))\b"#
+    private static let greedyStart = #"^(?:type|write|search|google|look\s+up|youtube\s+search|you\s?tube\s+search|amazon\s+search|reply|respond|say|tell\s+(?!(?:me|us|the|claude|cloud|clod|claud|clawed|cloude)\b)\S+|text|message|send\s+(?:a\s+)?(?:text|message))\b"#
     private static let searchStart = #"^(?:search|google|look\s+up|youtube\s+search|you\s?tube\s+search|amazon\s+search)\b"#
+    static var searchStartPattern: String { searchStart }
     private static let messageStart = #"^(?:reply|tell\s+(?:them|him|her)|text|message|send\s+(?:a\s+)?(?:text|message))\b"#
     /// The verbs that start a new command after "and then" inside a search or a message body.
     private static let chainVerbs = #"(?:open|launch|quit|close|switch|play|pause|put|move|snap|search|google|mute|unmute|hide|lock|take|set|turn|remind|reply|click|press|hit|type|text|message|send|email|maximi[sz]e|minimi[sz]e|go\s+to|show\s+me|start|stop|find|look\s+up)\b"#

@@ -119,12 +119,13 @@ enum RioParserClauseTests {
 
     private static func stopListening() {
         for text in ["Rio stop listening. Thanks Rio.", "stop listening thanks rio", "stop listening to me", "stop conversation",
-                     "mic off", "turn the mic off", "go away", "leave me alone", "quit listening", "we're done here",
+                     "go away", "leave me alone", "quit listening", "we're done here",
                      "that's it for now", "okay that's it", "I'm done"] {
             eq(text, a(.stopListening))
             check(RioConversationCommands.isStopListening(text), "conversation mode stops on \"\(text)\"")
         }
-        for text in ["exit", "sleep", "turn off"] {
+        // "mic off" in a meeting means the call's mic, never conversation mode (finding 97b).
+        for text in ["exit", "turn off", "mic off", "turn the mic off"] {
             check(parser.parse(text) != a(.stopListening), "\"\(text)\" is ambiguous and stays out")
         }
         check(recording.parse("I'm done") == a(.stopRecordingMacro), "while recording, I'm done ends the recording")

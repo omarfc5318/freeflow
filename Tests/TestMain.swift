@@ -95,6 +95,7 @@ struct FreeFlowTests {
         RioReminderPhrasesTests.run()
         RioPhraseFixesR2Tests.run()
         await RioPhraseFixesR2Tests.runAsync()
+        RioR3ParserTests.run()
         RioAutomationTests.run()
         RioContextMemoryTests.run()
         RioEmailNotesTests.run()

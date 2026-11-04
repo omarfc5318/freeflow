@@ -151,6 +151,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioActionParser.swift \
 	Sources/RioActions/RioActionParser+Controls.swift \
 	Sources/RioActions/RioActionParser+Windows.swift \
+	Sources/RioActions/RioActionParser+Phrasing.swift \
 	Sources/RioActions/RioTextTools.swift \
 	Sources/RioActions/RioCalendarPhrases.swift \
 	Sources/RioActions/RioCalendarSummary.swift \
