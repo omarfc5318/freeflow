@@ -17,6 +17,9 @@ enum RioReminderPhrases {
     static func parse(_ text: String, now: Date, calendar: Calendar) -> RioAction? {
         let sentence = tidy(text)
         guard !sentence.isEmpty, !RioText.matches(repeating, sentence) else { return nil }
+        // "remind me to call mom and set a timer for 5 minutes": two commands. Leave the sentence
+        // to the clause splitter, which parses the reminder and the timer apart.
+        if RioText.matches(nextCommand, sentence) { return nil }
         if let rest = RioText.firstMatch(#"^remind\s+me\s+(.+)$"#, in: sentence)?[1] {
             return remindMe(rest, now: now, calendar: calendar)
         }
@@ -31,6 +34,9 @@ enum RioReminderPhrases {
 
     /// "every day at 9", "each morning", "daily", "on weekdays": the scheduler's.
     private static let repeating = #"\b(?:every|each|daily|weekly|monthly|yearly|weekdays|weekends|hourly)\b"#
+
+    /// Another Rio command after the reminder's words: a timer, an alarm or another reminder.
+    private static let nextCommand = #"\s(?:and|then)\s+(?:then\s+)?(?:(?:set|start|make|create)\s+(?:me\s+)?(?:a\s+|an\s+|the\s+|my\s+|another\s+)?(?:\S+\s+){0,2}?(?:timer|alarm|countdown|reminder)\b|remind\s+me\b)"#
 
     /// "remind me (when) to X" / "remind me to X (when)" / "remind me about X".
     private static func remindMe(_ rest: String, now: Date, calendar: Calendar) -> RioAction? {

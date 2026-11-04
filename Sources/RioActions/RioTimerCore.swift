@@ -53,12 +53,19 @@ enum RioTimerDuration {
                 total += more.seconds
                 end = more.next
             }
-            return Scan(seconds: Int(total.rounded()), range: index..<end)
+            return Scan(seconds: clampedSeconds(total), range: index..<end)
         }
         return nil
     }
 
-    private static let unitSeconds: [String: Double] = [
+    /// Whole seconds without trapping: "100000000000 billion hours" (or any non-finite total) is
+    /// one past the cap, so the caller gives its "too long" answer instead of crashing.
+    private static func clampedSeconds(_ total: Double) -> Int {
+        guard total.isFinite, total <= Double(maxSeconds) else { return maxSeconds + 1 }
+        return Int(max(0, total).rounded())
+    }
+
+    static let unitSeconds: [String: Double] = [
         "second": 1, "seconds": 1, "sec": 1, "secs": 1,
         "minute": 60, "minutes": 60, "min": 60, "mins": 60,
         "hour": 3600, "hours": 3600, "hr": 3600, "hrs": 3600,
@@ -96,7 +103,10 @@ enum RioTimerDuration {
         }
         var value: Double
         var next: Int
-        if token.first?.isNumber == true, let number = Double(token) {
+        if let grouped = thousandsGroups(tokens, at: index) {
+            value = grouped.value
+            next = grouped.next
+        } else if token.first?.isNumber == true, let number = Double(token) {
             value = number
             next = index + 1
         } else if let words = numberWords(tokens, at: index) {
@@ -114,6 +124,22 @@ enum RioTimerDuration {
             value += 0.5
             next += 3
         }
+        return (value, next)
+    }
+
+    /// "1,000" / "10,000" (Whisper's thousands comma, split into "1" "000" by the tokenizer or
+    /// the simplifier): one to three digits followed by groups of exactly three digits.
+    private static func thousandsGroups(_ tokens: [String], at index: Int) -> (value: Double, next: Int)? {
+        func isDigits(_ token: String) -> Bool { !token.isEmpty && token.allSatisfy(\.isASCII) && token.allSatisfy(\.isNumber) }
+        let head = tokens[index]
+        guard isDigits(head), (1...3).contains(head.count), head.first != "0" else { return nil }
+        var digits = head
+        var next = index + 1
+        while next < tokens.count, tokens[next].count == 3, isDigits(tokens[next]) {
+            digits += tokens[next]
+            next += 1
+        }
+        guard next > index + 1, let value = Double(digits) else { return nil }
         return (value, next)
     }
 
@@ -213,8 +239,20 @@ enum RioTimerPhrases {
         return tokens.count <= 6 && tokens.count > 1 && (tokens[1] == "timer" || tokens[1] == "countdown")
     }
 
+    /// Verbs that start another command after "and" / "then": a label ends there.
+    private static let nextCommandVerbs: Set<String> = [
+        "set", "start", "open", "launch", "quit", "close", "remind", "text", "message", "send", "email", "play",
+        "pause", "call", "turn", "lock", "mute", "show", "search", "take", "add", "create", "make",
+    ]
+
     private static func label(from tokens: [String], removing range: Range<Int>) -> String? {
-        let rest = Array(tokens[..<range.lowerBound]) + Array(tokens[range.upperBound...])
+        var rest = Array(tokens[..<range.lowerBound]) + Array(tokens[range.upperBound...])
+        // "called pasta and remind me to stir": the label ends where the next command starts.
+        if let cut = rest.indices.dropLast().first(where: { index in
+            ["and", "then"].contains(rest[index]) && (nextCommandVerbs.contains(rest[index + 1]) || rest[index + 1] == "then")
+        }) {
+            rest = Array(rest[..<cut])
+        }
         let markers: Set<String> = ["called", "named", "labeled", "labelled", "titled"]
         if let marker = rest.firstIndex(where: { markers.contains($0) }) {
             return cleanLabel(Array(rest[(marker + 1)...]))
@@ -232,8 +270,12 @@ enum RioTimerPhrases {
         var words = words[...]
         while let head = words.first, labelFiller.contains(head) { words = words.dropFirst() }
         while let tail = words.last, labelFiller.contains(tail) { words = words.dropLast() }
+        // "MAT 108 homework": a course number may sit inside a label, but the label needs a word,
+        // and a second duration ("and 5 minutes") is never one.
         guard !words.isEmpty, words.count <= 4,
-              words.allSatisfy({ $0.first?.isLetter == true }) else { return nil }
+              words.allSatisfy({ $0.first?.isLetter == true || $0.allSatisfy(\.isNumber) }),
+              words.contains(where: { $0.count > 1 && $0.first?.isLetter == true }),
+              !words.contains(where: { RioTimerDuration.unitSeconds[$0] != nil }) else { return nil }
         return words.joined(separator: " ")
     }
 
@@ -300,8 +342,10 @@ enum RioTimerPhrases {
         let tokens = words.map { $0.token }
         guard tokens.contains("timer") || tokens.contains("countdown"),
               let found = RioTimerDuration.scan(tokens: tokens),
-              found.range.contains(where: { tokens[$0] == "and" }) else { return body }
+              !found.range.isEmpty else { return body }
         let span = words[found.range.lowerBound].range.lowerBound..<words[found.range.upperBound - 1].range.upperBound
+        // "1,000 seconds" would be split at its comma, as "2 and a half minutes" would at "and".
+        guard found.range.contains(where: { tokens[$0] == "and" }) || body[span].contains(",") else { return body }
         return body.replacingCharacters(in: span, with: "\(found.seconds) seconds")
     }
 }

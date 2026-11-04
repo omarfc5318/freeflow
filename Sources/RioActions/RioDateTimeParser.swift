@@ -117,6 +117,13 @@ enum RioDateTimeParser {
         return RioText.number(from: cleaned).map(Double.init)
     }
 
+    /// `value` rounded to a whole number, or nil when it is not finite or past `limit` (so a
+    /// spoken "99999999999999999999 minutes" never traps converting to Int).
+    private static func boundedInt(_ value: Double, limit: Int) -> Int? {
+        guard value.isFinite, abs(value) <= Double(limit) else { return nil }
+        return Int(value.rounded())
+    }
+
     private static let numberWord = #"(?:\d+(?:\.\d+)?|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|forty five|forty-five|fifty|sixty|ninety|a couple of)"#
 
     // MARK: Duration
@@ -126,13 +133,13 @@ enum RioDateTimeParser {
         if take(#"\bfor\s+half\s+(?:an?\s+)?hour\b"#, from: &work) != nil { return 30 }
         if let groups = take(#"\bfor\s+(\#(numberWord))\s+and\s+a\s+half\s+hours?\b"#, from: &work),
            let raw = groups[1], let count = value(of: raw) {
-            return Int((count * 60 + 30).rounded())
+            return boundedInt(count * 60 + 30, limit: 24 * 60)
         }
         if let groups = take(#"\bfor\s+(\#(numberWord))\s+(hours?|hrs?|minutes?|mins?)\b"#, from: &work),
            let raw = groups[1], let unit = groups[2]?.lowercased(), let count = value(of: raw) {
             let minutes = unit.hasPrefix("h") ? count * 60 : count
-            let rounded = Int(minutes.rounded())
-            return rounded > 0 && rounded <= 24 * 60 ? rounded : nil
+            guard let rounded = boundedInt(minutes, limit: 24 * 60) else { return nil }
+            return rounded > 0 ? rounded : nil
         }
         return nil
     }
@@ -240,7 +247,8 @@ enum RioDateTimeParser {
         // "in 2 days", "in a week"
         if let groups = take(#"\bin\s+(\#(numberWord))\s+(days?|weeks?)\b"#, from: &work),
            let raw = groups[1], let count = value(of: raw), let unit = groups[2]?.lowercased() {
-            let days = Int(count) * (unit.hasPrefix("week") ? 7 : 1)
+            // A spoken number can be far too big for Int: past ten years it is not a date.
+            guard let days = boundedInt(count * (unit.hasPrefix("week") ? 7 : 1), limit: 3660) else { return nil }
             return add(days: days, to: today, calendar)
         }
         // Weekdays, optionally "this" or "next".
@@ -312,8 +320,7 @@ enum RioDateTimeParser {
     private static func extractRelativeOffset(_ work: inout String, now: Date) -> Date? {
         guard let groups = take(#"\bin\s+(\#(numberWord))\s+(hours?|hrs?|minutes?|mins?)\b"#, from: &work),
               let raw = groups[1], let count = value(of: raw), let unit = groups[2]?.lowercased() else { return nil }
-        let minutes = Int((unit.hasPrefix("h") ? count * 60 : count).rounded())
-        guard minutes > 0, minutes <= 24 * 60 else { return nil }
+        guard let minutes = boundedInt(unit.hasPrefix("h") ? count * 60 : count, limit: 24 * 60), minutes > 0 else { return nil }
         return now.addingTimeInterval(Double(minutes) * 60)
     }
 

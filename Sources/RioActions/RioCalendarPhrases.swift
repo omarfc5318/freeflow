@@ -46,6 +46,7 @@ enum RioCalendarPhrases {
             }
             return range(groups.last ?? nil)
         }
+        if let range = dayEventRange(s) { return range }
         let next = [
             #"^what(?:s|\s+is)\s+next(?:\s+(?:on|in)\s+my\s+\#(cal))?$"#,
             #"^what(?:s|\s+is)\s+(?:my\s+)?(?:next|upcoming)\s+\#(eventNoun)$"#,
@@ -53,6 +54,31 @@ enum RioCalendarPhrases {
             #"^what(?:s|\s+is)\s+(?:coming\s+up|up\s+next)(?:\s+(?:on|in)\s+my\s+\#(cal))?$"#,
         ]
         return next.contains(where: { RioText.matches($0, s) }) ? .next : nil
+    }
+
+    /// "what's my 4pm", "what's my first meeting tomorrow", "what's my meeting at 3", "what do I
+    /// have at 2pm": the agenda for that day (the event at that time is in it).
+    private static func dayEventRange(_ s: String) -> CalendarRange? {
+        let noun = #"(?:meeting|event|appointment|class|call|lecture|standup|stand\s+up|session)"#
+        let day = #"(?:\s+(today|tomorrow))?"#
+        let meridiem = #"(?:am|pm|a\s?m|p\s?m)"#
+        let clock = #"\d{1,2}(?:\s\d{2})?"#
+        let whatIs = #"^what(?:s|\s+is)\s+"#
+        if let groups = RioText.firstMatch(#"^(?:what(?:s|\s+is)|when(?:s|\s+is))\s+(?:my|the)\s+(first|last|next)\s+\#(noun)(?:\s+of\s+the\s+day)?\#(day)$"#, in: s) {
+            switch groups.last ?? nil {
+            case "tomorrow": return .tomorrow
+            case "today": return .today
+            default: return groups[1] == "next" ? .next : .today
+            }
+        }
+        let timed = [
+            whatIs + #"my\s+\#(clock)\s*\#(meridiem)(?:\s+\#(noun))?\#(day)$"#,
+            whatIs + #"my\s+\#(clock)\s+\#(noun)\#(day)$"#,
+            whatIs + #"(?:my|the)\s+\#(noun)\s+at\s+\#(clock)(?:\s*\#(meridiem))?\#(day)$"#,
+            #"^what\s+do\s+i\s+have\s+at\s+\#(clock)(?:\s*\#(meridiem))?\#(day)$"#,
+        ]
+        guard timed.contains(where: { RioText.matches($0, s) }) else { return nil }
+        return RioText.matches(#"\btomorrow$"#, s) ? .tomorrow : .today
     }
 
     // MARK: Join
@@ -74,6 +100,9 @@ enum RioCalendarPhrases {
         guard let groups = RioText.firstMatch(#"^(add|schedule|book|create|put|set\s+up)\s+(.+)$"#, in: text),
               let verb = groups[1]?.lowercased(), var object = groups[2] else { return nil }
         guard !RioText.matches(blockedWords, object) else { return nil }
+        // "add office hours every tuesday at 3": a repeating event is not one event. Leave it to
+        // the resolver rather than add a single "Office hours every".
+        guard !RioText.matches(#"\b(?:every|each|weekly|daily|monthly|yearly|weekdays|weekends|hourly|biweekly|fortnightly)\b"#, object) else { return nil }
         // "book a table at Nobu Friday at 8" is a task for the web, not a calendar entry.
         if verb == "book", RioText.matches(#"^(?:me\s+|us\s+)?(?:an?\s+|the\s+)?(?:table|tables|reservation|room|flight|flights|ticket|tickets|hotel|ride|cab|uber|taxi|seat|seats|spot|stay|trip|car|rental|court|slot)\b"#, object) {
             return nil

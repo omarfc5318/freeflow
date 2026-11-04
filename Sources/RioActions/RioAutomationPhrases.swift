@@ -74,10 +74,11 @@ enum RioAutomationPhrases {
 
     // MARK: Scheduled commands
 
-    private static let whenStart = #"^(?:every|each|daily|weekdays|weekly|in\s+\S+\s+(?:minutes?|mins?|hours?|hrs?)\b|at\s+\d|tomorrow|tonight|on\s+(?:mon|tues|wednes|thurs|fri|satur|sun)day|next\s+\w+day)"#
+    private static let delayUnit = #"(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)"#
+    private static let whenStart = #"^(?:every|each|daily|weekdays|weekly|(?:in|after)\s+\S+\s+(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)\b|at\s+\d|tomorrow|tonight|on\s+(?:mon|tues|wednes|thurs|fri|satur|sun)day|next\s+\w+day)"#
     private static let scheduleLead = #"^(?:please\s+)?(?:schedule|automate|set\s+up\s+a\s+schedule(?:\s+to)?)\s*[:,]?\s*(?:a\s+command\s*)?"#
-    private static let trailingWhenAlways = #"^(.+?)\s+((?:every|each)\s+.+|daily(?:\s+.+)?|weekdays(?:\s+.+)?|in\s+(?:\d+|an?|one|two|three|four|five|ten|fifteen|twenty|thirty|forty five|a couple of)\s+(?:minutes?|mins?|hours?|hrs?))$"#
-    private static let trailingWhenScheduled = #"^(.+?)\s+((?:every|each)\s+.+|daily(?:\s+.+)?|weekdays(?:\s+.+)?|in\s+\S+\s+(?:minutes?|mins?|hours?|hrs?)|at\s+\d.*|tomorrow.*|tonight.*)$"#
+    private static let trailingWhenAlways = #"^(.+?)\s+((?:every|each)\s+.+|daily(?:\s+.+)?|weekdays(?:\s+.+)?|(?:in|after)\s+(?:\d+|an?|one|two|three|four|five|ten|fifteen|twenty|thirty|forty five|a couple of)\s+\#(delayUnit))$"#
+    private static let trailingWhenScheduled = #"^(.+?)\s+((?:every|each)\s+.+|daily(?:\s+.+)?|weekdays(?:\s+.+)?|(?:in|after)\s+\S+\s+\#(delayUnit)|at\s+\d.*|tomorrow.*|tonight.*)$"#
 
     private static func schedule(_ text: String) -> RioAction? {
         let stripped = RioText.replacing(scheduleLead, with: "", in: text)
@@ -91,18 +92,65 @@ enum RioAutomationPhrases {
             return make(command: parts.command, when: head)
         }
         guard startsWithVerb(body) else { return nil }
+        // "remind me to call mom in 5 minutes", "remind me in 5 minutes": a reminder with its own
+        // time is the reminder parser's (it hands repeating ones back to us by returning nil).
+        if RioText.matches(#"^remind\b"#, body), RioReminderPhrases.parse(body) != nil { return nil }
         // "text Sarah I'll be home in 20 minutes": time words at the end belong to the message.
         // A message is scheduled only with "schedule" or a leading time ("in 10 minutes, text mom").
         if !hadSchedule, startsWithMessageVerb(body) { return nil }
         let pattern = hadSchedule ? trailingWhenScheduled : trailingWhenAlways
         if let groups = RioText.firstMatch(pattern, in: body), let command = groups[1], let when = groups[2] {
-            return make(command: cleanCommand(command), when: when)
+            let parts = rebalanced(command: cleanCommand(command), when: when)
+            return make(command: parts.command, when: parts.when)
         }
         return nil
     }
 
+    /// Words a schedule's time can't end on: they start the command's own words.
+    private static let connectors: Set<String> = [
+        "to", "and", "then", "that", "about", "for", "by", "on", "at", "in", "the", "this", "next", "until", "till", "from", "after",
+    ]
+
+    /// "remind me every monday at 9 am to check canvas": the time is the longest start of the
+    /// when-group the scheduler can read; the rest ("to check canvas") is the command's.
+    static func rebalanced(command: String, when: String, now: Date = Date(), calendar: Calendar = .current) -> (command: String, when: String) {
+        func parses(_ text: String) -> Bool { RioScheduleParser.parse(text, now: now, calendar: calendar) != nil }
+        guard !parses(when) else { return (command, when) }
+        let words = when.split(separator: " ").map(String.init)
+        if words.count > 1 {
+            for cut in stride(from: words.count - 1, through: 1, by: -1) {
+                let last = words[cut - 1].lowercased().trimmingCharacters(in: .punctuationCharacters)
+                guard !connectors.contains(last) else { continue }
+                let head = words[..<cut].joined(separator: " ")
+                if parses(head) { return (command + " " + words[cut...].joined(separator: " "), head) }
+            }
+        }
+        // No start of it reads as a time ("every monday at 9" is am or pm): the reminder text still
+        // belongs to the command, and the handler asks for a clearer time.
+        if isBare(command), let groups = RioText.firstMatch(#"^(.+?)\s+((?:to|that|about)\s+.+)$"#, in: when),
+           let head = groups[1], let tail = groups[2] {
+            return (command + " " + tail, head)
+        }
+        return (command, when)
+    }
+
+    /// Verbs that mean nothing without an object: "remind me", "text", "open" alone.
+    private static let needsObject: Set<String> = [
+        "remind", "text", "message", "send", "tell", "call", "email", "open", "launch", "switch", "search", "type",
+        "press", "join", "run", "start", "take", "put", "set", "turn", "show", "read", "go", "raise", "lower",
+        "empty", "toggle", "enable", "disable", "close", "quit",
+    ]
+
+    /// "remind me", "text", "open": a verb (and "me") with nothing to act on.
+    private static func isBare(_ command: String) -> Bool {
+        let words = command.lowercased().split(separator: " ").map { $0.trimmingCharacters(in: .punctuationCharacters) }
+            .filter { !$0.isEmpty && $0 != "me" }
+        guard let verb = words.first else { return true }
+        return words.count == 1 && needsObject.contains(verb)
+    }
+
     private static func make(command: String, when: String) -> RioAction? {
-        guard startsWithVerb(command) else { return nil }
+        guard startsWithVerb(command), !isBare(command) else { return nil }
         var whenText = when.lowercased().replacingOccurrences(of: "\u{2019}", with: "'")
         whenText = RioText.replacing(#"\b([ap])\.\s?m\.?"#, with: "$1m", in: whenText)
         whenText = whenText.trimmingCharacters(in: CharacterSet(charactersIn: " ,.;:"))

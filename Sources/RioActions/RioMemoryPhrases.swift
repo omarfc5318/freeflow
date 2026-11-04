@@ -67,13 +67,25 @@ enum RioMemoryPhrases {
             #"^what\s+did\s+i\s+(?:tell\s+you|say)\s+about\s+(?:my\s+)?(.+)$"#,
             #"^tell\s+me\s+my\s+(.+)$"#,
         ]
-        for pattern in patterns {
+        for (index, pattern) in patterns.enumerated() {
             guard let groups = RioText.firstMatch(pattern, in: s), var query = groups[1] else { continue }
             query = RioText.replacing(#"\s+(?:is|are|was|were)$"#, with: "", in: query).trimmingCharacters(in: .whitespaces)
             guard !query.isEmpty, !RioText.matches(systemTopics, query) else { return nil }
+            // "what's my 4pm", "what's my first meeting tomorrow": the calendar's, not memory's.
+            // "what did I tell you about the meeting" still asks memory outright.
+            let asksMemory = (1...3).contains(index)
+            if !asksMemory, isCalendarQuestion(query) { return nil }
             return .recall(query: query)
         }
         return rememberedThing(s)
+    }
+
+    private static let calendarWords = #"\b\d{1,2}(?:[:\s]\d{2})?\s*(?:am|pm|a\s?m|p\s?m)\b|\bat\s+\d|\b(?:meetings?|calls?|class(?:es)?|events?|appointments?|lectures?|standups?|stand\s+ups?)\b"#
+    /// "my zoom meeting link", "my class number": a thing about the event that was remembered.
+    private static let rememberedDetail = #"\b(?:link|url|id|number|code|password|passcode|room|notes?|address|email|login)$"#
+
+    private static func isCalendarQuestion(_ query: String) -> Bool {
+        RioText.matches(calendarWords, query) && !RioText.matches(rememberedDetail, query)
     }
 
     /// "what's the staging url" / "what is our seed round date": recall only when a remembered
@@ -98,7 +110,8 @@ enum RioMemoryPhrases {
             return named
         }
         let patterns = [
-            #"^(?:take|make|add|jot)\s+(?:a\s+)?note\b(?:\s+to\s+self)?(?:\s+(?:that|down))?\s*[:,\-]?\s*(.+)$"#,
+            #"^(?:take|make|add|jot)\s+(?:a\s+)?note\b(?:\s+to\s+self)?(?:\s+(?:that\s+says|that\s+reads|saying|says|reading|that|down))?\s*[:,\-]?\s*(.+)$"#,
+            #"^note\s+(?:saying|that\s+says|that\s+reads|reading)\s+(.+)$"#,
             #"^note\s+to\s+self\s*[:,\-]?\s*(.+)$"#,
             #"^note\s*[:,]\s*(.+)$"#,
             #"^note\s+(?:down|that)\s+(.+)$"#,
@@ -148,10 +161,30 @@ enum RioRememberedFacts {
 /// A memory miss on a real question ("what did I tell you about the seed round") looks through
 /// the owner's dictations before saying it knows nothing. The memory's own miss message stays
 /// when the dictations have nothing either. Only a miss falls back: a hit is answered as is.
+///
+/// Privacy: a dictation snippet is spoken aloud, so the fallback never runs for a secret ("what
+/// did I tell you about my password"), never speaks a snippet that carries one, and runs only
+/// when `allowsHistory` (the owner's own key, not room audio in conversation mode). Otherwise the
+/// miss says how to search the dictations on purpose.
 enum RioRecallFallback {
-    @MainActor static func resolve(memory result: RioActionResult, query: String, executor: RioActionExecuting) async -> RioActionResult {
-        guard case .failed = result, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return result }
-        if case .done(let summary) = await executor.execute(.searchHistory(query: query)) { return .done(summary: summary) }
+    @MainActor static func resolve(
+        memory result: RioActionResult, query: String, executor: RioActionExecuting, allowsHistory: Bool = true
+    ) async -> RioActionResult {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard case .failed = result, !trimmed.isEmpty else { return result }
+        guard !isSensitive(trimmed) else { return result }
+        guard allowsHistory else { return .failed(message: hint(for: trimmed)) }
+        if case .done(let summary) = await executor.execute(.searchHistory(query: query)), !isSensitive(summary) {
+            return .done(summary: summary)
+        }
         return result
+    }
+
+    static func hint(for query: String) -> String {
+        "I don't have anything saved about \(query). To look through what you've dictated, say \"search my dictations for \(query)\"."
+    }
+
+    private static func isSensitive(_ text: String) -> Bool {
+        RioTaskSafety.isSensitiveLabel(text) || RioTaskSafety.containsSensitiveValue(text)
     }
 }

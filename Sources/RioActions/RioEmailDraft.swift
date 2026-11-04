@@ -118,6 +118,8 @@ enum RioEmailPhrases {
     private static let bodyMarker = #"(?:saying|that\s+says|says|telling\s+(?:him|her|them)(?:\s+that)?|and\s+(?:tell|say)(?:\s+(?:him|her|them))?(?:\s+that)?|that|(?:and\s+)?(?:the\s+)?body(?:\s+is)?\s*:?)"#
     /// Words that give a purpose instead of the text: the email still has to be composed.
     private static let purposeMarker = #"(?:asking|requesting|to\s+(?:ask|request|thank|tell|invite|remind|let)|thanking|inviting|reminding|letting\s+\S+\s+know|apologi[sz]ing|following\s+up|checking\s+in|with)"#
+    /// "and ask if ...", "and tell him to ...", "and let her know ...", "and say that ...".
+    private static let instructionInBody = #"\b(?:and|then|also)\s+(?:also\s+)?(?:ask(?:\s+(?:him|her|them|if|whether|for|when|about|to))|tell\s+(?:him|her|them)|let\s+(?:him|her|them)\s+know|say\s+that|request|thank\s+(?:him|her|them)|apologi[sz]e|invite\s+(?:him|her|them))\b"#
     private static let subjectMarker = #"(?:subject(?:\s+line)?(?:\s+is)?\s*:?|titled|about|regarding)"#
     /// A spoken recipient that still carries a verb is a misparse ("my TA asking for ...").
     private static let verbInRecipient = #"\b(?:asking|telling|saying|thanking|requesting|letting|inviting|reminding|checking|following|sending|wondering|explaining|confirming|apologi[sz]ing|ask|tell|say|thank|request|let|send|invite|remind)\b"#
@@ -139,6 +141,9 @@ enum RioEmailPhrases {
 
         guard let parts = split(rest) else { return nil }
         guard parts.body.count <= maxBody else { return nil }
+        // "saying I'll miss class ... and ask if I can get the slides": the end is an instruction
+        // to the writer, not the email's words. The resolver composes a proper draft.
+        guard !RioText.matches(instructionInBody, parts.body) else { return nil }
         // "draft an email to the investors about the November update": a topic, not the words.
         // The resolver writes the email; a blank draft with only a subject is not what was asked.
         if parts.body.isEmpty, parts.subject != nil, parts.subjectIsTopic { return nil }
