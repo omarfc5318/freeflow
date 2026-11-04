@@ -13,6 +13,8 @@ final class RioActionExecutor {
     private var cachedApps: [InstalledApp]?
     /// The app the last open/switch brought forward, for `settleFocus()`.
     private var lastFocusedApp: InstalledApp?
+    /// When that was, so a link right after "open Safari" opens in Safari (`RioBrowserChoice`).
+    private var lastFocusedAt: Date?
 
     init(
         windowController: WindowControlling,
@@ -41,12 +43,12 @@ final class RioActionExecutor {
         case .hideApp(let name):
             return hide(spoken: name)
         case .openURL(let url):
-            return open(url)
+            return await open(url)
         case .webSearch(let query):
             guard let url = RioWebURLs.googleSearchURL(query: query) else {
                 return .failed(message: "I didn't catch what to search for")
             }
-            let result = open(url)
+            let result = await open(url)
             if case .done = result { return .done(summary: "Searching for \(query)") }
             return result
         case .volume(let change):
@@ -54,7 +56,7 @@ final class RioActionExecutor {
         case .media(let command):
             // "Pause" when nothing plays must not start music, and "play" while music plays
             // must not pause it: check first where Rio can (RioMediaPlan).
-            let state = RioMediaPlan.needsState(command) ? MacControls.playbackState() : .unknown
+            let state = RioMediaPlan.needsState(command) ? MacControls.playbackState(for: command) : .unknown
             let decision = RioMediaPlan.decide(command, state: state)
             if decision.pressesKey { MacControls.pressMediaKey(command) }
             return .done(summary: decision.summary)
@@ -144,6 +146,7 @@ final class RioActionExecutor {
             return .failed(message: "I couldn't open \(app.name): \(message)")
         }
         lastFocusedApp = app
+        lastFocusedAt = Date()
         RioFollowUpMemory.shared.noteLaunch(startedNewProcess: !wasRunning)
         // An unnamed window command right after this means this app's window (F29/F30).
         if let running = runningApplication(for: app) {
@@ -184,13 +187,30 @@ final class RioActionExecutor {
 
     // MARK: Web
 
-    private func open(_ url: URL) -> RioActionResult {
+    /// In the browser just opened or in front (`RioBrowserChoice`), else the default browser.
+    private func open(_ url: URL) async -> RioActionResult {
         guard RioWebURLs.isSafeWebURL(url) else {
             return .failed(message: "I only open web links")
         }
-        return NSWorkspace.shared.open(url)
-            ? .done(summary: "Opened \(url.host ?? "the link")")
-            : .failed(message: "I couldn't open that link")
+        let opened = RioActionResult.done(summary: "Opened \(url.host ?? "the link")")
+        let browser = RioBrowserChoice.target(
+            recentlyOpened: lastFocusedApp?.url,
+            openedSecondsAgo: lastFocusedAt.map { Date().timeIntervalSince($0) },
+            frontmost: NSWorkspace.shared.frontmostApplication?.bundleURL,
+            browsers: Set(NSWorkspace.shared.urlsForApplications(toOpen: url))
+        )
+        if let browser, await open(url, in: browser) { return opened }
+        return NSWorkspace.shared.open(url) ? opened : .failed(message: "I couldn't open that link")
+    }
+
+    private func open(_ url: URL, in browser: URL) async -> Bool {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            NSWorkspace.shared.open([url], withApplicationAt: browser, configuration: configuration) { _, error in
+                continuation.resume(returning: error == nil)
+            }
+        }
     }
 
     // MARK: Mac controls

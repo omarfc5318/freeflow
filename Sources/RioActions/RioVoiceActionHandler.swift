@@ -52,7 +52,8 @@ import Foundation
         var state = Self.stopState(timers: timers, voice: voice)
         if kind == .bare, RioStopPlan.step(kind: kind, state: state) == .nothing {
             // Only now ask the players: it costs an Apple Event.
-            state.isMediaPlaying = MacControls.playbackState() == .playing
+            // A bare "stop" pauses, so it sees what "pause" sees (calls never count, finding 88).
+            state.isMediaPlaying = MacControls.playbackState(for: .pause) == .playing
         }
         switch RioStopPlan.step(kind: kind, state: state) {
         case .stopRinging:

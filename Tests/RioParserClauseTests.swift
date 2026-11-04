@@ -139,8 +139,9 @@ enum RioParserClauseTests {
         eq("open canvas and youtube", a(canvas, u("https://www.youtube.com")))
         eq("open notion and canvas", a(o("Notion"), canvas))
         eq("open spotify and canvas", a(o("Spotify"), canvas))
-        eq("open canvas in chrome", a(canvas))
-        eq("open canvas in safari", a(canvas))
+        // Finding 27: the named browser is opened, then the link goes to it.
+        eq("open canvas in chrome", a(o(gc), canvas))
+        eq("open canvas in safari", a(o("Safari"), canvas))
         RioCanvasConfig.configuredText = { "canvas.example.edu" }
         eq("open chrome and canvas", a(o(gc), u("https://canvas.example.edu")))
         RioCanvasConfig.configuredText = { "" }

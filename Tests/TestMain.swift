@@ -28,6 +28,7 @@ struct FreeFlowTests {
         CorrectionFeedbackCoreTests.run()
         CorrectionReturnKeyPolicyTests.run()
         HeldLearnMomentTests.run()
+        RioR3WindowsMediaTests.run()
         VocabularyMergeCoreTests.run()
         MishearingTallyCoreTests.run()
         FixLastShortcutTests.run()

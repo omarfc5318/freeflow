@@ -6,7 +6,10 @@ import Foundation
 /// so playback falls back to asking Spotify and Music only.
 enum RioAudioOutputMonitor {
     static func isOtherAppPlaying() -> Bool {
-        RioOtherAudio.isOtherAppPlaying(processes(), ownPID: ProcessInfo.processInfo.processIdentifier)
+        RioOtherAudio.isOtherAppPlaying(
+            processes(), ownPID: ProcessInfo.processInfo.processIdentifier,
+            isOtherAppUsingMicrophone: MicUsageMonitor.isOtherAppUsingMicrophone()
+        )
     }
 
     private static func processes() -> [RioAudioOutputProcess] {

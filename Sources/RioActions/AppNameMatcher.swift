@@ -122,21 +122,28 @@ enum AppNameMatcher {
     /// agree and the closest app must be unique. Aliases need an exact hit: "tests" is one edit
     /// from the alias "texts", and "run the tests" must never open Messages.
     private static func fuzzyMatch(_ key: String, in entries: [Entry]) -> InstalledApp? {
+        guard let id = uniqueFuzzyID(key, among: entries.map { (id: $0.app.url.path, name: $0.compact) }) else { return nil }
+        return entries.first { $0.app.url.path == id }?.app
+    }
+
+    /// The same mishearing rule for any list of compact names (RioWebURLs' sites use it too):
+    /// at least five letters, the first letter agrees, edit distance 1 (2 for nine letters or
+    /// more), and the closest candidate is unique. Each name carries an id (one per real thing, so
+    /// two names for one site never make it ambiguous); several names may share an id.
+    static func uniqueFuzzyID(_ key: String, among names: [(id: String, name: String)]) -> String? {
         guard key.count >= 5, let first = key.first else { return nil }
         let allowed = key.count >= 9 ? 2 : 1
-        var best: [String: (app: InstalledApp, distance: Int)] = [:]
-        func consider(_ candidate: String, app: InstalledApp) {
-            guard candidate.first == first, abs(candidate.count - key.count) <= allowed else { return }
+        var best: [String: Int] = [:]
+        for (id, candidate) in names {
+            guard candidate.first == first, abs(candidate.count - key.count) <= allowed else { continue }
             let distance = RioText.editDistance(key, candidate)
-            guard distance <= allowed else { return }
-            let id = app.url.path
-            if let existing = best[id], existing.distance <= distance { return }
-            best[id] = (app, distance)
+            guard distance <= allowed else { continue }
+            if let existing = best[id], existing <= distance { continue }
+            best[id] = distance
         }
-        for entry in entries { consider(entry.compact, app: entry.app) }
-        guard let minimum = best.values.map(\.distance).min() else { return nil }
-        let closest = best.values.filter { $0.distance == minimum }
-        return closest.count == 1 ? closest[0].app : nil
+        guard let minimum = best.values.min() else { return nil }
+        let closest = best.filter { $0.value == minimum }
+        return closest.count == 1 ? closest.first?.key : nil
     }
 
     /// "edit" for "TextEdit": one spoken word that is a whole camel-case part of exactly one app.

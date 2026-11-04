@@ -65,6 +65,15 @@ enum RioPlaybackState: Equatable {
         if known.contains("playing") || otherAppPlaying { return .playing }
         return known.isEmpty ? .unknown : .notPlaying
     }
+
+    /// The state `command` acts on (finding 88). The two signals stay apart: "play" (and the undo
+    /// snapshot for it) listens only to what Spotify and Music say, so a call or a YouTube tab
+    /// never makes a paused Spotify "already playing". Another app's output only turns a quiet
+    /// player into a pause key press for "pause" and a bare "stop"; `otherAppPlaying` already
+    /// leaves out call apps and is false while another app uses the microphone (`RioOtherAudio`).
+    static func forCommand(_ command: MediaCommand, answers: [String?], otherAppPlaying: Bool) -> RioPlaybackState {
+        command == .pause ? combine(answers, otherAppPlaying: otherAppPlaying) : combine(answers)
+    }
 }
 
 /// One process CoreAudio lists (macOS 14+), with whether it is sending audio to an output now.
@@ -83,11 +92,24 @@ enum RioOtherAudio {
         "com.apple.systemsoundserver", "com.apple.coreaudio", "com.apple.audio", "com.apple.corespeech",
     ]
 
-    static func isOtherAppPlaying(_ processes: [RioAudioOutputProcess], ownPID: Int32) -> Bool {
-        processes.contains { process in
+    /// Call apps keep their output running for the whole call (finding 88): their sound is never
+    /// "music to pause", and pressing the media key then would resume a paused Spotify out loud.
+    private static let callBundlePrefixes = [
+        "us.zoom.", "com.microsoft.teams", "com.apple.facetime", "com.apple.avconferenced",
+        "com.hnc.discord", "com.tinyspeck.slackmacgap", "com.cisco.webex", "com.webex.", "com.skype.",
+        "com.microsoft.skype", "net.whatsapp.", "com.apple.telephonyutilities",
+    ]
+
+    /// `isOtherAppUsingMicrophone`: someone is on a call (a browser Meet tab, any app): nothing
+    /// else counts as playing then, so "pause" or "stop" never presses the media key into it.
+    static func isOtherAppPlaying(
+        _ processes: [RioAudioOutputProcess], ownPID: Int32, isOtherAppUsingMicrophone: Bool = false
+    ) -> Bool {
+        guard !isOtherAppUsingMicrophone else { return false }
+        return processes.contains { process in
             guard process.isRunningOutput, process.pid != ownPID else { return false }
             guard let bundleID = process.bundleID?.lowercased(), !bundleID.isEmpty else { return false }
-            return !ignoredBundlePrefixes.contains { bundleID.hasPrefix($0) }
+            return !(ignoredBundlePrefixes + callBundlePrefixes).contains { bundleID.hasPrefix($0) }
         }
     }
 }

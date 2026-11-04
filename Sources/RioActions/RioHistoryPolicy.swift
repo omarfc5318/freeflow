@@ -21,9 +21,10 @@ enum RioHistoryPolicy {
         if let label {
             if didSucceed {
                 outcome = label
-            } else if actions.contains(where: isScreenQuestion), let reason = RioVisionMessages.historyReason(for: outcomeText) {
-                // A fixed Rio reason only (permission, offline...), never the screen or an answer.
-                outcome = "\(label) (didn't work: \(reason))"
+            } else if actions.contains(where: isScreenQuestion) {
+                // A failed look never reads like one that happened (finding 78). A fixed Rio
+                // reason only (permission, offline...), never the screen or an answer.
+                outcome = screenFailure(reason: RioVisionMessages.historyReason(for: outcomeText))
             } else {
                 outcome = "\(label) (didn't work)"
             }
@@ -31,6 +32,14 @@ enum RioHistoryPolicy {
             outcome = outcomeText
         }
         return Entry(transcript: redactTranscript ? redactedTranscript : trimmed, outcome: outcome)
+    }
+
+    static let screenPermissionFailure = "I can't see your screen yet: turn on Screen Recording for Rio in System Settings"
+    private static let screenPermissionReason = "needs Screen Recording permission"
+
+    private static func screenFailure(reason: String?) -> String {
+        guard let reason else { return "Couldn't look at your screen" }
+        return reason == screenPermissionReason ? screenPermissionFailure : "Couldn't look at your screen: \(reason)"
     }
 
     private static func isScreenQuestion(_ action: RioAction) -> Bool {

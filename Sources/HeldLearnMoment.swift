@@ -32,6 +32,12 @@ struct HeldLearnMoment {
     /// A dictation started (the microphone or the transcription is busy). A sign held long
     /// before it (a start that never happened) is dropped rather than carried into this one.
     mutating func sessionStarted(now: TimeInterval) {
+        // The sign's own dictation already closed without showing it (finding 93): it must not
+        // wait out this one and pop up after it.
+        if case .ended = stage {
+            moment = nil
+            return
+        }
         guard case .held(let at) = stage else { return }
         if now - at <= Self.heldBeforeStartSeconds {
             stage = .running

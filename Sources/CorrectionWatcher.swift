@@ -31,6 +31,8 @@ final class CorrectionWatcher {
     private var pendingValue: String?
     private var pendingSince = Date()
     private var isPendingSettled = true
+    /// A poll after the change saw `pendingValue` again (`CorrectionReturnKeyPolicy.settlesOnReturn`).
+    private var isPendingSeenUnchanged = false
     /// How long the last read of the watched field took, and its length (`CorrectionReturnKeyPolicy`).
     private var lastReadSeconds: TimeInterval?
     private var lastReadLength: Int?
@@ -73,6 +75,7 @@ final class CorrectionWatcher {
         session = nil
         pendingValue = nil
         isPendingSettled = true
+        isPendingSeenUnchanged = false
         lastReadSeconds = nil
         lastReadLength = nil
     }
@@ -120,6 +123,7 @@ final class CorrectionWatcher {
             element = focused
             pendingValue = nil
             isPendingSettled = true
+            isPendingSeenUnchanged = false
         }
     }
 
@@ -132,11 +136,16 @@ final class CorrectionWatcher {
         let live = CorrectionReturnKeyPolicy.readsLive(lastReadSeconds: lastReadSeconds, lastLength: lastReadLength)
             ? timedTextValue(of: element) : nil
         guard let value = live ?? pendingValue, value.utf16.count <= Self.maxFieldLength else { return }
+        // A stale poll value that may be half-typed never becomes the settled state (finding 90).
+        guard CorrectionReturnKeyPolicy.settlesOnReturn(
+            isLiveRead: live != nil, isPendingSettled: isPendingSettled, pendingSeenUnchanged: isPendingSeenUnchanged
+        ) else { return }
         session.observeReturnKey(value)
         self.session = session
         pendingValue = value
         pendingSince = Date()
         isPendingSettled = true
+        isPendingSeenUnchanged = true
     }
 
     /// Returns false once watching should end.
@@ -155,11 +164,13 @@ final class CorrectionWatcher {
             pendingValue = value
             pendingSince = now
             isPendingSettled = false
+            isPendingSeenUnchanged = false
             let outcome = session.track(value)
             self.session = session
             return outcome == .watching
         }
         // An unchanged poll counts toward the intact state's stability (see finalCorrections).
+        isPendingSeenUnchanged = true
         _ = session.track(value)
         self.session = session
         if !isPendingSettled, now.timeIntervalSince(pendingSince) >= Self.settleDelay {
