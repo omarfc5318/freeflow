@@ -829,6 +829,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private var isRioCommandRunning = false
     /// Automation and phone commands that arrived while Rio was busy; they run, in order, once idle.
     private var rioWaitingCommands = RioWaitingCommands<RioWaitingCommand>()
+    /// One conversation-mode command heard while Rio was busy; runs when he is free (finding 63).
+    private var rioConversationPending = RioConversationPending()
+    private var rioConversationPendingCheck: DispatchWorkItem?
     private var rioWaitingCommandsDrain: DispatchWorkItem?
     /// A waiting command was taken off the line and is about to start.
     private var isStartingWaitingRioCommand = false
@@ -2133,7 +2136,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
 
         if event == .holdActionModifierEngaged {
-            beginRioActionSessionIfHolding()
+            // The controller sees it too (finding 89), so a quick Fn + Control tap still brakes a
+            // running task instead of being swallowed here.
+            shortcutSessionController.actionModifierEngaged(isTranscribing: isTranscribing) {
+                beginRioActionSessionIfHolding()
+            }
             return
         }
 
@@ -4293,6 +4300,24 @@ final class AppState: ObservableObject, @unchecked Sendable {
         defer {
             isRioCommandRunning = false
             if !rioWaitingCommands.isEmpty { DispatchQueue.main.async { [weak self] in self?.drainRioWaitingCommands() } }
+            if !rioConversationPending.isEmpty { DispatchQueue.main.async { [weak self] in self?.drainConversationPending() } }
+        }
+        // "Rio, stop stop stop" / "no no no" / "hold on" on the action key: the same bare stop as
+        // conversation mode, with no translator or resolver call (finding 47d).
+        if source == .actionKey, let kind = RioConversationCommands.bareStop(spokenTranscript) {
+            let stopped = stopRioActivities()
+            let forwarded = RioConversationStopForward.forwardedCommand(
+                for: spokenTranscript, stoppedSomething: stopped, isRioSpeaking: false, secondsSinceRioSpoke: nil
+            )
+            guard kind == .stop, let forwarded else {
+                // Shown, not spoken: Rio was just asked to be quiet.
+                let status = stopped ? "Stopped" : "Okay"
+                statusText = status
+                setRioActionPhase(.succeeded(status))
+                scheduleReadyStatusReset(after: 2, matching: [status])
+                return (.succeeded(status), status)
+            }
+            return await runCoordinator(forwarded, source: source)
         }
         // "Thanks", or a yes or no with nothing to confirm: answered here, with no model call.
         if let line = RioConversationCommands.quickReply(
@@ -4316,6 +4341,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
             RioTranslatorMode.shared.stop(.voice)
             return finishRioAction(.succeeded("Stopped translating"), transcript: transcript, actions: [.stopTranslation])
         }
+        return await runCoordinator(transcript, source: source)
+    }
+
+    /// Runs `transcript` through the action pipeline and shows the result. A chain that included
+    /// "stop listening" turns conversation mode off once the other steps ran (finding 61).
+    @MainActor private func runCoordinator(
+        _ transcript: String, source: RioCommandSource
+    ) async -> (outcome: RioActionOutcome, summary: String) {
         let coordinator = rioActionCoordinator ?? RioActionsWiring.makeCoordinator(
             companion: RioCompanionHub.shared,
             typeText: { [weak self] text in await self?.typeTextForRioAction(text) ?? false }
@@ -4324,6 +4357,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let outcome = await coordinator.run(transcript, source: source) { [weak self] line in
             self?.statusText = line
             self?.rioActionPhase = .working(line)
+        }
+        if RioConversationCommands.includesStopListening(coordinator.lastActions) {
+            RioConversationMode.shared.stop(.stopListening)
         }
         return finishRioAction(
             outcome, transcript: transcript, actions: coordinator.lastActions, unrecognized: coordinator.lastUnrecognized
@@ -4352,8 +4388,32 @@ final class AppState: ObservableObject, @unchecked Sendable {
             stopEverythingRioIsDoing(transcript)
             return
         }
-        guard !isRioCommandRunning, !RioConfirmationCenter.shared.isShowing,
-              !RioTaskProgress.shared.isRunning, !isRecording, !isTranscribing else { return }
+        // A question is up: it needs Return or "no" first, and the new command isn't kept.
+        if RioConfirmationCenter.shared.isShowing {
+            statusText = "Press Return or say no first"
+            scheduleReadyStatusReset(after: 3, matching: ["Press Return or say no first"])
+            return
+        }
+        // Busy with the last one: keep this one (only the newest) and say so, instead of
+        // dropping it silently (finding 63).
+        if isConversationBusy {
+            rioConversationPending.offer(transcript, now: Date())
+            statusText = RioConversationPending.busyLine
+            if !isRecording, !isTranscribing, !RioTaskProgress.shared.isRunning {
+                setRioActionPhase(.working(RioConversationPending.busyLine))
+            }
+            scheduleConversationPendingCheck()
+            return
+        }
+        startConversationCommand(transcript)
+    }
+
+    @MainActor private var isConversationBusy: Bool {
+        isRioCommandRunning || RioConfirmationCenter.shared.isShowing || RioTaskProgress.shared.isRunning
+            || isRecording || isTranscribing
+    }
+
+    @MainActor private func startConversationCommand(_ transcript: String) {
         statusText = "Working..."
         setRioActionPhase(.working("Working on it"))
         Task { @MainActor [weak self] in
@@ -4361,11 +4421,61 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Runs the waiting conversation command once Rio is free, or drops it once it is too old.
+    @MainActor private func drainConversationPending() {
+        rioConversationPendingCheck?.cancel()
+        rioConversationPendingCheck = nil
+        // Conversation mode was turned off meanwhile: nothing it heard runs.
+        guard RioConversationMode.shared.isOn else {
+            rioConversationPending.clear()
+            return
+        }
+        switch rioConversationPending.next(now: Date(), isBusy: isConversationBusy) {
+        case .run(let command):
+            startConversationCommand(command)
+        case .wait:
+            scheduleConversationPendingCheck()
+        case .expired, .none:
+            break
+        }
+    }
+
+    @MainActor private func scheduleConversationPendingCheck() {
+        rioConversationPendingCheck?.cancel()
+        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.drainConversationPending() } }
+        rioConversationPendingCheck = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
     /// "Rio, stop": silences a ringing timer and ends a running task, the live translator and
     /// Rio's own voice. When none of those was going, a plain stop goes on to the parser's own
     /// stop handler (it pauses playing media and never cancels a running countdown); "wait" or
     /// "forget it" with nothing running does nothing.
     @MainActor private func stopEverythingRioIsDoing(_ transcript: String) {
+        // A stop also drops a command still waiting its turn.
+        rioConversationPending.clear()
+        let stoppedSomething = stopRioActivities()
+        // Only a plain "stop" goes on to the parser's stop (it pauses media); "be quiet", "enough"
+        // and the like, or a stop heard while Rio was still talking, only acknowledge.
+        let speech = RioConversationMode.shared.rioSpeechState(now: Date())
+        if let forwarded = RioConversationStopForward.forwardedCommand(
+            for: transcript, stoppedSomething: stoppedSomething,
+            isRioSpeaking: speech.isSpeaking, secondsSinceRioSpoke: speech.secondsSinceSpoke
+        ), !isRioCommandRunning, !RioConfirmationCenter.shared.isShowing, !isRecording, !isTranscribing {
+            statusText = "Working..."
+            setRioActionPhase(.working("Working on it"))
+            Task { @MainActor [weak self] in await self?.runRioCommand(forwarded, source: .conversation) }
+            return
+        }
+        // "Stopped" only when something really was cut off; otherwise "Okay" (finding 95).
+        let status = stoppedSomething ? "Stopped" : "Okay"
+        statusText = status
+        scheduleReadyStatusReset(after: 2, matching: [status])
+    }
+
+    /// Silences a ringing timer and ends a running task, the live translator and Rio's own voice.
+    /// True when any of them was going.
+    @MainActor private func stopRioActivities() -> Bool {
         var stoppedSomething = false
         if RioTimerCenter.shared.isRinging {
             RioTimerCenter.shared.stopRinging()
@@ -4381,24 +4491,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
         if RioVoice.shared.isSpeaking { stoppedSomething = true }
         RioVoice.shared.stopSpeaking()
-        // Only a plain "stop" goes on to the parser's stop (it pauses playing media); "be quiet",
-        // "enough" and the like, or a stop just after Rio finished talking, only acknowledge.
-        let speech = RioConversationMode.shared.rioSpeechState(now: Date())
-        if let forwarded = RioConversationStopForward.forwardedCommand(
-            for: transcript, stoppedSomething: stoppedSomething,
-            isRioSpeaking: speech.isSpeaking, secondsSinceRioSpoke: speech.secondsSinceSpoke
-        ), !isRioCommandRunning, !RioConfirmationCenter.shared.isShowing, !isRecording, !isTranscribing {
-            statusText = "Working..."
-            setRioActionPhase(.working("Working on it"))
-            Task { @MainActor [weak self] in await self?.runRioCommand(forwarded, source: .conversation) }
-            return
-        }
-        if speech.isSpeaking || speech.secondsSinceSpoke.map({ $0 < RioConversationBargeIn.echoTailSeconds }) == true {
-            stoppedSomething = true
-        }
-        let status = stoppedSomething ? "Stopped" : "Okay"
-        statusText = status
-        scheduleReadyStatusReset(after: 2, matching: [status])
+        return stoppedSomething
     }
 
     /// Fn + Control while offline: transcribe the recording on-device, then run it as usual.
@@ -4514,7 +4607,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
         actions: [RioAction] = [],
         unrecognized: String? = nil
     ) -> (outcome: RioActionOutcome, summary: String) {
-        if let line = RioPersonality.spokenLine(for: outcome, hour: Calendar.current.component(.hour, from: Date())) {
+        // A command said in Arabic gets the few local status lines (time, battery, timer, stop)
+        // back in Arabic; everything else keeps Rio's usual line (findings 59, 70).
+        let arabicLine = RioSpokenLanguageMemory.shared.language(forCommand: transcript, now: Date()) == .arabic
+            ? RioArabicReplies.line(for: outcome) : nil
+        if let arabicLine {
+            RioVoice.shared.speak(arabicLine)
+        } else if let line = RioPersonality.spokenLine(for: outcome, hour: Calendar.current.component(.hour, from: Date())) {
             RioVoice.shared.speak(line)
         }
         let summary: String

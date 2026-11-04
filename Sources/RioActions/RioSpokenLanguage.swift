@@ -78,3 +78,81 @@ enum RioArabicVoiceChooser {
         return (-voice.quality.rawValue, regions.firstIndex(of: region) ?? regions.count, voice.identifier)
     }
 }
+
+/// Gulf Arabic for the few lines Rio answers by himself (no model call), for a command said in
+/// Arabic: the time, the battery, the timer and the stop acknowledgements. The brain's answers
+/// already come back in Arabic (`RioSmartPrompt`); anything not listed here stays English. Pure.
+enum RioArabicReplies {
+    /// The Arabic line for `outcome`, or nil to keep the English one.
+    static func line(for outcome: RioActionOutcome) -> String? {
+        switch outcome {
+        case .succeeded(let text): return success(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        case .failed(let message): return failure(message.trimmingCharacters(in: .whitespacesAndNewlines))
+        case .cancelled: return "تمام، لغيتها"
+        case .nothing, .unknown: return nil
+        }
+    }
+
+    private static let fixed: [String: String] = [
+        "Stopped": "وقفت", "Okay": "تمام", "Stopped translating": "وقفت الترجمة", "Stopped listening": "وقفت الاستماع",
+        "Your timer is ringing": "التايمر يرن", "No time left": "خلص الوقت", "Cancelled the timer": "لغيت التايمر",
+    ]
+
+    private static func success(_ text: String) -> String? {
+        if let line = fixed[text] { return line }
+        if let groups = RioText.firstMatch(#"^It's (\d{1,2}(?::\d{2})?) (AM|PM)(?: in (.+))?$"#, in: text), let time = groups[1] {
+            let part = groups[2] == "AM" ? "الصبح" : "المسا"
+            let place = groups[3].map { " في \($0)" } ?? ""
+            return "الساعة \(time) \(part)\(place)"
+        }
+        if let groups = RioText.firstMatch(#"^(.+) left$"#, in: text), let span = groups[1], let arabic = duration(span) {
+            return "باقي \(arabic)"
+        }
+        if let groups = RioText.firstMatch(#"^Timer set for (.+)$"#, in: text), let span = groups[1], let arabic = duration(span) {
+            return "ضبطت التايمر على \(arabic)"
+        }
+        return battery(text)
+    }
+
+    private static func failure(_ message: String) -> String? {
+        switch message {
+        case "There's no timer running": return "ما في تايمر شغال"
+        default: return nil
+        }
+    }
+
+    /// "You're at 64%, charging, about 1 hour to full" (`RioSystemFormat.summary`).
+    private static func battery(_ text: String) -> String? {
+        guard let groups = RioText.firstMatch(#"^You're at (\d{1,3})%(.*)$"#, in: text), let percent = groups[1] else { return nil }
+        let rest = groups[2] ?? ""
+        var line = "البطارية \(percent)٪"
+        if rest.hasPrefix(" and fully charged") { return line + "، ومشحونة بالكامل" }
+        if rest.hasPrefix(", plugged in and not charging") { return line + "، موصولة بالشاحن بس ما تشحن" }
+        if rest.hasPrefix(", charging") { line += "، وتشحن" } else if rest.hasPrefix(" on battery") { line += "، على البطارية" }
+        if let span = RioText.firstMatch(#"about (.+?) (?:to full|left)$"#, in: rest)?[1], let arabic = duration(span) {
+            line += rest.hasSuffix("to full") ? "، تتعبى بعد \(arabic) تقريباً" : "، باقي \(arabic) تقريباً"
+        }
+        return line
+    }
+
+    /// "1 hour and 5 minutes" -> "1 ساعة و 5 دقايق"; nil for anything else.
+    static func duration(_ english: String) -> String? {
+        let parts = english.replacingOccurrences(of: " and ", with: ", ").components(separatedBy: ", ")
+        var out: [String] = []
+        for part in parts {
+            guard let groups = RioText.firstMatch(#"^(\d+) (hour|minute|second)s?$"#, in: part.trimmingCharacters(in: .whitespaces)),
+                  let number = groups[1].flatMap(Int.init), let unit = groups[2] else { return nil }
+            out.append("\(number) \(unitName(unit, count: number))")
+        }
+        return out.isEmpty ? nil : out.joined(separator: " و ")
+    }
+
+    private static func unitName(_ unit: String, count: Int) -> String {
+        let plural = (3...10).contains(count)
+        switch unit {
+        case "hour": return plural ? "ساعات" : "ساعة"
+        case "minute": return plural ? "دقايق" : "دقيقة"
+        default: return plural ? "ثواني" : "ثانية"
+        }
+    }
+}

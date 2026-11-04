@@ -202,6 +202,27 @@ enum RioTaskSafety {
         return terminalAppNames.contains(name)
     }
 
+    /// Code editors with a built-in terminal (VS Code, Cursor, Zed, Windsurf, JetBrains IDEs):
+    /// typing or Return there may land in that terminal (or approve Claude Code running in it).
+    private static let terminalEditorBundlePrefixes = [
+        "com.microsoft.VSCode", "com.todesktop.", "dev.zed.", "com.jetbrains.", "com.google.android.studio",
+        "com.exafunction.windsurf", "com.vscodium", "com.visualstudio.code.oss",
+    ]
+    private static let terminalEditorNames: Set<String> = [
+        "visual studio code", "vs code", "vscode", "code", "cursor", "zed", "windsurf", "vscodium", "intellij idea",
+        "pycharm", "webstorm", "goland", "clion", "rider", "rubymine", "phpstorm", "android studio",
+    ]
+
+    /// A terminal, or an app whose focused input may be a terminal (a code editor). Conversation
+    /// mode asks before typing or pressing keys in any of these; the task agent's own terminal
+    /// rule (`isTerminal`) is unchanged.
+    static func isTerminalCapable(appName: String?, bundleID: String? = nil) -> Bool {
+        if isTerminal(appName: appName, bundleID: bundleID) { return true }
+        if let bundleID, terminalEditorBundlePrefixes.contains(where: { bundleID.hasPrefix($0) }) { return true }
+        guard let name = appName?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !name.isEmpty else { return false }
+        return terminalEditorNames.contains(name)
+    }
+
     /// An editor's built-in terminal (VS Code, Cursor): its input reports itself as a terminal.
     /// Typing, Return or Space there, or filling a field called a terminal, is handed back.
     static func terminalHandBackReason(for action: RioAction, focused: RioTaskFieldInfo?) -> String? {

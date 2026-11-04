@@ -49,6 +49,7 @@ struct FreeFlowTests {
         WakePhraseExtractorTests.run()
         RioConversationCoreTests.run()
         RioConversationStopForwardTests.run()
+        await RioR3ConversationTests.run()
         await RioConversationPolishTests.run()
         RioFixATests.run()
         RioLeadHardeningTests.run()

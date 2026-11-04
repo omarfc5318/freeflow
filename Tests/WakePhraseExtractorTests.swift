@@ -94,7 +94,7 @@ enum WakePhraseExtractorTests {
                     W(text: "open", start: 0.8, duration: 0.2), W(text: "Chrome", start: 1.0, duration: 0.3)]
         TestSupport.expectEqual(WakePhraseExtractor.command(in: told), nil)
         // Without timing (all zero) nothing new is accepted.
-        let untimed = ["dude", "Rio", "quit", "Stickies"].map { W(text: $0, start: 0, duration: 0) }
+        let untimed = ["I", "said", "Rio", "quit", "Stickies"].map { W(text: $0, start: 0, duration: 0) }
         TestSupport.expectEqual(WakePhraseExtractor.command(in: untimed), nil)
         // A pause inside the command is kept as a space.
         let long = [W(text: "Rio", start: 0.1, duration: 0.3), W(text: "text", start: 0.5, duration: 0.2),
@@ -125,9 +125,9 @@ enum WakePhraseExtractorTests {
         TestSupport.expect(WakeListenTiming.bareNameOpensWindow(isRioSpeaking: false, secondsSinceRioSpoke: 10), "later")
         TestSupport.expect(WakeListenTiming.bareNameOpensWindow(isRioSpeaking: false, secondsSinceRioSpoke: nil), "never spoke")
 
-        // Finding 94: fast for the first few empty finals, then backing off to 5 s at most.
+        // Finding 94, then round 3 (92+76): fast for the first few empty finals, then 1.5 s at most.
         let delays = (1...8).map { WakeListenTiming.emptyFinalDelay(consecutive: $0) }
-        TestSupport.expectEqual(delays, [0.25, 0.5, 0.5, 2, 4, 5, 5, 5])
+        TestSupport.expectEqual(delays, [0.25, 0.5, 0.5, 1, 1.5, 1.5, 1.5, 1.5])
         TestSupport.expectEqual(WakeListenTiming.emptyFinalDelay(consecutive: 0), 0.25)
         TestSupport.expectEqual(WakeListenTiming.emptyFinalDelay(consecutive: 1000), WakeListenTiming.maxEmptyFinalDelay)
 
@@ -135,9 +135,9 @@ enum WakePhraseExtractorTests {
         var gate = WakeSoundGate()
         TestSupport.expect(!gate.feed(rms: 0.2, seconds: 0.02), "one loud buffer")
         TestSupport.expect(!gate.feed(rms: 0.001, seconds: 0.02), "silence resets the run")
-        TestSupport.expect(!gate.feed(rms: 0.2, seconds: 0.05), "loud again, too short")
-        TestSupport.expect(!gate.feed(rms: 0.2, seconds: 0.05), "still too short")
-        TestSupport.expect(gate.feed(rms: 0.2, seconds: 0.05), "sustained sound")
+        TestSupport.expect(!gate.feed(rms: 0.2, seconds: 0.02), "loud again, too short")
+        TestSupport.expect(!gate.feed(rms: 0.2, seconds: 0.02), "still too short")
+        TestSupport.expect(gate.feed(rms: 0.2, seconds: 0.03), "sustained sound")
         var quiet = WakeSoundGate()
         TestSupport.expect(!(0..<100).contains { _ in quiet.feed(rms: 0.01, seconds: 0.02) }, "a quiet fan never counts")
     }

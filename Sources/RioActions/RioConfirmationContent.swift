@@ -30,8 +30,10 @@ struct RioConfirmationContent: Equatable {
     ) -> RioConfirmationContent? {
         switch action {
         case .sendMessage(let to, let body):
+            // Always names the channel: right after "open WhatsApp" the owner must not think it
+            // goes over WhatsApp (finding 50).
             return RioConfirmationContent(
-                title: "Send a message to \(resolvedRecipient ?? to)?", detail: body, confirmLabel: "Send"
+                title: "Send an iMessage to \(resolvedRecipient ?? to)?", detail: body, confirmLabel: "Send"
             )
         case .replyInConversation(let body):
             let title: String
@@ -59,6 +61,39 @@ struct RioConfirmationContent: Equatable {
         RioConfirmationContent(
             title: "Run this from conversation mode?", detail: conversationDetail(for: action), confirmLabel: "Run it"
         )
+    }
+
+    /// Typing and the Return that submits it, shown together so the owner sees that it will be
+    /// sent or run: "Type “git push”, then press Return in Terminal". `alreadyTyped` is a Return
+    /// for text an earlier command typed: "Press Return to submit “git push” in Terminal".
+    static func conversationSubmit(_ steps: [RioAction], alreadyTyped: Bool, appName: String?) -> RioConfirmationContent {
+        let place = appName.map { " in \($0)" } ?? ""
+        let detail: String
+        if alreadyTyped {
+            let typed = steps.compactMap { step -> String? in
+                if case .typeText(let text) = step { return text }
+                return nil
+            }.last
+            detail = typed.map { "Press Return to submit \u{201C}\($0)\u{201D}\(place)" } ?? "Press Return\(place)"
+        } else {
+            let parts = steps.map { step -> String in
+                switch step {
+                case .typeText(let text): return "type \u{201C}\(text)\u{201D}"
+                case .pressKeys(let combo): return "press \(keyName(combo))"
+                default: return RioActionText.working(for: step).lowercased()
+                }
+            }
+            let joined = parts.count > 1
+                ? parts.dropLast().joined(separator: ", ") + ", then " + (parts.last ?? "")
+                : parts.joined()
+            detail = joined.prefix(1).uppercased() + joined.dropFirst() + place
+        }
+        return RioConfirmationContent(title: "Run this from conversation mode?", detail: detail, confirmLabel: "Run it")
+    }
+
+    private static func keyName(_ combo: KeyCombo) -> String {
+        let spoken = RioKeyCombos.describe(combo)
+        return combo.key == "return" && spoken == "return" ? "Return" : spoken
     }
 
     static func conversationDetail(for action: RioAction) -> String {

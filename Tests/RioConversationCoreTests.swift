@@ -259,9 +259,13 @@ enum RioConversationCoreTests {
     private static func testQuickReplies() {
         let welcome = RioConversationCommands.welcomeLine
         let nothing = RioConversationCommands.nothingToConfirmLine
-        for text in ["Rio thank you", "Rio thanks", "Rio thank you so much", "thanks Rio", "ريو شكرا", "Rio thanks a lot"] {
+        for text in ["Rio thank you", "Rio thanks", "Rio thank you so much", "thanks Rio", "Rio thanks a lot"] {
             TestSupport.expectEqual(RioConversationCommands.quickReply(text, isConfirmationShowing: false), welcome)
         }
+        // Arabic thanks get an Arabic answer (round 3, finding 59).
+        TestSupport.expectEqual(
+            RioConversationCommands.quickReply("ريو شكرا", isConfirmationShowing: false), RioConversationCommands.arabicWelcomeLine
+        )
         for text in ["Rio yes", "Rio no", "Rio nah", "Rio yeah do it"] {
             TestSupport.expectEqual(RioConversationCommands.quickReply(text, isConfirmationShowing: false), nothing)
             TestSupport.expectEqual(RioConversationCommands.quickReply(text, isConfirmationShowing: true), nil)
