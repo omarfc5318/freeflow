@@ -34,13 +34,19 @@ final class RioTaskActionHandler: RioActionHandling {
         guard RioSmartSettings.llmConfig() != nil else { return .failed(message: RioSmartMessages.notConfigured) }
         guard RioAX.isTrusted else { return .failed(message: RioContextReader.needsAccessibility) }
         guard !progress.isRunning else { return .failed(message: "I'm already working on a task. Say stop first.") }
+        let front = NSWorkspace.shared.frontmostApplication
+        if RioTaskSafety.isTerminal(appName: front?.localizedName, bundleID: front?.bundleIdentifier) {
+            return .failed(message: RioTaskSafety.terminalMessage)
+        }
 
         startWatchingEscape()
         defer { stopWatchingEscape() }
         let runner = RioTaskRunner(
             observer: RioTaskObserver(), resolver: RioTaskTargetResolver(), model: RioTaskVisionModel(), prompter: prompter, reporter: progress
         )
-        return await runner.run(goal: trimmed, executor: executor)
+        // A goal the smart resolver wrote is checked against the owner's own command.
+        let safetyGoal = RioPlannedGoals.shared.ownerCommand(forGoal: trimmed, now: Date())
+        return await runner.run(goal: trimmed, safetyGoal: safetyGoal, executor: executor)
     }
 
     /// The stop trigger: "Rio, stop", Esc, Fn+Control. Safe to call at any time.

@@ -20,6 +20,24 @@ enum RioScreenPhrasesTests {
         testNotStealing()
         testThroughRealParser()
         testTypeIntoFieldThroughRealParser()
+        testKeyPressesAreNotClicks()
+    }
+
+    /// "press shift tab" and "press the down arrow" are key presses: a fuzzy click on "down" could
+    /// press a Download button.
+    private static func testKeyPressesAreNotClicks() {
+        for input in ["press shift tab", "Rio, press shift tab.", "press control tab", "press command tab", "press cmd tab",
+                      "press the down arrow", "press down arrow", "press the up arrow", "hit the left arrow",
+                      "press command down arrow", "press the return button", "please press shift tab"] {
+            ETest.eq(parse(input), nil, "a key, not a click: \(input)")
+        }
+        ETest.eq(parse("press the second tab"), .click(label: "tab", ordinal: 2))
+        ETest.eq(parse("press the Save button"), .click(label: "Save button", ordinal: nil))
+        ETest.eq(parse("press the home button"), .click(label: "home button", ordinal: nil), "a Home button is still a click")
+        // "Buy now" and "Sign up now" are the buttons' own words; "send now" is Send.
+        ETest.eq(parse("click buy now"), .click(label: "buy now", ordinal: nil))
+        ETest.eq(parse("click sign up now"), .click(label: "sign up now", ordinal: nil))
+        ETest.eq(parse("click send now"), .click(label: "send", ordinal: nil))
     }
 
     /// The lead let B's "type …" step aside for "type X into the Y box", so J's fill phrasing wins.

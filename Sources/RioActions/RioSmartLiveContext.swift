@@ -17,6 +17,7 @@ final class RioSmartLiveContext: RioSmartContextProviding {
             runningApps: running,
             installedApps: RioSmartContextPolicy.installedNames(RioInstalledApps.shared.cachedApps ?? [])
         )
+        if RioMacroRecorder.shared.isRecording { context.activity.append(RioSmartActivity.recordingMacro) }
         guard let front = RioAX.frontmostApp() else { return context }
         context.frontApp = front.localizedName
         context.frontWindowTitle = focusedWindowTitle(of: front)

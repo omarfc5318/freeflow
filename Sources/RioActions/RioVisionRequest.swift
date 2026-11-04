@@ -92,6 +92,34 @@ enum RioVisionMessages {
     static let rejectedKey = "My AI provider rejected the API key, so I can't look at your screen."
     static let cannotSee = "The model I use for screen questions can't read images. Pick a vision model in Settings."
     static let unreachable = "I couldn't get an answer about your screen just now."
+    static let disabled = "Screen questions are turned off in Settings."
+    static let offline = "I'm offline, so I can't look at your screen."
+    static let needsScreenRecording = "I need Screen Recording permission to look at your screen. You can allow it in System Settings, Privacy and Security."
+    static let noWindow = "I couldn't find a window to look at."
+    static let sensitive = "I won't look at that window."
+    static let captureFailed = "I couldn't capture your screen just now."
+
+    /// A short reason the history row may keep for a failed screen question: fixed Rio wording
+    /// only, never the screen's content or the model's answer. Nil for anything else.
+    static func historyReason(for message: String) -> String? {
+        let fixed: [(String, String)] = [
+            (needsScreenRecording, "needs Screen Recording permission"), (needsKey, "no API key"),
+            (offline, "offline"), (disabled, "screen questions are off"), (noWindow, "no window to look at"),
+            (sensitive, "a private window"), (captureFailed, "couldn't capture the screen"), (busy, "the provider was busy"),
+            (rejectedKey, "the API key was rejected"), (cannotSee, "the model can't read images"), (unreachable, "no answer from the provider"),
+        ]
+        if let match = fixed.first(where: { $0.0 == message }) { return match.1 }
+        if message.hasPrefix("The model "), message.contains("can't read images") { return "the model can't read images" }
+        return nil
+    }
+
+    /// The failure to give before anything is captured: the configured screen model must accept
+    /// images, so no screenshot is taken for a request that can only fail.
+    static func preflightFailure(config: RioVisionConfig?) -> String? {
+        guard let config, !config.apiKey.isEmpty else { return needsKey }
+        guard RioVisionModel.isVisionCapable(config.model) else { return text(for: .noVisionModel(config.model)) }
+        return nil
+    }
 
     static func text(for error: RioVisionError) -> String {
         switch error {

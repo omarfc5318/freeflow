@@ -45,12 +45,12 @@ import Foundation
 
     private enum Text {
         static let needsAccessibility = "I need Accessibility permission for that. You can allow it in System Settings, Privacy and Security."
-        static let disabled = "Screen questions are turned off in Settings."
-        static let offline = "I'm offline, so I can't look at your screen."
-        static let needsScreenRecording = "I need Screen Recording permission to look at your screen. You can allow it in System Settings, Privacy and Security."
-        static let noWindow = "I couldn't find a window to look at."
-        static let sensitive = "I won't look at that window."
-        static let captureFailed = "I couldn't capture your screen just now."
+        static let disabled = RioVisionMessages.disabled
+        static let offline = RioVisionMessages.offline
+        static let needsScreenRecording = RioVisionMessages.needsScreenRecording
+        static let noWindow = RioVisionMessages.noWindow
+        static let sensitive = RioVisionMessages.sensitive
+        static let captureFailed = RioVisionMessages.captureFailed
         static let switchFirst = "Switch to the app you want me to click in first."
         static let blocked = "I don't click in System Settings privacy panes or password prompts. Please do that one yourself."
         static let sensitiveField = "I don't type passwords, codes or card numbers. Please do that one yourself."
@@ -64,7 +64,9 @@ import Foundation
         pending = nil
         guard RioScreenSettings.isEnabled else { return .failed(message: Text.disabled) }
         guard NetworkMonitor.shared.isOnline else { return .failed(message: Text.offline) }
-        guard RioScreenSettings.visionConfig() != nil else { return .failed(message: RioVisionMessages.needsKey) }
+        if let failure = RioVisionMessages.preflightFailure(config: RioScreenSettings.visionConfig()) {
+            return .failed(message: failure)
+        }
         let jpeg: Data
         do {
             jpeg = try RioScreenCapture.capture()

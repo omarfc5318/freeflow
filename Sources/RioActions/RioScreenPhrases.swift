@@ -123,19 +123,46 @@ enum RioScreenPhrases {
     ]
     private static let pronounLabels: Set<String> = ["it", "this", "that", "here", "there", "them", "one", "ones", "something", "please", "now", "thanks"]
     private static let maxLabelWords = 8
+    /// Words a spoken key press is made of ("press shift tab", "hit the down arrow"): never a click.
+    private static let keyWords: Set<String> = [
+        "shift", "control", "ctrl", "command", "cmd", "option", "opt", "alt", "tab", "arrow", "up", "down", "left",
+        "right", "return", "enter", "escape", "esc", "space", "spacebar", "delete", "backspace",
+    ]
+    /// Buttons whose own text ends in "now" ("Buy now", "Sign up now"): the "now" stays in the label.
+    private static let nowLabelWords: Set<String> = [
+        "buy", "shop", "order", "join", "book", "subscribe", "download", "install", "start", "try", "apply", "register",
+        "up", "upgrade", "update", "restart", "play", "watch", "listen", "call", "pay", "checkout", "donate", "reserve",
+        "enroll", "get", "continue",
+    ]
+
+    /// "press shift tab", "hit the left arrow": every word a modifier or key name.
+    private static func isKeyPress(_ label: String) -> Bool {
+        var words = label.lowercased().split(separator: " ").map(String.init)
+        if words.count > 1, ["key", "button"].contains(words.last ?? "") { words.removeLast() }
+        return !words.isEmpty && words.allSatisfy(keyWords.contains)
+    }
 
     private static func parseClick(_ s: String) -> RioAction? {
         let pattern = #"^(?:(?:please|can you|could you|go ahead and)\s+)?(click|tap|press|hit)(?:\s+on)?\s+(.+)$"#
         guard let groups = RioText.firstMatch(pattern, in: s), let verb = groups[1]?.lowercased(),
               var rest = groups[2] else { return nil }
-        rest = RioText.replacing(#"\s+(?:please|for me|now|thanks|thank you)$"#, with: "", in: rest)
+        rest = RioText.replacing(#"\s+(?:please|for me|thanks|thank you)$"#, with: "", in: rest)
+        // "click buy now" is the "Buy now" button; "click send now" is Send.
+        if let groups = RioText.firstMatch(#"^(.*?)(\S+)\s+now$"#, in: rest), let before = groups[2],
+           !nowLabelWords.contains(before.lowercased()) {
+            rest = (groups[1] ?? "") + before
+        }
         guard let parts = splitTarget(rest, normalizeBox: true) else { return nil }
         let lastWord = parts.label.split(separator: " ").last.map { String($0).lowercased() } ?? ""
         // "press return" and "hit enter" are keys, not clicks: those verbs need a role noun.
         if verb == "press" || verb == "hit", !roleNouns.contains(lastWord) { return nil }
-        // "press tab" is the Tab key; "press the second tab" or "press the Save button" is a click.
-        if verb == "press" || verb == "hit", parts.ordinal == nil, parts.label.split(separator: " ").count == 1,
-           RioKeyCombos.parse(s) != nil {
+        // "press tab", "press shift tab" and "press the down arrow" are keys; "press the second tab"
+        // or "press the Save button" is a click.
+        // A "... button" counts as a key only when every word is a key ("the return button"), so
+        // "press the home button" still clicks Home.
+        let namesButton = parts.label.lowercased().hasSuffix(" button")
+        if verb == "press" || verb == "hit", parts.ordinal == nil,
+           isKeyPress(parts.label) || (!namesButton && RioKeyCombos.parse(s) != nil) {
             return nil
         }
         if parts.label.isEmpty { return parts.ordinal == nil ? nil : .click(label: "", ordinal: parts.ordinal) }

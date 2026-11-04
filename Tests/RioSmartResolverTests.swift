@@ -127,6 +127,16 @@ enum RioSmartResolverTests {
             #"{"action":"forget","query":"pin"}"#, #"{"action":"draftEmail","body":"Hi"}"#,
             #"{"action":"addNote","text":"milk"}"#, #"{"action":"calculate","expression":"2 plus 2"}"#,
             #"{"action":"startTranslation"}"#, #"{"action":"stopTranslation"}"#, #"{"action":"speakLastTranslation"}"#,
+            #"{"action":"searchHistory","query":"the Hala pitch"}"#, #"{"action":"editLastDictation","instruction":"make it shorter"}"#,
+            #"{"action":"writeForMe","instruction":"a thank-you note"}"#, #"{"action":"smartPaste","instruction":"as bullet points"}"#,
+            #"{"action":"scheduleCommand","command":"open Warp and VS Code","when":"every weekday at 9 am"}"#,
+            #"{"action":"addTrigger","command":"open VS Code and Warp","trigger":"display"}"#, #"{"action":"listAutomations"}"#,
+            #"{"action":"removeAutomation","name":"morning"}"#, #"{"action":"recordMacro"}"#, #"{"action":"stopRecordingMacro"}"#,
+            #"{"action":"runMacro","name":"standup"}"#, #"{"action":"findThing","query":"the lease PDF"}"#,
+            #"{"action":"organizeDownloads"}"#, #"{"action":"copyTextFromScreen"}"#, #"{"action":"weather"}"#,
+            #"{"action":"news","topic":"AI"}"#, #"{"action":"playMusic","query":"Fairuz"}"#,
+            #"{"action":"notionAdd","text":"offline mode for the map","page":"Hala roadmap"}"#, #"{"action":"canvasDue"}"#,
+            #"{"action":"meeting","command":"recap"}"#, #"{"action":"claudeCode","command":"status"}"#,
         ]
         for example in examples {
             let result = parse("{\"actions\":[\(example)]}")
@@ -318,6 +328,11 @@ enum RioSmartResolverTests {
             ETest.eq(result, [.answer(RioSmartMessages.unreachable)], "\(failure)")
         }
         ETest.eq(RioSmartMessages.unreachable, "I couldn't reach my brain just now.")
+        // A rate limit says so, truthfully, instead of "I couldn't reach my brain".
+        let limited = try? await resolver(FakeLLM(reply: .failure(RioSmartLLMError.rateLimited(retryAfter: 7)))).resolve("x")
+        ETest.eq(limited, [.answer(RioSmartMessages.rateLimited)])
+        let daily = try? await resolver(FakeLLM(reply: .failure(RioSmartLLMError.rateLimited(retryAfter: 3_600)))).resolve("x")
+        ETest.eq(daily, [.answer(RioSmartMessages.rateLimitedLong)])
         let unconfigured = try? await resolver(FakeLLM(reply: .failure(RioSmartLLMError.notConfigured))).resolve("x")
         ETest.eq(unconfigured, [.answer(RioSmartMessages.notConfigured)])
 
@@ -351,6 +366,58 @@ enum RioSmartResolverTests {
         HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
     }
 
+    private final class Calls: @unchecked Sendable {
+        var count = 0
+        var slept: [TimeInterval] = []
+    }
+
+    private static func limited(_ request: URLRequest, headers: [String: String]) -> URLResponse {
+        HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: nil, headerFields: headers)!
+    }
+
+    /// A short 429 is waited out (as the provider asks) and retried once; a long or daily one,
+    /// or a second 429, comes back as `.rateLimited` straight away.
+    private static func testRateLimits(_ config: RioSmartLLMConfig) async {
+        let calls = Calls()
+        let recovers = RioSmartLLMClient(config: { config }, transport: { request in
+            calls.count += 1
+            if calls.count == 1 { return (Data(), limited(request, headers: ["retry-after": "1"])) }
+            return (chatReply("ok"), response(request, status: 200))
+        }, sleep: { calls.slept.append($0) })
+        let text = try? await recovers.complete(system: "s", user: "u", maxOutputTokens: nil)
+        ETest.eq(text, "ok", "a short 429 is retried once")
+        ETest.eq(calls.count, 2)
+        ETest.eq(calls.slept, [1], "it waits as long as retry-after says")
+
+        let again = Calls()
+        let stuck = RioSmartLLMClient(config: { config }, transport: { request in
+            again.count += 1
+            return (Data(), limited(request, headers: [:]))
+        }, sleep: { again.slept.append($0) })
+        do {
+            _ = try await stuck.complete(system: "s", user: "u", maxOutputTokens: nil)
+            TestSupport.expect(false, "a second 429 must throw")
+        } catch {
+            ETest.eq(error as? RioSmartLLMError, .rateLimited(retryAfter: RioSmartLLMClient.defaultRetryWait))
+        }
+        ETest.eq(again.count, 2, "only one retry")
+        ETest.eq(again.slept, [RioSmartLLMClient.defaultRetryWait], "no header: a short default wait")
+
+        let long = Calls()
+        let longWait = RioSmartLLMClient(config: { config }, transport: { request in
+            long.count += 1
+            return (Data(), limited(request, headers: ["retry-after": "20"]))
+        }, sleep: { long.slept.append($0) })
+        do {
+            _ = try await longWait.complete(system: "s", user: "u", maxOutputTokens: nil)
+            TestSupport.expect(false, "a long 429 must throw")
+        } catch {
+            ETest.eq(error as? RioSmartLLMError, .rateLimited(retryAfter: 20))
+        }
+        ETest.eq(long.count, 1, "a long wait is not retried inside a spoken command")
+        ETest.eq(long.slept, [])
+    }
+
     private static func testClient() async {
         let capture = Capture()
         let config = RioSmartLLMConfig(apiKey: "test-key", baseURL: "https://provider.invalid/openai/v1/", model: "openai/gpt-oss-20b")
@@ -375,14 +442,15 @@ enum RioSmartResolverTests {
             TestSupport.expect(false, "request body must be JSON")
         }
 
+        await testRateLimits(config)
         let failing = RioSmartLLMClient(config: { config }, transport: { request in
-            (Data("nope".utf8), response(request, status: 429))
+            (Data("nope".utf8), response(request, status: 500))
         })
         do {
             _ = try await failing.complete(system: "s", user: "u", maxOutputTokens: nil)
-            TestSupport.expect(false, "HTTP 429 must throw")
+            TestSupport.expect(false, "HTTP 500 must throw")
         } catch {
-            ETest.eq(error as? RioSmartLLMError, .http(429))
+            ETest.eq(error as? RioSmartLLMError, .http(500))
         }
         let malformed = RioSmartLLMClient(config: { config }, transport: { request in
             (Data("{}".utf8), response(request, status: 200))

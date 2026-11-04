@@ -188,9 +188,16 @@ enum RioSystemCoreTests {
         TestSupport.expectApproximatelyEqual(Double(RioBrightness.scalar(fromPercent: 400)), 1.0)
         TestSupport.expectEqual(RioBrightness.target(after: .up, fromPercent: 41), 51)
         TestSupport.expectEqual(RioBrightness.target(after: .up, fromPercent: 95), 100)
-        TestSupport.expectEqual(RioBrightness.target(after: .down, fromPercent: 5), 0)
+        // A hands-free owner must still see the screen: spoken brightness never goes below 5%.
+        TestSupport.expectEqual(RioBrightness.target(after: .down, fromPercent: 5), RioBrightness.minimumSpoken)
+        TestSupport.expectEqual(RioBrightness.target(after: .down, fromPercent: 12), 5)
+        TestSupport.expectEqual(RioBrightness.target(after: .down, fromPercent: 50), 40)
+        TestSupport.expectEqual(RioBrightness.target(after: .down, fromPercent: 3), 3)
         TestSupport.expectEqual(RioBrightness.target(after: .set(70), fromPercent: 10), 70)
-        TestSupport.expectEqual(RioBrightness.target(after: .set(-10), fromPercent: 10), 0)
+        TestSupport.expectEqual(RioBrightness.target(after: .set(-10), fromPercent: 10), 5)
+        TestSupport.expectEqual(RioBrightness.target(after: .set(0), fromPercent: 60), 5)
+        TestSupport.expectEqual(RioBrightness.clampSpoken(0), 5)
+        TestSupport.expectEqual(RioSystemPriorState.brightness(percent: 0).inverseAction, .brightness(.set(0)))
         TestSupport.expectEqual(RioBrightness.target(after: .mute, fromPercent: 10), nil)
         TestSupport.expectEqual(RioBrightness.target(after: .unmute, fromPercent: 10), nil)
     }

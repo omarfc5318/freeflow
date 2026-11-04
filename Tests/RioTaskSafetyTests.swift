@@ -23,6 +23,27 @@ enum RioTaskSafetyTests {
         sensitiveLabels()
         sensitiveValues()
         handBack()
+        terminals()
+    }
+
+    private static func terminals() {
+        for name in ["Terminal", "Warp", "iTerm2", "Ghostty", "kitty", "Alacritty", "WezTerm"] {
+            TestSupport.expect(RioTaskSafety.isTerminal(appName: name), "\(name) is a terminal")
+        }
+        for id in ["com.apple.Terminal", "dev.warp.Warp-Stable", "com.googlecode.iterm2", "com.mitchellh.ghostty"] {
+            TestSupport.expect(RioTaskSafety.isTerminal(appName: nil, bundleID: id), "\(id) is a terminal")
+        }
+        for name in ["Google Chrome", "Notes", "Code", "Claude", nil] {
+            TestSupport.expect(!RioTaskSafety.isTerminal(appName: name), "\(name ?? "nil") is not a terminal")
+        }
+        let terminal = RioTaskFieldInfo(label: "Terminal 1, zsh", isSecure: false)
+        let editor = RioTaskFieldInfo(label: "Editor content", isSecure: false)
+        let enter = RioAction.pressKeys(KeyCombo(key: "return", command: false, shift: false, option: false, control: false))
+        ETest.eq(RioTaskSafety.terminalHandBackReason(for: .typeText("npm start"), focused: terminal), RioTaskSafety.terminalMessage)
+        ETest.eq(RioTaskSafety.terminalHandBackReason(for: enter, focused: terminal), RioTaskSafety.terminalMessage)
+        ETest.eq(RioTaskSafety.terminalHandBackReason(for: .fillField(label: "Terminal", text: "ls"), focused: nil), RioTaskSafety.terminalMessage)
+        ETest.eq(RioTaskSafety.terminalHandBackReason(for: .typeText("hello"), focused: editor), nil)
+        ETest.eq(RioTaskSafety.terminalHandBackReason(for: .click(label: "Run", ordinal: nil), focused: terminal), nil)
     }
 
     private static func riskyClicks() {

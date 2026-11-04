@@ -88,7 +88,7 @@ enum RioSmartResponseParser {
     static let maxBodyCharacters = 2_000
 
     /// Every action the model may produce: all of `RioAction` except typeText, stopListening and
-    /// emptyTrash. pressKeys is allowed since the understanding-first change (owner decision,
+    /// emptyTrash (organizeDownloads is allowed: it always asks first). pressKeys is allowed since the understanding-first change (owner decision,
     /// 2026-11-03), but only keys `RioSmartKeyPolicy` permits.
     static let allowedActionNames: [String] = [
         "openApp", "quitApp", "switchToApp", "hideApp", "openURL", "webSearch",
@@ -100,6 +100,11 @@ enum RioSmartResponseParser {
         // Wave 3 (validated in RioSmartV3Actions).
         "describeScreen", "click", "fillField", "runTask", "remember", "recall", "forget", "draftEmail", "addNote",
         "calculate", "startTranslation", "stopTranslation", "speakLastTranslation",
+        // Waves 4–5 (validated in RioSmartV45Actions).
+        "searchHistory", "editLastDictation", "writeForMe", "smartPaste",
+        "scheduleCommand", "addTrigger", "listAutomations", "removeAutomation",
+        "recordMacro", "stopRecordingMacro", "runMacro", "findThing", "organizeDownloads", "copyTextFromScreen",
+        "weather", "news", "playMusic", "notionAdd", "canvasDue", "meeting", "claudeCode",
     ]
 
     static func actions(from content: String, now: Date, timeZone: TimeZone) -> [RioAction] {
