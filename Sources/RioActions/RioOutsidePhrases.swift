@@ -93,6 +93,12 @@ enum RioNotionPhrases {
         if let groups = RioText.firstMatch(withPage, in: text), let body = groups[1], let page = groups[2] {
             return make(body, page: page)
         }
+        // "add call Ali to my Hala roadmap in Notion": the page is named without the word "page".
+        let namedPage = "^\(verb)\\s+(.+?)\\s+(?:to|into)\\s+(?:my|the)\\s+(.+?)\\s+(?:in|on)\\s+notion$"
+        if let groups = RioText.firstMatch(namedPage, in: text), let body = groups[1], let page = groups[2],
+           page.range(of: "notion", options: .caseInsensitive) == nil {
+            return make(body, page: page)
+        }
         let leading = [
             "^\(verb)\\s+(?:to|in|into)\\s+\(article)notion\\s*[:,]?\\s*(?:that\\s+)?(.+)$",
             #"^(?:note|jot)\s+(?:in|on)\s+notion\s*[:,]?\s*(?:that\s+)?(.+)$"#,

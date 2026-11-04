@@ -27,7 +27,8 @@ enum RioFindPhrases {
     // MARK: Copy text from the screen
 
     private static func matchesCopyText(_ text: String) -> Bool {
-        let place = #"(?:the\s+|my\s+|this\s+|that\s+)?(?:screen|window|display)"#
+        // On-device OCR of whatever is showing: the screen, or the image, video or PDF on it.
+        let place = #"(?:the\s+|my\s+|this\s+|that\s+)?(?:screen|window|display|image|picture|photo|pic|video|pdf|document|slide|screenshot)"#
         let tail = #"(?:\s+(?:to\s+)?(?:the\s+|my\s+)?clipboard)?(?:\s+please)?$"#
         let patterns = [
             #"^(?:please\s+)?(?:copy|grab|extract|pull|get|scrape|lift|take)\s+(?:all\s+)?(?:of\s+)?(?:the\s+|my\s+)?text\s+(?:from|on|off|in|of)\s+"# + place + tail,

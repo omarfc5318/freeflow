@@ -51,6 +51,22 @@ struct RioCompanionMachine {
         case help
         /// The timer is ringing: the clock shakes and he bounces.
         case ringing
+        /// Conversation mode is on: ears up, small sound waves, for as long as it stays on.
+        case conversing
+        /// Conversation mode is paused for a call (another app has the microphone).
+        case conversingPaused
+    }
+
+    /// Conversation mode as the bear shows it. A pause while Rio dictates or talks isn't shown:
+    /// his talking pose already covers that moment.
+    enum Conversation: Equatable {
+        case off
+        case listening
+        case pausedForCall
+
+        init(isOn: Bool, isPausedForCall: Bool) {
+            self = !isOn ? .off : (isPausedForCall ? .pausedForCall : .listening)
+        }
     }
 
     /// Back to sleep this long after the last thing he did.
@@ -73,6 +89,9 @@ struct RioCompanionMachine {
     private var celebrateStart: TimeInterval?
     private var grumpy = RioGrumpyDetector()
     private var grumpyUntil: TimeInterval = -.infinity
+    private var conversation: Conversation = .off
+    /// A macro or the meeting copilot is recording: a small red dot on the bear.
+    private var isRecordingSomething = false
 
     init() {}
 
@@ -125,6 +144,16 @@ struct RioCompanionMachine {
         lastEvent = now
     }
 
+    mutating func conversationChanged(_ value: Conversation, at now: TimeInterval) {
+        guard value != conversation else { return }
+        conversation = value
+        lastEvent = now
+    }
+
+    mutating func recordingChanged(macro: Bool, meeting: Bool, at now: TimeInterval) {
+        isRecordingSomething = macro || meeting
+    }
+
     mutating func celebrate(at now: TimeInterval) {
         celebrateStart = now
         lastEvent = now
@@ -147,6 +176,10 @@ struct RioCompanionMachine {
     // MARK: Queries
 
     func isGrumpy(at now: TimeInterval) -> Bool { now < grumpyUntil }
+
+    /// The red recording dot: on whenever something records, asleep or awake, but not while the
+    /// corner is empty.
+    func showsRecordingBadge(at now: TimeInterval) -> Bool { isRecordingSomething && !isAway }
 
     /// "m:ss" for the alarm clock he holds, nil with no timer running.
     func timerText() -> String? { timerRemaining.map(RioTimerText.format) }
@@ -201,6 +234,11 @@ struct RioCompanionMachine {
         case .none: break
         }
         if speaking { return .talking }
+        switch conversation {
+        case .listening: return .conversing
+        case .pausedForCall: return .conversingPaused
+        case .off: break
+        }
         if timerRemaining != nil { return .resting }
         return now - idleSince(at: now) < Self.idleTimeout ? .resting : .asleep
     }
@@ -208,7 +246,7 @@ struct RioCompanionMachine {
     /// True while the view needs smooth frames (anything but sleeping or resting).
     func isLively(at now: TimeInterval) -> Bool {
         switch mode(at: now) {
-        case .asleep, .resting, .away: return false
+        case .asleep, .resting, .away, .conversingPaused: return false
         default: return true
         }
     }

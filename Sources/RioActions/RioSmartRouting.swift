@@ -278,3 +278,38 @@ enum RioSmartContextPolicy {
         return RioSmartContextText.names(sorted.map(\.name), limit: RioSmartContextLimits.maxInstalledApps)
     }
 }
+
+/// "Rio, how far is the moon": a question about the world, not about this Mac or the owner. It
+/// goes to the brain without the Mac's context (no front app, window title or app lists): the
+/// request is smaller, so the spoken answer comes back sooner, and less leaves the Mac. Anything
+/// that points at the screen, an app, the owner's things or a previous step keeps the context.
+enum RioQuestionShape {
+    private static let leads: Set<String> = [
+        "what", "whats", "who", "whos", "whose", "whom", "why", "when", "where", "which", "how", "hows",
+        "is", "are", "was", "were", "does", "did", "define",
+    ]
+    /// Spoken lead-ins dropped before looking at the question.
+    private static let lead = #"^(?:(?:answer\s+(?:this|that|me)(?:\s+question)?|quick\s+question|tell\s+me|do\s+you\s+know)[\s:,]+)+"#
+    /// Words that tie the question to this Mac, the owner or what just happened.
+    private static let local: Set<String> = [
+        "i", "im", "ive", "id", "me", "my", "mine", "myself", "we", "us", "our", "you", "your",
+        "this", "that", "these", "those", "it", "its", "here", "there", "again", "same", "last", "previous",
+        "screen", "window", "windows", "tab", "tabs", "page", "app", "apps", "button", "menu", "file", "files",
+        "folder", "desktop", "downloads", "document", "clipboard", "selection", "selected", "cursor",
+        "playing", "song", "music", "volume", "brightness", "battery", "wifi", "bluetooth", "mac", "laptop",
+        "computer", "email", "emails", "message", "messages", "text", "texts", "calendar", "meeting", "meetings",
+        "timer", "reminder", "reminders", "note", "notes", "chrome", "safari", "spotify", "slack", "zoom", "warp",
+        "finder", "claude", "notion", "canvas",
+    ]
+    private static let minimumWords = 3
+
+    static func isGeneralQuestion(_ text: String) -> Bool {
+        let lowered = text.lowercased().replacingOccurrences(of: "'", with: "").replacingOccurrences(of: "\u{2019}", with: "")
+        let question = RioText.replacing(lead, with: "", in: lowered.trimmingCharacters(in: .whitespaces))
+        let words = question.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        guard words.count >= minimumWords || words.first == "define", let first = words.first, leads.contains(first) else {
+            return false
+        }
+        return !words.contains(where: local.contains)
+    }
+}

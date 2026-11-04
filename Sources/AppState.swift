@@ -622,6 +622,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
     /// directly, so AppState observers are not re-rendered 30 times a second while Rio speaks.
     private var rioCompanionStateSubscriptions: Set<AnyCancellable> = []
     private var rioConversationResumeWork: DispatchWorkItem?
+    /// Held while it plays: a sound made from data stops if it is freed mid-play.
+    private var rioChimeSound: NSSound?
 
     @Published var preserveClipboard: Bool {
         didSet {
@@ -2990,6 +2992,15 @@ final class AppState: ObservableObject, @unchecked Sendable {
         sound?.play()
     }
 
+    /// A sound Rio makes himself (conversation mode's chime), under the same settings.
+    func playAlertSound(data: Data) {
+        guard alertSoundsEnabled, let sound = NSSound(data: data) else { return }
+        sound.volume = soundVolume
+        rioChimeSound?.stop()
+        rioChimeSound = sound
+        sound.play()
+    }
+
     private func findMatchingMacro(for transcript: String) -> VoiceMacro? {
         let normalizedTranscript = normalize(transcript)
         guard !normalizedTranscript.isEmpty else { return nil }
@@ -4235,6 +4246,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let mode = RioConversationMode.shared
         mode.onCommand = { [weak self] command in self?.handleConversationCommand(command) }
         mode.playSound = { [weak self] name in self?.playAlertSound(named: name) }
+        mode.playChime = { [weak self] chime in self?.playAlertSound(data: chime.wavData()) }
         // Also steps aside while Rio himself is talking, so the open mic never hears his own voice;
         // listening resumes half a second after he finishes, past the room's echo.
         Publishers.CombineLatest4(

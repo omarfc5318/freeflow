@@ -334,7 +334,9 @@ final class RioActionCoordinator {
         case .unknown(let unrecognized):
             lastUnrecognized = unrecognized
             guard let smartResolver else { return .unknown }
-            let request = await makeRequest(unrecognized)
+            // "Rio, how far is the moon": a question about the world goes without the Mac's
+            // context, so the spoken answer comes back sooner (and less leaves the Mac).
+            let request = await makeRequest(unrecognized, includingMac: !RioQuestionShape.isGeneralQuestion(unrecognized))
             switch await smartResolver.resolve(request) {
             case .actions(let plan):
                 guard !plan.isEmpty else { return .unknown }
@@ -357,12 +359,14 @@ final class RioActionCoordinator {
 
     // MARK: Context
 
-    private func makeRequest(_ command: String) async -> RioSmartRequest {
-        RioSmartRequest(command: command, context: await currentContext())
+    private func makeRequest(_ command: String, includingMac: Bool = true) async -> RioSmartRequest {
+        RioSmartRequest(command: command, context: await currentContext(includingMac: includingMac))
     }
 
-    private func currentContext() async -> RioSmartContext {
-        var context = await smartContext?.currentContext() ?? RioSmartContext()
+    /// The Mac's context (front app, window title, app lists) plus the previous command. Without
+    /// `includingMac`, only the previous command, and no Accessibility walk at all.
+    private func currentContext(includingMac: Bool = true) async -> RioSmartContext {
+        var context = includingMac ? (await smartContext?.currentContext() ?? RioSmartContext()) : RioSmartContext()
         if let previous, now().timeIntervalSince(previous.at) <= RioSmartContextLimits.previousCommandLifetime {
             context.previousCommand = previous.command
             context.previousActions = previous.actions

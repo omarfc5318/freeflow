@@ -62,7 +62,7 @@ private let rioEscapeKeyCode: UInt16 = 53
 
     // MARK: Placement
 
-    private static let panelWidth: CGFloat = 520
+    private static var panelWidth: CGFloat { RioHelpView.width }
     private static let margin: CGFloat = 16
 
     /// To the right of the bear in the bottom-left corner, kept on screen.
@@ -125,9 +125,13 @@ private final class HelpPanel: NSPanel {
 
 struct RioHelpView: View {
     let categories: [RioHelpCategory]
+    var keys: [RioHelpKey] = RioHelpCatalogue.keys
+    var tips: [RioHelpTip] = RioHelpCatalogue.tips
     let onClose: () -> Void
 
-    private let columns = [GridItem(.flexible(), alignment: .topLeading), GridItem(.flexible(), alignment: .topLeading)]
+    static let width: CGFloat = 720
+    private static let accent = Color(red: 0.62, green: 0.38, blue: 0.2)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 14, alignment: .topLeading), count: 3)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -139,30 +143,66 @@ struct RioHelpView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                 ForEach(categories, id: \.title) { category in
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 3) {
                         Label(category.title, systemImage: category.symbol)
                             .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundStyle(Color(red: 0.62, green: 0.38, blue: 0.2))
-                        ForEach(category.examples.prefix(3), id: \.self) { example in
+                            .foregroundStyle(Self.accent)
+                        ForEach(category.examples.prefix(RioHelpCatalogue.shownExamples), id: \.self) { example in
                             Text("\u{201C}\(example)\u{201D}")
-                                .font(.system(size: 12, design: .rounded))
+                                .font(.system(size: 11.5, design: .rounded))
                                 .foregroundStyle(.primary.opacity(0.85))
                                 .lineLimit(1)
                         }
                     }
                 }
             }
+            Divider()
+            HStack(alignment: .top, spacing: 14) {
+                ForEach(tips, id: \.title) { tip in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label(tip.title, systemImage: tip.symbol)
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(Self.accent)
+                        Text(tip.detail)
+                            .font(.system(size: 11, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(tip.examples.prefix(2).map { "\u{201C}\($0)\u{201D}" }.joined(separator: "  "))
+                            .font(.system(size: 11.5, design: .rounded))
+                            .foregroundStyle(.primary.opacity(0.85))
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
+                ForEach(keys, id: \.keys) { key in
+                    HStack(spacing: 4) {
+                        Text(key.keys)
+                            .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                            .lineLimit(1)
+                            .fixedSize()
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Self.accent.opacity(0.14)))
+                        Text(key.meaning)
+                            .font(.system(size: 10.5, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
         }
         .padding(18)
-        .frame(width: 520, alignment: .leading)
+        .frame(width: Self.width, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(.regularMaterial)
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(Color(red: 0.62, green: 0.38, blue: 0.2).opacity(0.35), lineWidth: 1.5)
+                        .strokeBorder(Self.accent.opacity(0.35), lineWidth: 1.5)
                 )
         )
         .contentShape(Rectangle())

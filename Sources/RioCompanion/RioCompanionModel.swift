@@ -78,7 +78,7 @@ final class RioCompanionModel: ObservableObject {
         } else if mode == .help {
             bubble = nil
         }
-        if let errorText, now < errorText.until, [.resting, .asleep, .thinking, .moment].contains(mode) {
+        if let errorText, now < errorText.until, [.resting, .asleep, .thinking, .moment, .conversing, .conversingPaused].contains(mode) {
             figure = RioCompanionPoseBuilder.figure(mode: .shrug, time: time, elapsed: elapsed, level: 0)
             bubble = .init(caption: nil, text: errorText.text)
         }
@@ -87,7 +87,8 @@ final class RioCompanionModel: ObservableObject {
         }
         return RioCompanionSnapshot(
             figure: figure, time: time, center: CGPoint(x: x, y: groundY),
-            outfit: outfit, look: look, bubble: bubble, impact: impact, isHidden: mode == .away
+            outfit: outfit, look: look, bubble: bubble, impact: impact, isHidden: mode == .away,
+            showsRecordingBadge: machine.showsRecordingBadge(at: now)
         )
     }
 

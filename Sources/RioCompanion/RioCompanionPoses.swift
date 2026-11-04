@@ -9,6 +9,10 @@ struct RioCompanionFigure: Equatable {
         case thoughtDots
         case micWaves(CGFloat)
         case listenWaves
+        /// Conversation mode: small, slow waves either side of his head.
+        case softListenWaves
+        /// Conversation mode paused for a call: a little pause sign by his head.
+        case pauseBadge
         case exclaim(CGFloat)
         case question
         case sweat
@@ -83,6 +87,8 @@ enum RioCompanionPoseBuilder {
         case .celebrate: return momentFigure(.milestone(""), time: time, blinking: blinking)
         case .help: return help(time: time, blinking: blinking)
         case .ringing: return ringing(time: time, text: timerText ?? "0:00")
+        case .conversing: return listening(time: time, blinking: blinking, timerText: timerText)
+        case .conversingPaused: return listeningPaused(time: time, blinking: blinking)
         case .talking: return talking(time: time, level: level, blinking: blinking)
         case .thinking: return thinking(time: time, blinking: blinking)
         case .alert: return alert(time: time, elapsed: elapsed)
@@ -238,6 +244,39 @@ enum RioCompanionPoseBuilder {
     private static func raiseRightPawToFace(_ pose: inout TeddyBodyPose) {
         pose.rightArm = .init(angle: 1.5, length: 4.5)
         pose.rightForearm = .init(angle: 2.14, length: 6.4)
+    }
+
+    // MARK: Conversation mode
+
+    /// Conversation mode is on: standing tall, ears pricked, head tilting slowly as if to catch
+    /// the next "Rio", with small waves at his ears. Calmer than the action key's alert.
+    static func listening(time: TimeInterval, blinking: Bool, timerText: String?) -> RioCompanionFigure {
+        var pose = TeddyBodyPose.standing
+        pose.bob = 0.4 + CGFloat(sin(time * 1.6)) * 0.3
+        pose.headTiltDegrees = sin(time * 0.9) * 5
+        pose.leftArm = .init(angle: -0.5, length: 6.3)
+        pose.rightArm = .init(angle: 0.5, length: 6.3)
+        pose.face.earLift = 1.8
+        pose.face.raisedBrows = true
+        pose.face.isBlinking = blinking
+        if let timerText {
+            raiseRightPaw(&pose, up: true)
+            pose.heldProp = .alarmClock(text: timerText, shaking: false)
+        }
+        return RioCompanionFigure(pose: pose, effects: [.softListenWaves])
+    }
+
+    /// Paused for a call: ears down, a patient sideways look and a pause sign; no waves.
+    static func listeningPaused(time: TimeInterval, blinking: Bool) -> RioCompanionFigure {
+        var pose = TeddyBodyPose.standing
+        pose.bob = CGFloat(sin(time * 1.2)) * 0.2
+        pose.headTiltDegrees = -6
+        pose.leftArm = .init(angle: -0.25, length: 6.0)
+        pose.rightArm = .init(angle: 0.25, length: 6.0)
+        pose.face.earLift = -0.6
+        pose.face.mouth = .flat
+        pose.face.isBlinking = blinking
+        return RioCompanionFigure(pose: pose, effects: [.pauseBadge])
     }
 
     // MARK: Action key and results

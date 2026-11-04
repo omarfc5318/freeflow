@@ -38,6 +38,11 @@ enum RioCommandRecheckGate {
         "fix", "improve", "calculate", "is", "are", "do", "does", "dark", "light", "enable", "disable", "dim",
         "lower", "raise", "increase", "decrease", "unlock", "clear", "run", "focus", "activate", "navigate",
         "visit", "fill", "describe", "draft", "note", "timer", "ok", "okay", "hey", "uh", "um", "yo", "no", "yes",
+        // Questions ("Rio, which planet is the biggest") and the wave 4-5 commands: re-reading them
+        // with Whisper only adds up to three seconds before the answer.
+        "which", "whose", "whom", "will", "would", "should", "shall", "did", "was", "were", "has", "have", "had",
+        "am", "may", "might", "define", "give", "list", "convert", "spell", "answer", "approve", "deny", "watch",
+        "organize", "organise", "clean", "tidy", "record", "every", "weather", "news", "quick",
     ]
 
     /// `onDeviceText` is what the English recognizer heard after "Rio".

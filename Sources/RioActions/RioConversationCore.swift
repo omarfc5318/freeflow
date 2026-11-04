@@ -31,6 +31,9 @@ struct RioConversationCore: Equatable {
     private var idleSince: Date?
 
     var isPaused: Bool { isOn && (otherAppUsingMic || dictationActive) }
+    /// Paused because another app has the microphone (a call), not just while Rio dictates or
+    /// talks for a moment. The bear and the menu bar show this one.
+    var isPausedForCall: Bool { isOn && otherAppUsingMic }
 
     /// When the idle shut-off fires, or nil if it is not counting (off, or paused).
     var idleDeadline: Date? {
@@ -89,6 +92,93 @@ struct RioConversationCore: Equatable {
         } else if wasPaused {
             idleSince = now
         }
+    }
+}
+
+/// What turning conversation mode on or off sounds like: its own chime at once, then Rio's line a
+/// moment later. The chord first cancels the Fn / Fn + Control session it started, silently; the
+/// delay lets that finish so the line isn't dropped as "Rio is recording".
+struct RioConversationCue: Equatable {
+    static let speechDelay: TimeInterval = 0.3
+
+    let chime: RioChime
+    let line: String
+    /// The state the line announces; it is skipped if the mode has flipped again meanwhile.
+    let announcesOn: Bool
+
+    static func cue(for effect: RioConversationCore.Effect) -> RioConversationCue? {
+        switch effect {
+        case .announceOn:
+            return RioConversationCue(chime: .conversationOn, line: "I'm listening", announcesOn: true)
+        case .announceOff(.unavailable):
+            // It never started: the error sound has played and Settings says why.
+            return nil
+        case .announceOff:
+            return RioConversationCue(chime: .conversationOff, line: "Going to sleep", announcesOn: false)
+        }
+    }
+
+    static func stillApplies(_ cue: RioConversationCue, isOn: Bool) -> Bool { cue.announcesOn == isOn }
+}
+
+/// Conversation mode's own two-note chime, made on the fly as a small WAV (no sound files):
+/// rising for on, falling for off, so it never sounds like dictation's Tink and Pop.
+enum RioChime: Equatable {
+    case conversationOn
+    case conversationOff
+
+    static let sampleRate = 44_100
+    /// Each note's slot; the last note rings on for `tail`.
+    static let noteDuration: TimeInterval = 0.11
+    static let tail: TimeInterval = 0.14
+    private static let peak = 0.42
+
+    /// Hz: E5 then B5 (a bright fifth up), and back down for off.
+    var notes: [Double] {
+        switch self {
+        case .conversationOn: return [659.25, 987.77]
+        case .conversationOff: return [987.77, 659.25]
+        }
+    }
+
+    /// 16-bit mono PCM WAV: each note a soft bell (fundamental plus a quiet octave) with a quick
+    /// attack and an exponential decay.
+    func wavData() -> Data {
+        let rate = Double(Self.sampleRate)
+        let slot = Int(Self.noteDuration * rate)
+        let total = slot * notes.count + Int(Self.tail * rate)
+        var samples = [Double](repeating: 0, count: total)
+        for (index, frequency) in notes.enumerated() {
+            let start = index * slot
+            let length = index == notes.count - 1 ? total - start : slot + Int(0.03 * rate)
+            for n in 0..<length where start + n < total {
+                let t = Double(n) / rate
+                let attack = min(1, t / 0.006)
+                let decay = exp(-t / (index == notes.count - 1 ? 0.09 : 0.06))
+                let tone = sin(2 * .pi * frequency * t) + 0.18 * sin(4 * .pi * frequency * t)
+                samples[start + n] += tone * attack * decay
+            }
+        }
+        let loudest = samples.map(abs).max() ?? 1
+        let scale = loudest > 0 ? Self.peak * Double(Int16.max) / loudest : 0
+        var pcm = Data(capacity: total * 2)
+        for sample in samples {
+            let value = Int16(max(-32_767, min(32_767, (sample * scale).rounded())))
+            withUnsafeBytes(of: value.littleEndian) { pcm.append(contentsOf: $0) }
+        }
+        return Self.wavHeader(dataBytes: pcm.count) + pcm
+    }
+
+    private static func wavHeader(dataBytes: Int) -> Data {
+        var header = Data()
+        func append(_ text: String) { header.append(contentsOf: Array(text.utf8)) }
+        func append32(_ value: UInt32) { withUnsafeBytes(of: value.littleEndian) { header.append(contentsOf: $0) } }
+        func append16(_ value: UInt16) { withUnsafeBytes(of: value.littleEndian) { header.append(contentsOf: $0) } }
+        append("RIFF"); append32(UInt32(36 + dataBytes)); append("WAVE")
+        append("fmt "); append32(16); append16(1); append16(1)
+        append32(UInt32(sampleRate)); append32(UInt32(sampleRate * 2)); append16(2); append16(16)
+        append("data"); append32(UInt32(dataBytes))
+        return header
     }
 }
 

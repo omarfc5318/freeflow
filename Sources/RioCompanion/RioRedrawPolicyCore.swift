@@ -52,6 +52,10 @@ enum RioRedrawPolicy {
         case .asleep: interval = sleepyInterval
         case .away: interval = awayInterval
         case .resting: interval = hasTimer ? timerInterval : restingInterval
+        // Conversation mode can stay on for many minutes: gentle waves at the resting rate, and
+        // almost nothing while it waits out a call.
+        case .conversing: interval = restingInterval
+        case .conversingPaused: interval = sleepyInterval
         case .sprint, .punch, .returning: interval = runInterval
         default: interval = actionInterval
         }

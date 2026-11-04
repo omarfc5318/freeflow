@@ -24,6 +24,8 @@ struct RioCompanionSnapshot {
     var bubble: Bubble?
     var impact: Impact?
     var isHidden = false
+    /// A macro or the meeting copilot is recording.
+    var showsRecordingBadge = false
 }
 
 enum RioCompanionMetrics {
@@ -161,6 +163,9 @@ enum RioCompanionRenderer {
         TeddyArt.drawBody(in: &body, time: snapshot.time, pose: figure.pose, outfit: snapshot.outfit, look: snapshot.look)
 
         drawEffects(figure, snapshot: snapshot, in: &scene)
+        if snapshot.showsRecordingBadge {
+            TeddyArt.drawRecordingDot(in: &scene, at: CGPoint(x: 5.5, y: 4.5 - figure.pose.bob * 0.4), time: snapshot.time)
+        }
 
         if let impact = snapshot.impact {
             TeddyArt.drawImpactBurst(in: &graphics, at: impact.center, radius: 20, progress: impact.progress)
@@ -181,6 +186,10 @@ enum RioCompanionRenderer {
                 TeddyArt.drawMicWaves(in: &scene, time: time, origin: CGPoint(x: 27.4, y: 16.4), strength: strength)
             case .listenWaves:
                 TeddyArt.drawListenWaves(in: &scene, time: time, center: CGPoint(x: 20, y: 14))
+            case .softListenWaves:
+                TeddyArt.drawSoftListenWaves(in: &scene, time: time, center: CGPoint(x: 20, y: 14 - figure.pose.bob))
+            case .pauseBadge:
+                TeddyArt.drawPauseBadge(in: &scene, at: CGPoint(x: 32.5, y: 5.5))
             case let .exclaim(pop):
                 TeddyArt.drawExclaim(in: &scene, at: CGPoint(x: 31, y: 4.5 - figure.pose.bob * 0.4), pop: pop)
             case .question:

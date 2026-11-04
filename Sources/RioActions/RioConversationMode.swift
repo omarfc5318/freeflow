@@ -16,6 +16,8 @@ import Foundation
     @Published private(set) var isOn = false
     /// True while conversation mode is on but paused (another app is using the mic, or dictation).
     @Published private(set) var isPaused = false
+    /// Paused for a call (another app has the microphone); the bear and the menu bar show it.
+    @Published private(set) var isPausedForCall = false
     /// Why it couldn't start; shown in Settings.
     @Published private(set) var statusMessage: String?
 
@@ -24,6 +26,8 @@ import Foundation
     var onCommand: (@MainActor (String) -> Void)?
     /// Plays a short system sound by name (AppState routes it through the sound settings).
     var playSound: (@MainActor (String) -> Void)?
+    /// Plays conversation mode's own on/off chime (AppState routes it through the sound settings).
+    var playChime: (@MainActor (RioChime) -> Void)?
 
     private static let pollInterval: UInt64 = 2_000_000_000
 
@@ -33,6 +37,7 @@ import Foundation
     private var listenerRunning = false
     private var listenerStarting = false
     private var pollTask: Task<Void, Never>?
+    private var announceTask: Task<Void, Never>?
 
     private init() {}
 
@@ -71,25 +76,30 @@ import Foundation
 
     private func apply(_ effects: [RioConversationCore.Effect]) {
         for effect in effects {
-            switch effect {
-            case .announceOn:
-                statusMessage = nil
-                playSound?("Tink")
-                RioVoice.shared.speak("I'm listening")
-            case .announceOff(let reason):
-                if reason != .unavailable {
-                    playSound?("Pop")
-                    RioVoice.shared.speak("Going to sleep")
-                }
-            }
+            if effect == .announceOn { statusMessage = nil }
+            guard let cue = RioConversationCue.cue(for: effect) else { continue }
+            playChime?(cue.chime)
+            announce(cue)
         }
         reconcile()
+    }
+
+    /// Says the cue's line once the chord's silent cancel has finished (so the voice isn't
+    /// suppressed as "Rio is recording"), and only if the mode hasn't flipped again meanwhile.
+    private func announce(_ cue: RioConversationCue) {
+        announceTask?.cancel()
+        announceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(RioConversationCue.speechDelay * 1_000_000_000))
+            guard !Task.isCancelled, let self, RioConversationCue.stillApplies(cue, isOn: self.core.isOn) else { return }
+            RioVoice.shared.speak(cue.line)
+        }
     }
 
     /// Makes the listener and the poll match the core. Safe to call at any time.
     private func reconcile() {
         isOn = core.isOn
         isPaused = core.isPaused
+        isPausedForCall = core.isPausedForCall
         guard core.isOn else {
             stopListener()
             pollTask?.cancel()

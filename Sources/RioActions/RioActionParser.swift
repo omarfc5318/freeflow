@@ -154,6 +154,10 @@ struct RioActionParser {
             if AppNameMatcher.match(for: whole, in: installedApps)?.kind.isStrong == true { return nil }
             if RioText.compact(whole) == "googlechrome" { return nil }
         }
+        // "search my history for the budget" is the owner's own dictation timeline (N), not the web.
+        if RioText.matches(#"^search\s+(?:through\s+)?my\s+(?:dictations?|history|timeline|transcripts?|past\s+dictations?)\s+for\b"#, text) {
+            return nil
+        }
         let webPatterns = [
             #"^search\s+(?:(?:the\s+web|google|online|the\s+internet|bing)\s+)?(?:for\s+|up\s+)?(.+)$"#,
             #"^look\s+up\s+(.+)$"#,

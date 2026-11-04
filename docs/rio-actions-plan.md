@@ -600,6 +600,23 @@ unaffected (the key itself proves it was the owner).
   after the silent cancel completes (~0.3 s); the bear holds a persistent LISTENING pose while
   conversation mode is on (ears up, small waves), and the menu bar teddy shows a listening
   variant (`RioMenuBarIcon.listeningTemplateImage`).
+  BUILT (builder V, 2026-11-03): conversation mode has its own generated two-note chime (rising
+  on, falling off; `RioChime`, played through the alert-sound setting) and says "I'm listening" /
+  "Going to sleep" 0.3 s later, only if the mode hasn't flipped again (`RioConversationCue`). The
+  bear holds a LISTENING pose (ears up, small slow waves) for as long as it is on, and a PAUSED
+  pose (ears down, pause sign) while another app has the mic (`RioConversationCore.isPausedForCall`;
+  a pause for dictation or Rio's own voice isn't shown). Talking, thinking, alert, help and the
+  ringing timer still win; listening redraws at 10 fps, paused at 2. A red dot shows while a
+  macro or the meeting copilot records. The menu bar shows `listeningTemplateImage` /
+  `pausedTemplateImage` while on. "Rio, <question>" (`RioQuestionShape.isGeneralQuestion`: a
+  question word, no reference to the screen, an app or the owner) goes to the resolver without
+  the Mac's context (no AX walk, no app lists), so the answer comes back sooner; the previous
+  command still rides along. The Whisper recheck gate now treats question words and wave 4-5
+  verbs as English. Help sheet: wave 4-5 categories, keys and tips (conversation mode, texting
+  from the iPhone), three columns; every example is checked against the real parser. Parser fixes
+  found on the way: "search my history for X" (was a web search), "copy the text from this
+  image/PDF/video" (was unknown), "add X to my <page> in Notion" (the page was swallowed into the
+  text). Manual check pending: the chord, chime, spoken line and poses on the real Mac.
 - OWNER DESIGN CHANGE (2026-11-03): "I need it to be basically an agent that runs my laptop
   hands-free… You shouldn't hard-code commands. It should hear what I say, understand it, and
   then go and do it." ("open another Chrome window" said "couldn't find an app called another

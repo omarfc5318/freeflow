@@ -21,6 +21,7 @@ struct FreeFlowApp: App {
 struct MenuBarLabel: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var notificationManager = VocabularyNotificationManager.shared
+    @ObservedObject private var conversation = RioConversationMode.shared
 
     private var iconName: String {
         if appState.isRecording { return "record.circle" }
@@ -33,7 +34,11 @@ struct MenuBarLabel: View {
             if notificationManager.showCheckmark {
                 Image(systemName: "checkmark")
             }
-            if AppBuild.isDevBundle && !appState.isRecording && !appState.isTranscribing {
+            if conversation.isOn && !appState.isRecording && !appState.isTranscribing {
+                // Conversation mode: ears up and sound waves, or a pause sign during a call.
+                Image(nsImage: conversation.isPausedForCall ? RioMenuBarIcon.pausedTemplateImage : RioMenuBarIcon.listeningTemplateImage)
+                    .renderingMode(.template)
+            } else if AppBuild.isDevBundle && !appState.isRecording && !appState.isTranscribing {
                 Image(nsImage: StampedMenuBarIcon.templateImage)
                     .renderingMode(.template)
             } else if !appState.isRecording && !appState.isTranscribing {

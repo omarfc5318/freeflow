@@ -272,6 +272,30 @@ final class RioCompanionHub: RioCompanionDirecting {
                 }
             }
             .store(in: &cancellables)
+        // Conversation mode: the listening pose while it is on, the paused pose during a call.
+        let conversation = RioConversationMode.shared
+        conversation.$isOn.combineLatest(conversation.$isPausedForCall)
+            .map { RioCompanionMachine.Conversation(isOn: $0, isPausedForCall: $1) }
+            .removeDuplicates()
+            .sink { [weak self] state in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.model.machine.conversationChanged(state, at: RioCompanionClock.now)
+                    self.kick()
+                }
+            }
+            .store(in: &cancellables)
+        // The red recording dot: a "watch me" macro or the meeting copilot's rolling audio.
+        RioMacroRecorder.shared.$isRecording.combineLatest(RioMeetingCopilot.shared.$isRecording)
+            .removeDuplicates { $0 == $1 }
+            .sink { [weak self] macro, meeting in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.model.machine.recordingChanged(macro: macro, meeting: meeting, at: RioCompanionClock.now)
+                    self.kick()
+                }
+            }
+            .store(in: &cancellables)
         center.$isHelpVisible.removeDuplicates()
             .sink { [weak self] visible in MainActor.assumeIsolated { self?.helpChanged(visible) } }
             .store(in: &cancellables)

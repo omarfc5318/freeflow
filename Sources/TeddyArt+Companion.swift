@@ -174,6 +174,45 @@ extension TeddyArt {
         }
     }
 
+    /// Conversation mode's waves: one small arc beside each ear, breathing slowly. Quieter than
+    /// the action key's pair so they can stay up for minutes.
+    static func drawSoftListenWaves(in graphics: inout GraphicsContext, time: TimeInterval, center: CGPoint) {
+        for index in 0..<2 {
+            let pulse = 0.5 + 0.5 * sin(time * 2.4 - Double(index) * 1.1)
+            for side in [-1.0, 1.0] as [CGFloat] {
+                var arc = Path()
+                let radius = 13.4 + CGFloat(index) * 2.6 + CGFloat(pulse) * 0.5
+                arc.addArc(
+                    center: center, radius: radius,
+                    startAngle: .degrees(side < 0 ? 158 : -22), endAngle: .degrees(side < 0 ? 202 : 22), clockwise: false
+                )
+                let strength = (index == 0 ? 0.55 : 0.3) + 0.45 * pulse
+                graphics.stroke(arc, with: .color(TeddyPalette.ink.opacity(strength)), style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                graphics.stroke(arc, with: .color(TeddyPalette.cord.opacity(strength)), style: StrokeStyle(lineWidth: 0.9, lineCap: .round))
+            }
+        }
+    }
+
+    /// A small white sign with two bars: conversation mode is waiting out a call.
+    static func drawPauseBadge(in graphics: inout GraphicsContext, at center: CGPoint) {
+        let size: CGFloat = 6.4
+        let plate = Path(roundedRect: CGRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size), cornerRadius: 1.8)
+        sticker(&graphics, plate, .white, rim: 0.9)
+        for dx in [-1.15, 1.15] as [CGFloat] {
+            let bar = Path(roundedRect: CGRect(x: center.x + dx - 0.6, y: center.y - 1.7, width: 1.2, height: 3.4), cornerRadius: 0.5)
+            fill(&graphics, bar, TeddyPalette.ink)
+        }
+    }
+
+    /// The red "recording" dot (a macro or the meeting copilot is recording), softly pulsing.
+    static func drawRecordingDot(in graphics: inout GraphicsContext, at center: CGPoint, time: TimeInterval) {
+        let glow = 0.75 + 0.25 * sin(time * 3)
+        var dot = graphics
+        dot.opacity = glow
+        sticker(&dot, circle(center, 2.3), TeddyPalette.buttonRed, rim: 0.9)
+        fill(&dot, circle(CGPoint(x: center.x - 0.7, y: center.y - 0.7), 0.6), .white.opacity(0.8))
+    }
+
     /// A bold yellow "!" that pops above the head when the action key wakes him.
     static func drawExclaim(in graphics: inout GraphicsContext, at center: CGPoint, pop: CGFloat) {
         var mark = graphics
