@@ -149,11 +149,11 @@ enum RioMessagingTests {
 
     private static func testConfirmationContent() {
         let send = RioConfirmationContent.make(for: .sendMessage(to: "Ali", body: "On my way"), appName: nil, resolvedRecipient: nil)
-        ETest.eq(send?.title, "Send a message to Ali?")
+        ETest.eq(send?.title, "Send an iMessage to Ali?")
         ETest.eq(send?.detail, "On my way")
         ETest.eq(send?.confirmLabel, "Send")
         let resolved = RioConfirmationContent.make(for: .sendMessage(to: "ali", body: "Hi"), appName: nil, resolvedRecipient: "Ali Khan")
-        ETest.eq(resolved?.title, "Send a message to Ali Khan?")
+        ETest.eq(resolved?.title, "Send an iMessage to Ali Khan?")
         let reply = RioConfirmationContent.make(for: .replyInConversation(body: "Sounds good"), appName: "Slack", resolvedRecipient: nil)
         ETest.eq(reply?.title, "Reply in Slack?")
         ETest.eq(reply?.detail, "Sounds good")

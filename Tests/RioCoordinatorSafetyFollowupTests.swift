@@ -293,19 +293,20 @@ enum RioCoordinatorSafetyFollowupTests {
                     isTrustingConversation: { true }, followUps: RioFollowUpMemory()
                 )
                 let outcome10 = await coordinator.run("Rio quit rio dictate", source: source)
-                ETest.eq(outcome10, .failed(RioSelfApp.refusalMessage))
+                ETest.eq(outcome10, .failed(RioSelfApp.refusal(for: action, source: source)))
                 ETest.eq(executor.executed, [], "\(source) never runs \(action)")
                 ETest.eq(confirmer.asked, [])
             }
-            // The action key asks first.
+            // The action key refuses too, without a panel first (round 3, finding 97a).
             let executor = FrontAppExecutor()
-            let confirmer = Confirmer(answer: false)
+            let confirmer = Confirmer(answer: true)
             let key = RioActionCoordinator(
                 parser: FixedParser(result: .actions([action])), executor: executor, confirmer: confirmer, followUps: RioFollowUpMemory()
             )
             let outcome11 = await key.run("Rio quit rio", source: .actionKey)
-            ETest.eq(outcome11, .cancelled)
-            ETest.eq(confirmer.asked, [action])
+            ETest.eq(outcome11, .failed(RioSelfApp.refusal(for: action, source: .actionKey)))
+            ETest.eq(confirmer.asked, [])
+            ETest.eq(executor.executed, [])
         }
         // Quitting another app from conversation mode, trust on: unchanged.
         let executor = FrontAppExecutor()

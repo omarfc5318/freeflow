@@ -38,6 +38,17 @@ final class RioConfirmationCenter: RioConfirming, RioConversationConfirming {
         return noteApproval(of: action, await ask(content))
     }
 
+    /// Typing plus the Return that submits it (or a Return for earlier typing): every step is
+    /// shown, with the app it goes to.
+    func confirmConversationSubmit(_ steps: [RioAction], alreadyTyped: Bool, appName: String?) async -> Bool {
+        finish(false)
+        lastApproval = nil
+        let content = RioConfirmationContent.conversationSubmit(steps, alreadyTyped: alreadyTyped, appName: appName)
+        let doing = alreadyTyped ? "Pressing Return" : "Typing, then pressing Return"
+        RioVoice.shared.speak("\(doing). Press Return to confirm, or say no.")
+        return await ask(content)
+    }
+
     /// True once when `action` was approved in the last few seconds; the approval is used up.
     func consumeRecentApproval(of action: RioAction, now: Date = Date()) -> Bool {
         guard let approval = lastApproval else { return false }

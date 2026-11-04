@@ -36,17 +36,28 @@ enum WakePhraseExtractor {
     /// A pause this long before the name makes it the start of a new utterance even when the
     /// recognizer ran the speech together ("Oh my god [pause] Rio, help").
     static let gapBeforeName: TimeInterval = 0.5
+    /// A pause this long right after the name sets it off like a comma ("Rio [pause] Spotify"),
+    /// which the recognizer never writes (it runs without punctuation).
+    static let gapAfterName: TimeInterval = 0.25
 
     /// The transcript rebuilt from timed words with a line break at each pause of
-    /// `gapBeforeName` or more, so the name after a pause counts as a fresh start. Words without
-    /// timing (all zero) give the plain transcript, so nothing new is accepted.
+    /// `gapBeforeName` or more, so the name after a pause counts as a fresh start, and a comma
+    /// after a name followed by a pause of `gapAfterName` or more. Words without timing (all
+    /// zero) give the plain transcript, so nothing new is accepted.
     static func transcript(from words: [TimedWord]) -> String {
         var out = ""
         for (index, word) in words.enumerated() {
             if index > 0 {
                 let previous = words[index - 1]
                 let gap = word.start - (previous.start + previous.duration)
-                out += gap >= gapBeforeName && word.start > 0 ? "\n" : " "
+                let timed = word.start > 0
+                if timed, gap >= gapBeforeName {
+                    out += "\n"
+                } else if timed, gap >= gapAfterName, isName(previous.text) {
+                    out += ", "
+                } else {
+                    out += " "
+                }
             }
             out += word.text
         }
@@ -70,7 +81,9 @@ enum WakePhraseExtractor {
 
     /// Words that may come before the name without it being mid-sentence.
     private static let leadIns: Set<String> = [
-        "hey", "hi", "hello", "yo", "yoo", "ok", "okay", "uh", "um", "so", "oh", "alright", "right", "well", "please"
+        "hey", "hi", "hello", "yo", "yoo", "ok", "okay", "uh", "um", "so", "oh", "alright", "right", "well", "please",
+        // Casual and Gulf lead-ins: "yeah Rio", "ya Rio" (the en-US recognizer's "يا ريو"), "yalla Rio".
+        "yeah", "ya", "yah", "yalla", "yallah", "dude", "man", "bro", "يا",
     ]
 
     /// Words after "Rio" that make it a place, not the name: "Rio de Janeiro", "Rio Grande",
@@ -119,29 +132,82 @@ enum WakePhraseExtractor {
     /// package arrived".
     private static let questionSubjects: Set<String> = [
         "it", "there", "this", "that", "my", "your", "he", "she", "they", "we", "you", "i", "anyone", "anything", "everything",
+        "claude", "cloud", "our", "his", "her", "their",
     ]
+    /// After "is"/"was"/"has", these keep it a statement about Rio: "Rio is a film", "Rio has been
+    /// praised", "Rio is so cute".
+    private static let statementStarters: Set<String> = [
+        "a", "an", "been", "being", "become", "always", "never", "also", "one", "so", "very", "really", "such", "not", "about",
+    ]
+    /// Ranking words that make "Rio was the best film" a statement, not a question to Rio.
+    private static let superlatives: Set<String> = [
+        "best", "worst", "most", "least", "first", "biggest", "greatest", "highest", "largest", "top", "only", "sequel",
+    ]
+    /// Words that end a yes/no question about a thing: "is the build done", "are the lights on".
+    private static let predicates: Set<String> = [
+        "done", "ready", "on", "off", "open", "closed", "over", "up", "down", "back", "home", "here", "sent", "gone", "out",
+        "right", "correct", "true", "wrong", "available", "free", "busy", "empty", "full", "loud", "quiet", "set", "due",
+        "late", "early", "awake", "asleep", "okay", "ok", "fine", "good", "safe", "live", "online", "offline", "still", "broken",
+        "finished", "running", "working", "playing", "charged", "connected", "plugged", "muted", "locked",
+    ]
+    /// Verbs that make "Rio 2 …" or "Rio the parrot …" a sentence about him.
+    private static let sentenceVerbs: Set<String> = statementVerbs.union([
+        "came", "comes", "released", "scored", "scores", "stars", "starred", "opened", "premiered", "won", "made", "grossed",
+        "features", "featured", "took", "takes", "flew", "flies", "lives", "lived",
+    ])
+    /// Words after the name that make it a person or an event: "Rio Ferdinand", "Rio Olympics".
+    private static let nameContinuations: Set<String> = ["ferdinand", "olympics", "olympic", "carnival", "carnaval"]
 
     /// True when the name at `index` (the last of any repeats) opens a statement about Rio.
-    /// Never when a command word follows. A comma or other punctuation after the name ("Rio,
-    /// Spotify", "Rio, 5 minute timer") marks him as addressed, so only the verb rule applies.
+    /// Never when a command word follows. A comma or a pause after the name ("Rio, Spotify",
+    /// "Rio [pause] 5 minute timer") marks him as addressed, so only a plain statement ("Rio, is a
+    /// film") still counts. Unpunctuated, a number, "a" or "the" after the name counts only when a
+    /// statement verb follows ("Rio 2 came out", "Rio the movie is great"); an app or a word like
+    /// "Claude", "Spotify" or "Louder" is a command.
     private static func isTalkingAbout(after index: Int, in words: [Word], text: String) -> Bool {
         guard index + 1 < words.count else { return false }
         let next = words[index + 1].text
         let lowered = next.lowercased()
         if commandStarters.contains(lowered) { return false }
-        if statementVerbs.contains(lowered) {
-            let after = index + 2 < words.count ? words[index + 2].text.lowercased() : nil
-            return !(after.map(questionSubjects.contains) ?? false)
-        }
         let between = text[words[index].range.upperBound..<words[index + 1].range.lowerBound]
-        guard between.allSatisfy(\.isWhitespace) else { return false }
-        if determiners.contains(lowered) { return true }
-        if next.first?.isNumber == true { return true }
-        // A capitalised word that is not a command ("Rio Ferdinand scored"): a surname or title.
-        // All-caps transcripts ("RIO OPEN CHROME") and "I" are not.
-        let isFirstPerson = lowered.hasPrefix("i'") || lowered.hasPrefix("i\u{2019}")
-        if let first = next.first, first.isUppercase, next != next.uppercased(), !isFirstPerson { return true }
+        let isSetOff = !between.allSatisfy { $0 == " " || $0 == "\t" }
+        let following = words[(index + 2)...].map { $0.text.lowercased() }
+        if statementVerbs.contains(lowered) {
+            // A capitalised word is a name ("Ahmed", "Mohammed"), never a participle.
+            let subjectIsName = index + 2 < words.count && isCapitalised(words[index + 2].text)
+            return !isQuestionAfterVerb(following, isSetOff: isSetOff, firstIsName: subjectIsName)
+        }
+        if isSetOff { return false }
+        if nameContinuations.contains(lowered) { return true }
+        if determiners.contains(lowered) || next.first?.isNumber == true {
+            return following.prefix(4).contains(where: sentenceVerbs.contains)
+        }
         return false
+    }
+
+    /// The words after "Rio is/was/has" read as a yes/no question to him: "is it raining", "is
+    /// Claude done", "has the package arrived", "is the answer B".
+    private static func isQuestionAfterVerb(_ words: [String], isSetOff: Bool, firstIsName: Bool) -> Bool {
+        guard let first = words.first else { return false }
+        if questionSubjects.contains(first) { return true }
+        if !firstIsName, statementStarters.contains(first) || isPredicate(first) || superlatives.contains(first) { return false }
+        let tail = words.dropFirst().prefix(4)
+        if tail.contains(where: superlatives.contains) { return false }
+        if tail.contains(where: isPredicate) { return true }
+        // A quiz answer: "is the answer B".
+        if words.count >= 2, let last = words.last, last.count == 1, last.first?.isLetter == true { return true }
+        return isSetOff
+    }
+
+    private static func isCapitalised(_ word: String) -> Bool {
+        guard let first = word.first, first.isUppercase else { return false }
+        return word != word.uppercased()
+    }
+
+    private static func isPredicate(_ word: String) -> Bool {
+        if predicates.contains(word) { return true }
+        if word.count >= 5, word.hasSuffix("ing") { return true }
+        return word.count >= 4 && word.hasSuffix("ed")
     }
 
     private static func startsUtterance(at index: Int, in words: [Word], text: String) -> Bool {
@@ -195,8 +261,13 @@ enum WakeListenTiming {
     /// Empty finals in a row that still get the fast restart.
     static let fastEmptyFinals = 3
     /// Longest wait before listening again after a final result with no words. Sustained sound
-    /// (`WakeSoundGate`) ends the wait at once, so this only costs time in a really quiet room.
-    static let maxEmptyFinalDelay: TimeInterval = 5
+    /// (`WakeSoundGate`) ends the wait at once, and the listener replays the last second of audio
+    /// into the new recognition (`preRollSeconds`), so a soft "Rio" is not lost. Kept short: a
+    /// normal voice a metre away can stay under the gate in a quiet room.
+    static let maxEmptyFinalDelay: TimeInterval = 1.5
+    /// Audio from just before listening starts again that is fed to the new recognition first,
+    /// so the start of "Rio, help" said during the wait is still heard.
+    static let preRollSeconds: TimeInterval = 1
 
     private static let unfinishedEndings: Set<String> = [
         "that", "to", "and", "saying", "say", "the", "a", "an", "my", "for", "of", "with", "about", "is",
@@ -224,23 +295,24 @@ enum WakeListenTiming {
     }
 
     /// The wait before listening again after `consecutive` finals with no words in a row:
-    /// 0.25 s, then 0.5 s for the first few, then 2 s, 4 s and 5 s at most, so a quiet room
-    /// doesn't tear the recognizer down and rebuild it all day. Sustained sound cuts any wait
-    /// short and starts the fast schedule again.
+    /// 0.25 s, then 0.5 s for the first few, then 1 s and 1.5 s at most, so a quiet room doesn't
+    /// tear the recognizer down and rebuild it in a tight loop, yet is never deaf for long.
+    /// Sustained sound cuts any wait short and starts the fast schedule again.
     static func emptyFinalDelay(consecutive: Int) -> TimeInterval {
         let count = max(consecutive, 1)
         guard count > fastEmptyFinals else { return min(0.25 * pow(2, Double(count - 1)), fastEmptyFinalDelay) }
-        return min(2 * pow(2, Double(count - fastEmptyFinals - 1)), maxEmptyFinalDelay)
+        return min(Double(count - fastEmptyFinals) * 0.5 + 0.5, maxEmptyFinalDelay)
     }
 }
 
 /// Decides when the microphone has heard real sound (someone talking), not one loud sample:
 /// a key click, a cough or a fan's tick stays below it; a spoken word crosses it.
 struct WakeSoundGate {
-    /// Root mean square level of a buffer that counts as loud.
-    static let loudLevel: Float = 0.03
-    /// How long loud buffers must follow one another.
-    static let sustainedSeconds: Double = 0.12
+    /// Root mean square level of a buffer that counts as loud: a normal voice about a metre away
+    /// (speech RMS is often 0.01-0.03), above a quiet fan.
+    static let loudLevel: Float = 0.015
+    /// How long loud buffers must follow one another (a word's first syllable, not a key click).
+    static let sustainedSeconds: Double = 0.06
 
     private var loudRun: Double = 0
 

@@ -191,6 +191,13 @@ enum RioConversationCommands {
         guard !text.isEmpty, case .actions(let actions) = parser.parse(text) else { return false }
         return actions == [.stopListening]
     }
+
+    /// A chain that also turns the mic off ("stop the music and go to sleep", "stop listening and
+    /// lock the screen"): conversation mode goes off once the other steps ran. Only an exact
+    /// "stop listening" (`isStopListening`) is handled before the pipeline.
+    static func includesStopListening(_ actions: [RioAction]) -> Bool {
+        actions.contains(.stopListening)
+    }
 }
 
 extension RioConversationCommands {
@@ -206,7 +213,7 @@ extension RioConversationCommands {
         "بس", "خلاص", "وقف", "اوقف", "توقف", "قف", "اسكت", "كفاية", "كفايه", "كفى"
     ]
     private static let abortPhrases: Set<String> = [
-        "cancel", "cancel that", "cancel it", "cancel this", "wait", "hold on", "hang on", "forget it", "forget about it", "scratch that", "never mind", "nevermind"
+        "cancel", "cancel that", "cancel it", "cancel this", "abort", "abort it", "abort that", "wait", "hold on", "hang on", "forget it", "forget about it", "scratch that", "never mind", "nevermind"
     ]
     /// Words that may surround a stop without changing it: "okay okay stop", "no stop please".
     private static let stopFillers: Set<String> = [
@@ -238,7 +245,9 @@ extension RioConversationCommands {
 
     private static let yesAnswers: Set<String> = [
         "yes", "yes please", "yeah", "yep", "yup", "sure", "confirm", "do it", "go ahead", "yes do it",
-        "yeah do it", "yep do it", "yes go ahead", "نعم", "اي", "ايوه", "ايوا", "اكيد"
+        "yeah do it", "yep do it", "yes go ahead", "نعم", "اي", "ايوه", "ايوا", "اكيد",
+        // Gulf: yes / yeah / okay.
+        "ايه", "إيه", "إي", "أيوه", "أيوا", "تمام", "يب"
     ]
     private static let noAnswers: Set<String> = [
         "no", "nope", "nah", "cancel", "dont", "do not", "no thanks", "no thank you", "never mind", "nevermind",
@@ -253,10 +262,12 @@ extension RioConversationCommands {
     }
 
     private static let thanksPhrases: Set<String> = [
-        "thank you", "thanks", "thank u", "thx", "cheers", "شكرا", "مشكور", "يعطيك العافيه", "يعطيك العافية"
+        "thank you", "thanks", "thank u", "thx", "cheers", "شكرا", "شكراً", "مشكور", "مشكورة", "يعطيك العافيه", "يعطيك العافية",
+        // Gulf: bless you / you didn't fall short / God give you strength / a thousand strengths.
+        "تسلم", "تسلم يدك", "ما قصرت", "ماقصرت", "يعطيك الف عافيه", "يعطيك الف عافية", "يعطيك ألف عافية", "يعطيك ألف عافيه",
     ]
     private static let thanksFillers: Set<String> = [
-        "okay", "ok", "so", "much", "very", "a", "lot", "rio", "man", "bro", "buddy", "again", "جزيلا", "ريو", "يا"
+        "okay", "ok", "so", "much", "very", "a", "lot", "rio", "man", "bro", "buddy", "again", "جزيلا", "ريو", "يا", "الله", "والله",
     ]
 
     /// "Rio, thank you": a short reply, never an action and never a model call.
@@ -267,6 +278,17 @@ extension RioConversationCommands {
     }
 
     static let welcomeLine = "You're welcome"
+    /// The Arabic answers to thanks: "may God keep you well" to "يعطيك العافية", "you're welcome"
+    /// to the rest.
+    static let arabicWelcomeLine = "العفو"
+    static let arabicWellnessLine = "الله يعافيك"
+
+    /// Rio's answer to a thanks, in the language it was said in.
+    static func thanksReply(_ transcript: String) -> String {
+        let words = commandWords(transcript)
+        guard words.contains(where: { $0.unicodeScalars.contains(where: RioArabicText.isArabicScript) }) else { return welcomeLine }
+        return words.contains(where: { $0.contains("عافي") }) ? arabicWellnessLine : arabicWelcomeLine
+    }
     static let nothingToConfirmLine = "Nothing to confirm"
 
     static let hereLine = "I'm here"
@@ -310,7 +332,7 @@ extension RioConversationCommands {
     /// "are you there", or a yes or no when no confirmation is open. Stop words ("cancel",
     /// "no no no") are not answered here.
     static func quickReply(_ transcript: String, isConfirmationShowing: Bool) -> String? {
-        if isThanks(transcript) { return welcomeLine }
+        if isThanks(transcript) { return thanksReply(transcript) }
         if let greeting = greetingReply(transcript) { return greeting }
         if !isConfirmationShowing, spokenAnswer(transcript) != nil, !isBareStop(transcript) { return nothingToConfirmLine }
         return nil
@@ -369,15 +391,53 @@ extension RioConversationCommands {
 }
 
 /// While Rio is talking, conversation mode keeps listening so he can be interrupted, but only a
-/// bare stop is taken: his own voice (a news read-out, a message read aloud) can never run
-/// anything. The window runs on past the end of his speech, because a phrase he said is only
-/// delivered once the listener has heard a moment of silence after it.
+/// bare stop or an exact "stop listening" is taken: his own voice (a news read-out, a message
+/// read aloud) can never run anything, and those two only ever stop him or turn the mic off.
+/// The window runs on past the end of his speech, because a phrase he said is only delivered
+/// once the listener has heard a moment of silence after it.
 enum RioConversationBargeIn {
     static let echoTailSeconds: TimeInterval = 2.5
 
     static func accepts(_ command: String, isRioSpeaking: Bool, secondsSinceRioSpoke: TimeInterval?) -> Bool {
         let inEchoWindow = isRioSpeaking || (secondsSinceRioSpoke.map { $0 < echoTailSeconds } ?? false)
-        return !inEchoWindow || RioConversationCommands.isBareStop(command)
+        return !inEchoWindow || RioConversationCommands.isBareStop(command) || RioConversationCommands.isStopListening(command)
+    }
+}
+
+/// One conversation-mode command heard while Rio was still busy with the last one: it runs once
+/// he is free, if that is soon. Only one waits (the newest wins), and it expires quickly, so a
+/// command never runs long after it was said. In memory only. Pure.
+struct RioConversationPending: Equatable {
+    static let lifetime: TimeInterval = 8
+    static let busyLine = "One sec, still on the last one"
+
+    private(set) var command: String?
+    private var heardAt: Date?
+
+    var isEmpty: Bool { command == nil }
+
+    mutating func offer(_ command: String, now: Date) {
+        self.command = command
+        heardAt = now
+    }
+
+    enum Next: Equatable { case wait, run(String), expired, none }
+
+    /// What to do now: run the waiting command once Rio is free, or drop it once it is too old.
+    mutating func next(now: Date, isBusy: Bool) -> Next {
+        guard let command, let heardAt else { return .none }
+        if now.timeIntervalSince(heardAt) > Self.lifetime || now < heardAt {
+            clear()
+            return .expired
+        }
+        guard !isBusy else { return .wait }
+        clear()
+        return .run(command)
+    }
+
+    mutating func clear() {
+        command = nil
+        heardAt = nil
     }
 }
 

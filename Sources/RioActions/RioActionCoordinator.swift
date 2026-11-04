@@ -172,6 +172,16 @@ extension RioAction {
 /// Rio's own app, by the names it is spoken or listed by.
 enum RioSelfApp {
     static let refusalMessage = "Say \"stop listening\" to turn me off"
+    static let quitRefusalMessage = "I won't quit myself. You can quit me from the menu bar."
+    static let hideRefusalMessage = "I can't hide myself"
+
+    /// Rio never quits or hides himself, from any source, and says so without a panel first: a
+    /// quit heard by conversation mode points at "stop listening"; a quit on the action key at the
+    /// menu bar; a hide just says he can't.
+    static func refusal(for action: RioAction, source: RioCommandSource) -> String {
+        if case .hideApp = action { return hideRefusalMessage }
+        return source == .actionKey ? quitRefusalMessage : refusalMessage
+    }
 
     static func isRio(_ name: String) -> Bool {
         let words = name.lowercased().replacingOccurrences(of: ".app", with: "")
@@ -203,6 +213,17 @@ struct RioFrontApp: Equatable {
 /// accepts a spoken "yes"). The coordinator uses it when the confirmer provides it.
 @MainActor protocol RioConversationConfirming: AnyObject {
     func confirmConversationAction(_ action: RioAction) async -> Bool
+    /// Typing and the Return that submits it, approved as one: the panel shows every step
+    /// ("Type “git push”, then press Return in Terminal"). `alreadyTyped` is a Return for text
+    /// typed by an earlier command ("Press Return to submit “git push” in Terminal").
+    func confirmConversationSubmit(_ steps: [RioAction], alreadyTyped: Bool, appName: String?) async -> Bool
+}
+
+extension RioConversationConfirming {
+    func confirmConversationSubmit(_ steps: [RioAction], alreadyTyped: Bool, appName: String?) async -> Bool {
+        guard let shown = alreadyTyped ? steps.last : steps.first else { return false }
+        return await confirmConversationAction(shown)
+    }
 }
 
 enum RioActionText {
@@ -220,6 +241,7 @@ enum RioActionText {
     }
     static let resolverFailedMessage = "I couldn't work that out"
     static let cantRepeatMessage = "I won't repeat that one. Say it again if you mean it."
+    static let frontAppChangedMessage = "A different app came to the front, so I stopped before pressing anything"
 
     /// After the first plan and every re-plan failed: what went wrong, said plainly.
     static func couldNotFinish(_ reason: String) -> String {
@@ -380,6 +402,8 @@ final class RioActionCoordinator {
     /// The current run ended in Rio's own error line, which must never become "that" or the
     /// previous command.
     private var isUnresolvedRun = false
+    /// The last text Rio typed, where, and when (`noteTyping`).
+    private var recentTyping: (text: String, front: RioFrontApp?, at: Date)?
 
     init(
         parser: RioActionParsing,
@@ -446,7 +470,9 @@ final class RioActionCoordinator {
         switch analysis.parse {
         case .empty:
             return .nothing
-        case .actions(let actions):
+        case .actions(let parsed):
+            // "Open WhatsApp and text Ahmed": Rio only texts over iMessage (finding 50).
+            let actions = Self.localMessagingGuard(parsed, command: text)
             guard !analysis.isConfident, let smartResolver else {
                 return await executeLocal(actions, source: source, progress: progress)
             }
@@ -592,8 +618,11 @@ final class RioActionCoordinator {
         progress: @MainActor (String) -> Void
     ) async -> StepsResult {
         var summaries: [String] = []
-        // "Type sounds good and press enter" from conversation mode is approved once, as a pair.
-        var approvedSubmitIndex: Int?
+        // "Type sounds good and press enter" from conversation mode is approved once, with every
+        // step up to the Return shown; those steps then run without asking again, as long as the
+        // app in front stays the one the owner approved them for.
+        var approvedThrough: Int?
+        var approvedFront: RioFrontApp?
         for (index, action) in actions.enumerated() {
             progress(RioActionText.working(for: action))
             var riskyPlannedStep = planned && RioSmartRouting.plannedStepNeedsConfirmation(action)
@@ -614,30 +643,48 @@ final class RioActionCoordinator {
                     riskyPlannedStep = true
                 }
             }
-            // Rio never quits himself from the room, a phone or an automation.
-            if action.targetsRioItself, source != .actionKey {
-                return .stopped(.failed(RioSelfApp.refusalMessage))
+            // Rio never quits or hides himself, from any source, and never asks first only to refuse.
+            if action.targetsRioItself {
+                return .stopped(.failed(RioSelfApp.refusal(for: action, source: source)))
             }
             if source.refuses(action) || (riskyPlannedStep && source == .phone) {
                 return .stopped(.failed("I won't do that from your phone. Do it on your Mac."))
             }
-            let isApprovedSubmit = approvedSubmitIndex == index
-            let submitsTyping = source == .conversation && Self.typesThenSubmits(actions, at: index)
-            let asks = riskyPlannedStep || action.targetsRioItself || submitsTyping
+            let isApproved = approvedThrough.map { index <= $0 } ?? false
+            // The approved Return (and anything before it) only goes to the app it was approved for.
+            if isApproved, let approvedFront, let front = frontApp(), !Self.sameApp(front, approvedFront) {
+                return .stopped(.failed(RioActionText.frontAppChangedMessage))
+            }
+            let submitEnd = source == .conversation ? Self.submitIndex(typingAt: index, in: actions) : nil
+            let typedBefore = source == .conversation && submitEnd == nil && Self.isSubmit(action)
+                ? typedTextBeforeSubmit(in: actions, at: index) : nil
+            let asks = riskyPlannedStep || submitEnd != nil || typedBefore != nil
                 || conversationTerminalInput(action, in: actions, at: index, source: source)
                 || needsConfirmation(action, source: source)
-            if asks, !isApprovedSubmit {
+            if asks, !isApproved {
                 // No confirmer means no way to ask, so never run it.
                 guard let confirmer else { return .stopped(.cancelled) }
+                let conversational = source == .conversation && !action.requiresConfirmation
+                    ? confirmer as? RioConversationConfirming : nil
                 let confirmed: Bool
-                if source == .conversation || action.targetsRioItself, !action.requiresConfirmation,
-                   let conversational = confirmer as? RioConversationConfirming {
+                if let conversational, let submitEnd {
+                    confirmed = await conversational.confirmConversationSubmit(
+                        Array(actions[index...submitEnd]), alreadyTyped: false, appName: frontApp()?.name
+                    )
+                } else if let conversational, let typedBefore {
+                    confirmed = await conversational.confirmConversationSubmit(
+                        [.typeText(typedBefore), action], alreadyTyped: true, appName: frontApp()?.name
+                    )
+                } else if let conversational {
                     confirmed = await conversational.confirmConversationAction(action)
                 } else {
                     confirmed = await confirmer.confirm(action)
                 }
                 guard confirmed else { return .stopped(.cancelled) }
-                if submitsTyping { approvedSubmitIndex = index + 1 }
+                if let submitEnd {
+                    approvedThrough = submitEnd
+                    approvedFront = frontApp()
+                }
             }
             // "Switch to Chrome, then press command N": the keys must land in Chrome.
             if index > 0, RioSmartRouting.focusesApp(actions[index - 1]), RioSmartRouting.actsOnFrontApp(action),
@@ -651,6 +698,7 @@ final class RioActionCoordinator {
             case .done(let summary):
                 // So the next command can say "it", "that" or "the same" (see RioFollowUp.swift).
                 if recordsFollowUps { followUps.record(action, now: now()) }
+                noteTyping(action)
                 summaries.append(summary)
             case .failed(let message):
                 return .failed(index: index, message: message, summaries: summaries)
@@ -659,6 +707,32 @@ final class RioActionCoordinator {
             }
         }
         return .finished(summaries: summaries)
+    }
+
+    // MARK: Messaging apps
+
+    /// A local plan that opens WhatsApp, Slack and the like and also sends a message: the message
+    /// would go out over iMessage, so it becomes the resolver's "I can only send texts over
+    /// iMessage" answer (`RioSmartPlanGuards.messagingAppGuard`). The app is still opened.
+    static func localMessagingGuard(_ actions: [RioAction], command: String) -> [RioAction] {
+        guard actions.contains(where: { if case .sendMessage = $0 { return true } else { return false } }),
+              let app = RioSmartPlanGuards.namedChatApp(command) else { return actions }
+        let key = (app.split(separator: " ").last.map(String.init) ?? app).lowercased()
+        let opensApp = actions.contains { step in
+            switch step {
+            case .openApp(let name), .switchToApp(let name): return name.lowercased().contains(key)
+            case .openURL(let url): return url.host?.lowercased().contains(key) ?? false
+            default: return false
+            }
+        }
+        guard opensApp else { return RioSmartPlanGuards.messagingAppGuard(actions, command: command) }
+        var answered = false
+        return actions.compactMap { step in
+            guard case .sendMessage = step else { return step }
+            if answered { return nil }
+            answered = true
+            return .answer(RioSmartPlanGuards.otherAppAnswer(app))
+        }
     }
 
     // MARK: Terminals and submits
@@ -681,7 +755,7 @@ final class RioActionCoordinator {
         lookback: for previous in actions[..<index].reversed() {
             switch previous {
             case .openApp(let name), .switchToApp(let name):
-                namedTerminal = RioTaskSafety.isTerminal(appName: name)
+                namedTerminal = RioTaskSafety.isTerminalCapable(appName: name)
                 break lookback
             case .typeText:
                 continue
@@ -693,16 +767,63 @@ final class RioActionCoordinator {
         }
         if namedTerminal { return true }
         // The app's executor always reports the frontmost app; only test doubles may not.
-        guard let reporter = executor as? RioFrontAppReporting else { return false }
-        let front = reporter.frontmostApp()
-        return RioTaskSafety.isTerminal(appName: front.name, bundleID: front.bundleID)
+        guard let front = frontApp() else { return false }
+        return RioTaskSafety.isTerminalCapable(appName: front.name, bundleID: front.bundleID)
     }
 
-    /// Typing immediately followed by Return submits it, like sending a message.
-    private static func typesThenSubmits(_ actions: [RioAction], at index: Int) -> Bool {
-        guard case .typeText = actions[index], index + 1 < actions.count,
-              case .pressKeys(let combo) = actions[index + 1] else { return false }
-        return combo.key == "return"
+    private func frontApp() -> RioFrontApp? {
+        (executor as? RioFrontAppReporting)?.frontmostApp()
+    }
+
+    static func sameApp(_ a: RioFrontApp, _ b: RioFrontApp) -> Bool {
+        if let first = a.bundleID, let second = b.bundleID { return first == second }
+        return a.name?.lowercased() == b.name?.lowercased()
+    }
+
+    /// A Return (with or without modifiers) sends or runs what was typed.
+    static func isSubmit(_ action: RioAction) -> Bool {
+        if case .pressKeys(let combo) = action { return combo.key == "return" }
+        return false
+    }
+
+    /// For typing at `index`: the index of the Return that submits it, when only more typing and
+    /// plain keys ("press space") come in between. Nil when no Return follows that way.
+    static func submitIndex(typingAt index: Int, in actions: [RioAction]) -> Int? {
+        guard case .typeText = actions[index] else { return nil }
+        for next in actions.indices.dropFirst(index + 1) {
+            let step = actions[next]
+            if isSubmit(step) { return next }
+            switch step {
+            case .typeText: continue
+            case .pressKeys(let combo) where !(combo.command || combo.control || combo.option): continue
+            default: return nil
+            }
+        }
+        return nil
+    }
+
+    /// How long typing counts as waiting to be submitted by a later "Rio, press enter".
+    static let typedSubmitWindow: TimeInterval = 20
+
+    /// The text a Return at `index` would submit: typing earlier in this command, or typing done
+    /// by a command a moment ago in the app still in front. Nil when nothing was typed.
+    private func typedTextBeforeSubmit(in actions: [RioAction], at index: Int) -> String? {
+        for previous in actions[..<index].reversed() {
+            if case .typeText(let text) = previous { return text }
+        }
+        guard let recent = recentTyping, now().timeIntervalSince(recent.at) <= Self.typedSubmitWindow else { return nil }
+        if let typedIn = recent.front, let front = frontApp(), !Self.sameApp(front, typedIn) { return nil }
+        return recent.text
+    }
+
+    /// Typing Rio did (from any source) that a Return may still submit, and a Return using it up.
+    /// In memory only.
+    private func noteTyping(_ action: RioAction) {
+        if case .typeText(let text) = action {
+            recentTyping = (text, frontApp(), now())
+        } else if Self.isSubmit(action) {
+            recentTyping = nil
+        }
     }
 
     /// An empty summary is a step that chose to say nothing ("be quiet" with Rio already quiet).

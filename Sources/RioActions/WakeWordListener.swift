@@ -196,8 +196,9 @@ enum WakeWordListenerStartResult: Equatable {
 
     // MARK: Recognition
 
-    /// Starts a fresh recognition task on the running engine, discarding the old one.
-    private func beginRecognitionTask() {
+    /// Starts a fresh recognition task on the running engine, discarding the old one. With
+    /// `replayingPreRoll`, the audio kept during an empty-final wait goes in first.
+    private func beginRecognitionTask(replayingPreRoll: Bool = false) {
         generation += 1
         let current = generation
         silenceTimer?.cancel()
@@ -216,7 +217,7 @@ enum WakeWordListenerStartResult: Equatable {
         request.taskHint = .dictation
         request.contextualStrings = ["Rio", "Hey Rio"]
         if #available(macOS 13.0, *) { request.addsPunctuation = false }
-        requestBox.replace(with: request)
+        requestBox.replace(with: request, replayingPreRoll: replayingPreRoll)
 
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             let text = result?.bestTranscription.formattedString
@@ -339,7 +340,9 @@ enum WakeWordListenerStartResult: Equatable {
     /// A final result with no words (silence): wait (`WakeListenTiming.emptyFinalDelay`: fast
     /// at first, then backing off to a few seconds) instead of restarting recognition in a tight
     /// loop, and listen again at once when sustained sound arrives, so a "Rio" said in a quiet
-    /// room is not missed while a fan or a key click doesn't keep the recognizer churning.
+    /// room is not missed while a fan or a key click doesn't keep the recognizer churning. The
+    /// audio heard during the wait (up to `WakeListenTiming.preRollSeconds`) is replayed into the
+    /// new recognition, so the start of what woke it ("Rio") is not clipped. Memory only.
     private func restartAfterEmptyFinal() {
         consecutiveEmptyFinals += 1
         let delay = WakeListenTiming.emptyFinalDelay(consecutive: consecutiveEmptyFinals)
@@ -348,6 +351,7 @@ enum WakeWordListenerStartResult: Equatable {
         task?.cancel()
         task = nil
         _ = requestBox.takeHeardSound()
+        requestBox.keepPreRoll(seconds: WakeListenTiming.preRollSeconds)
         Task { [weak self] in
             // Check for sound often while the wait is short, less often once it has backed off.
             let step: TimeInterval = delay > 1 ? 0.1 : 0.05
@@ -362,7 +366,7 @@ enum WakeWordListenerStartResult: Equatable {
                 }
             }
             guard let self, current == self.generation, self.wantsListening, !self.isPaused else { return }
-            self.beginRecognitionTask()
+            self.beginRecognitionTask(replayingPreRoll: true)
         }
     }
 
@@ -402,20 +406,65 @@ private final class RecognitionRequestBox: @unchecked Sendable {
     /// cleared by the listener.
     private var heardSound = false
     private var soundGate = WakeSoundGate()
+    /// While the listener waits after an empty final: copies of the latest tap buffers (at most
+    /// `preRollLimit` seconds), replayed into the next request. Empty and off otherwise.
+    private var preRoll: [AVAudioPCMBuffer] = []
+    private var preRollFrames: Double = 0
+    private var preRollLimit: Double = 0
 
-    func replace(with newRequest: SFSpeechAudioBufferRecognitionRequest?) {
+    /// `replayingPreRoll` feeds the kept audio to `newRequest` first. Either way the kept audio
+    /// is dropped and keeping stops.
+    func replace(with newRequest: SFSpeechAudioBufferRecognitionRequest?, replayingPreRoll: Bool = false) {
         lock.lock()
         let old = request
         request = newRequest
+        if replayingPreRoll, let newRequest { preRoll.forEach { newRequest.append($0) } }
+        preRoll = []
+        preRollFrames = 0
+        preRollLimit = 0
         lock.unlock()
         old?.endAudio()
+    }
+
+    /// Starts keeping the last `seconds` of microphone audio for `replace(with:replayingPreRoll:)`.
+    func keepPreRoll(seconds: Double) {
+        lock.lock()
+        defer { lock.unlock() }
+        preRoll = []
+        preRollFrames = 0
+        preRollLimit = seconds
     }
 
     func append(_ buffer: AVAudioPCMBuffer) {
         lock.lock()
         request?.append(buffer)
         keepRecent(buffer)
+        storePreRoll(buffer)
         lock.unlock()
+    }
+
+    /// Caller holds the lock.
+    private func storePreRoll(_ buffer: AVAudioPCMBuffer) {
+        guard preRollLimit > 0, buffer.format.sampleRate > 0, let copy = Self.copy(buffer) else { return }
+        preRoll.append(copy)
+        preRollFrames += Double(copy.frameLength)
+        let limit = preRollLimit * buffer.format.sampleRate
+        while preRollFrames > limit, preRoll.count > 1 {
+            preRollFrames -= Double(preRoll.removeFirst().frameLength)
+        }
+    }
+
+    private static func copy(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard buffer.frameLength > 0,
+              let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else { return nil }
+        copy.frameLength = buffer.frameLength
+        let source = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: buffer.audioBufferList))
+        let target = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
+        for (from, to) in zip(source, target) {
+            guard let fromData = from.mData, let toData = to.mData else { return nil }
+            memcpy(toData, fromData, Int(min(from.mDataByteSize, to.mDataByteSize)))
+        }
+        return copy
     }
 
     /// True when sound (not silence) arrived since the last call.

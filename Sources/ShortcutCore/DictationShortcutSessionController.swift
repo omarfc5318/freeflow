@@ -141,6 +141,15 @@ final class DictationShortcutSessionController {
         return .stop
     }
 
+    /// The action key (Control) joined a running hold. AppState handles the event here, not
+    /// through `handle(event:)`'s return value: the controller notes it FIRST (so a quick Fn +
+    /// Control tap still brakes a running task, `lastSilentCancelWasActionKeyTap`), then
+    /// `beginSession` turns the hold into a Rio action. Exact shortcut matching is unchanged.
+    func actionModifierEngaged(isTranscribing: Bool, now: TimeInterval = ProcessInfo.processInfo.systemUptime, beginSession: () -> Void) {
+        _ = handle(event: .holdActionModifierEngaged, isTranscribing: isTranscribing, now: now)
+        beginSession()
+    }
+
     func beginManual(mode: RecordingTriggerMode) {
         activeMode = mode
         toggleStopArmed = false
