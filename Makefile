@@ -117,6 +117,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioVoiceCore.swift \
 	Sources/RioActions/WakePhraseExtractor.swift \
 	Sources/RioActions/RioConversationCore.swift \
+	Sources/RioActions/RioConversationStopForward.swift \
 	Sources/RioActions/MicUsageCore.swift \
 	Sources/RioActions/WindowAppNameResolver.swift \
 	Sources/RioActions/WindowGeometry.swift \
@@ -130,6 +131,8 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/ContextInferenceFailure.swift \
 	Sources/ContextVocabularyCore.swift \
 	Sources/CorrectionFeedbackCore.swift \
+	Sources/CorrectionReturnKeyPolicy.swift \
+	Sources/HeldLearnMoment.swift \
 	Sources/CorrectionLearningCore.swift \
 	Sources/DictationStyleCore.swift \
 	Sources/FLACUploadAudio.swift \

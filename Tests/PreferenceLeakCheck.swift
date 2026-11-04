@@ -39,12 +39,22 @@ final class TestScratchDefaults: @unchecked Sendable {
         for suite in all { shared.wipe(suite) }
     }
 
+    /// Plist file names of every suite made so far in this run.
+    static var ownFileNames: Set<String> {
+        shared.lock.lock()
+        defer { shared.lock.unlock() }
+        return Set(shared.everMade.map { "\($0).plist" })
+    }
+
     /// Deletes the plist of every suite made so far, repeating until cfprefsd has stopped
-    /// (re)writing them. Call once at the end of the run, after `removeAll()`.
+    /// (re)writing them. Call once at the end of the run, after `removeAll()`. Each suite is
+    /// flushed first (`CFPreferencesAppSynchronize`), so cfprefsd writes its empty 42-byte plist
+    /// now, where the sweep deletes it, rather than after the test process has exited.
     static func sweepFiles() {
         shared.lock.lock()
         let names = shared.everMade
         shared.lock.unlock()
+        for suite in names { flush(suite) }
         var quietPasses = 0
         var passes = 0
         while quietPasses < 3, passes < 40 {
@@ -52,6 +62,7 @@ final class TestScratchDefaults: @unchecked Sendable {
             for suite in names {
                 let file = PreferenceLeakCheck.preferencesDirectory.appendingPathComponent("\(suite).plist")
                 if FileManager.default.fileExists(atPath: file.path) {
+                    flush(suite)
                     try? FileManager.default.removeItem(at: file)
                     removedAny = true
                 }
@@ -74,7 +85,14 @@ final class TestScratchDefaults: @unchecked Sendable {
         let defaults = UserDefaults(suiteName: suite)
         defaults?.removePersistentDomain(forName: suite)
         defaults?.synchronize()
+        Self.flush(suite)
         try? FileManager.default.removeItem(at: PreferenceLeakCheck.preferencesDirectory.appendingPathComponent("\(suite).plist"))
+    }
+
+    /// Asks cfprefsd to write the suite out now (an emptied suite becomes an empty plist), so the
+    /// file can be deleted while the run is still going.
+    private static func flush(_ suite: String) {
+        CFPreferencesAppSynchronize(suite as CFString)
     }
 }
 
@@ -90,20 +108,27 @@ enum PreferenceLeakCheck {
         return Set(names.filter { $0.hasPrefix(TestScratchDefaults.prefix) && $0.hasSuffix(".plist") })
     }
 
-    /// Files present now that were not there before (files that pre-existed are ignored).
-    static func leaked(before: Set<String>, after: Set<String>) -> [String] {
-        after.subtracting(before).sorted()
+    /// Files present now that were not there before (files that pre-existed are ignored). With
+    /// `ownedBy`, only this run's own suites count: other worktrees running `make check` at the
+    /// same time create their own `FreeFlowTests.*` files, which are not this run's leak. (Every
+    /// test suite is made through `TestScratchDefaults`, so its own files are all known.)
+    static func leaked(before: Set<String>, after: Set<String>, ownedBy own: Set<String>? = nil) -> [String] {
+        let new = after.subtracting(before)
+        return (own.map { new.intersection($0) } ?? new).sorted()
     }
 
-    /// Wipes the registered suites, gives cfprefsd a moment to settle, then returns the leak.
+    /// Wipes the registered suites, then deletes their plists last, after every suite has run,
+    /// and returns any of this run's files that are still there.
     static func leakedSinceStart(before: Set<String>, directory: URL = preferencesDirectory) -> [String] {
         TestScratchDefaults.removeAll()
         TestScratchDefaults.sweepFiles()
-        var leaks = leaked(before: before, after: testPlists(in: directory))
+        let own = TestScratchDefaults.ownFileNames
+        var leaks = leaked(before: before, after: testPlists(in: directory), ownedBy: own)
         var attempts = 0
         while !leaks.isEmpty, attempts < 20 {
+            TestScratchDefaults.sweepFiles()
             Thread.sleep(forTimeInterval: 0.1)
-            leaks = leaked(before: before, after: testPlists(in: directory))
+            leaks = leaked(before: before, after: testPlists(in: directory), ownedBy: own)
             attempts += 1
         }
         return leaks
@@ -135,6 +160,15 @@ enum PreferenceLeakCheckTests {
             ["FreeFlowTests.New.2.plist"]
         )
         TestSupport.expect(PreferenceLeakCheck.testPlists(in: directory.appendingPathComponent("missing")).isEmpty, "A missing directory lists nothing")
+
+        // Another worktree's run creating its own file at the same time is not this run's leak.
+        touch("FreeFlowTests.OtherRun.3.plist")
+        let after = PreferenceLeakCheck.testPlists(in: directory)
+        TestSupport.expectEqual(
+            PreferenceLeakCheck.leaked(before: before, after: after, ownedBy: ["FreeFlowTests.New.2.plist"]),
+            ["FreeFlowTests.New.2.plist"]
+        )
+        TestSupport.expect(PreferenceLeakCheck.leaked(before: before, after: after, ownedBy: []).isEmpty, "only own files count")
     }
 
     private static func testScratchDefaultsAreRemovedFromDisk() {

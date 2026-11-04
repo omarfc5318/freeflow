@@ -37,6 +37,41 @@ enum RioActionKeyTests {
         testSessionControllerIgnoresEngagementEvent()
         testRioActionModifiersPolicy()
         testControlTapStillPassesThroughWhenIdle()
+        testQuickActionKeyTapBrakesTask()
+    }
+
+    /// Finding 90: a 0.1 s Fn + Control tap is discarded (it may not be a double-tap half, but it
+    /// is too short for a command) yet still reports itself so AppState stops a running task.
+    /// A plain Fn tap and the conversation chord never do.
+    private static func testQuickActionKeyTapBrakesTask() {
+        let tap = DictationShortcutSessionController()
+        tap.discardsShortHoldTaps = true
+        TestSupport.expectEqual(tap.handle(event: .holdActivated, isTranscribing: false, now: 10), .start(.hold))
+        TestSupport.expectEqual(tap.handle(event: .holdActionModifierEngaged, isTranscribing: false, now: 10.02), nil)
+        TestSupport.expectEqual(tap.handle(event: .holdDeactivated, isTranscribing: false, now: 10.1), .cancelSilently)
+        TestSupport.expect(tap.lastSilentCancelWasActionKeyTap, "a quick Fn + Control tap brakes a task")
+        // The next event clears the report, and the next plain Fn tap starts clean.
+        TestSupport.expectEqual(tap.handle(event: .holdActivated, isTranscribing: false, now: 20), .start(.hold))
+        TestSupport.expect(!tap.lastSilentCancelWasActionKeyTap, "the report lasts one event")
+        TestSupport.expectEqual(tap.handle(event: .holdDeactivated, isTranscribing: false, now: 20.1), .cancelSilently)
+        TestSupport.expect(!tap.lastSilentCancelWasActionKeyTap, "a plain Fn tap is not the brake")
+
+        let chord = DictationShortcutSessionController()
+        chord.discardsShortHoldTaps = true
+        _ = chord.handle(event: .holdActivated, isTranscribing: false, now: 0)
+        _ = chord.handle(event: .holdActionModifierEngaged, isTranscribing: false, now: 0.02)
+        TestSupport.expectEqual(chord.handle(event: .conversationChord, isTranscribing: false, now: 0.08), .cancelSilently)
+        TestSupport.expect(!chord.lastSilentCancelWasActionKeyTap, "the chord leaves the task running")
+        TestSupport.expectEqual(chord.handle(event: .holdDeactivated, isTranscribing: false, now: 0.12), nil)
+        TestSupport.expect(!chord.lastSilentCancelWasActionKeyTap, "nor does Fn's release after the chord")
+
+        // A longer Fn + Control hold is a normal stop (its delayed brake already fired).
+        let hold = DictationShortcutSessionController()
+        hold.discardsShortHoldTaps = true
+        _ = hold.handle(event: .holdActivated, isTranscribing: false, now: 0)
+        _ = hold.handle(event: .holdActionModifierEngaged, isTranscribing: false, now: 0.02)
+        TestSupport.expectEqual(hold.handle(event: .holdDeactivated, isTranscribing: false, now: 1.5), .stop)
+        TestSupport.expect(!hold.lastSilentCancelWasActionKeyTap, "a long hold is not a tap")
     }
 
     private static func play(

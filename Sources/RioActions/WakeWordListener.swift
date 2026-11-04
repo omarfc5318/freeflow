@@ -32,6 +32,9 @@ enum WakeWordListenerStartResult: Equatable {
     /// Called once when Rio hears just his name ("Rio" and a pause), so the owner of the
     /// listener can give a quick "yes?" cue while the listener waits for the command.
     var onBareName: (@MainActor () -> Void)?
+    /// Whether a bare "Rio" may open the command window now (false while Rio is talking or just
+    /// after; see `WakeListenTiming.bareNameOpensWindow`). Nil means always.
+    var bareNameMayOpenWindow: (@MainActor () -> Bool)?
     private let engine = AVAudioEngine()
     private let requestBox = RecognitionRequestBox()
     private var recognizer: SFSpeechRecognizer?
@@ -247,7 +250,8 @@ enum WakeWordListenerStartResult: Equatable {
                 pendingCommand = command
                 commandExpectedUntil = nil
                 scheduleSilenceTimer(generation: generation, after: WakeListenTiming.silenceToEnd(pendingCommand: command))
-            } else if pendingCommand == nil, WakePhraseExtractor.isBareName(withPauses) {
+            } else if pendingCommand == nil, WakePhraseExtractor.isBareName(withPauses),
+                      bareNameHeardAt != nil || bareNameMayOpenWindow?() ?? true {
                 // "Rio" and a thinking pause: keep listening for the command instead of ending
                 // the utterance after the usual short silence.
                 if bareNameHeardAt == nil {
@@ -332,9 +336,10 @@ enum WakeWordListenerStartResult: Equatable {
         }
     }
 
-    /// A final result with no words (silence): wait 0.25 s, then at most 0.5 s, instead of
-    /// restarting recognition in a tight loop, and listen again at once when sound arrives, so
-    /// a "Rio" said in a quiet room is not missed.
+    /// A final result with no words (silence): wait (`WakeListenTiming.emptyFinalDelay`: fast
+    /// at first, then backing off to a few seconds) instead of restarting recognition in a tight
+    /// loop, and listen again at once when sustained sound arrives, so a "Rio" said in a quiet
+    /// room is not missed while a fan or a key click doesn't keep the recognizer churning.
     private func restartAfterEmptyFinal() {
         consecutiveEmptyFinals += 1
         let delay = WakeListenTiming.emptyFinalDelay(consecutive: consecutiveEmptyFinals)
@@ -344,7 +349,8 @@ enum WakeWordListenerStartResult: Equatable {
         task = nil
         _ = requestBox.takeHeardSound()
         Task { [weak self] in
-            let step: TimeInterval = 0.05
+            // Check for sound often while the wait is short, less often once it has backed off.
+            let step: TimeInterval = delay > 1 ? 0.1 : 0.05
             var waited: TimeInterval = 0
             while waited < delay {
                 try? await Task.sleep(nanoseconds: UInt64(step * 1_000_000_000))
@@ -392,9 +398,10 @@ private final class RecognitionRequestBox: @unchecked Sendable {
     private var ringCount = 0
     private var written = 0
     private var recentRate = 16_000
-    /// Set when a sample louder than `soundThreshold` arrives; read and cleared by the listener.
+    /// Set when sustained sound arrives (`WakeSoundGate`, not one loud sample); read and
+    /// cleared by the listener.
     private var heardSound = false
-    private static let soundThreshold: Float = 0.03
+    private var soundGate = WakeSoundGate()
 
     func replace(with newRequest: SFSpeechAudioBufferRecognitionRequest?) {
         lock.lock()
@@ -456,16 +463,23 @@ private final class RecognitionRequestBox: @unchecked Sendable {
         }
         let frames = Int(buffer.frameLength)
         var index = 0
+        var squares: Float = 0
+        var kept = 0
         while index + step <= frames {
             var sum: Float = 0
             for offset in 0..<step { sum += channel[index + offset] }
             let sample = max(-1, min(1, sum / Float(step)))
-            if abs(sample) > Self.soundThreshold { heardSound = true }
+            squares += sample * sample
+            kept += 1
             ring[ringHead] = Int16(sample * 32_767)
             ringHead = (ringHead + 1) % ring.count
             ringCount = min(ringCount + 1, ring.count)
             index += step
             written += 1
+        }
+        if kept > 0 {
+            let rms = (squares / Float(kept)).squareRoot()
+            if soundGate.feed(rms: rms, seconds: Double(frames) / max(buffer.format.sampleRate, 1)) { heardSound = true }
         }
     }
 }

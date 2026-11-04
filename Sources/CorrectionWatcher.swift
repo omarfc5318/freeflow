@@ -31,6 +31,9 @@ final class CorrectionWatcher {
     private var pendingValue: String?
     private var pendingSince = Date()
     private var isPendingSettled = true
+    /// How long the last read of the watched field took, and its length (`CorrectionReturnKeyPolicy`).
+    private var lastReadSeconds: TimeInterval?
+    private var lastReadLength: Int?
     private static var accessibilityEnabledPIDs = Set<pid_t>()
 
     init(
@@ -70,6 +73,8 @@ final class CorrectionWatcher {
         session = nil
         pendingValue = nil
         isPendingSettled = true
+        lastReadSeconds = nil
+        lastReadLength = nil
     }
 
     private func schedule(_ token: UUID) {
@@ -101,7 +106,7 @@ final class CorrectionWatcher {
             onUnwatchable(NSWorkspace.shared.frontmostApplication?.localizedName)
             return
         }
-        guard let value = Self.textValue(of: focused),
+        guard let value = timedTextValue(of: focused),
               value.utf16.count <= Self.maxFieldLength,
               let caret = Self.selection(of: focused), caret.length == 0 else { return }
         session = CorrectionLearningSession(
@@ -109,18 +114,24 @@ final class CorrectionWatcher {
             isKnownWord: Self.isKnownWord, isVocabularyTerm: isVocabularyTerm
         )
         if session != nil {
+            // Every later read of this field (the polls and the Return key's) gives up quickly
+            // on a slow or hung app instead of the default ~6 s.
+            AXUIElementSetMessagingTimeout(focused, CorrectionReturnKeyPolicy.messagingTimeout)
             element = focused
             pendingValue = nil
             isPendingSettled = true
         }
     }
 
-    /// A Return key-down: reads the field now and settles it before a send clears it, so a fix
-    /// made and sent inside one poll interval is still learned.
+    /// A Return key-down (inside the event tap): settles the field before a send clears it, so a
+    /// fix made and sent inside one poll interval is still learned. Reads it live only while the
+    /// field answers quickly; otherwise the last polled value stands in, so a big Slack field or
+    /// a hung app never stalls Enter or the tap (`CorrectionReturnKeyPolicy`).
     func returnKeyPressed() {
-        guard var session, let element,
-              let value = Self.textValue(of: element),
-              value.utf16.count <= Self.maxFieldLength else { return }
+        guard var session, let element else { return }
+        let live = CorrectionReturnKeyPolicy.readsLive(lastReadSeconds: lastReadSeconds, lastLength: lastReadLength)
+            ? timedTextValue(of: element) : nil
+        guard let value = live ?? pendingValue, value.utf16.count <= Self.maxFieldLength else { return }
         session.observeReturnKey(value)
         self.session = session
         pendingValue = value
@@ -134,7 +145,7 @@ final class CorrectionWatcher {
         // Focus moved on: stop and learn from the last settled value, never a half-typed one.
         guard let focused = Self.focusedElement(), CFEqual(focused, element) else { return false }
         guard Self.isReadableTextControl(element),
-              let value = Self.textValue(of: element),
+              let value = timedTextValue(of: element),
               value.utf16.count <= Self.maxFieldLength else { return false }
         guard var session else { return false }
         let now = Date()
@@ -157,6 +168,15 @@ final class CorrectionWatcher {
             isPendingSettled = true
         }
         return true
+    }
+
+    /// `textValue(of:)`, remembering how long the read took for the Return key's policy.
+    private func timedTextValue(of element: AXUIElement) -> String? {
+        let start = ProcessInfo.processInfo.systemUptime
+        let value = Self.textValue(of: element)
+        lastReadSeconds = ProcessInfo.processInfo.systemUptime - start
+        lastReadLength = value?.utf16.count
+        return value
     }
 
     // MARK: Accessibility

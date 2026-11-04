@@ -659,7 +659,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     /// Set while a new dictation starts, so the previous edit's sign waits for that dictation to
     /// close instead of being wiped by it.
     var isDeferringLearnFeedback = false
-    var deferredLearnMoment = DeferredMoment()
+    var deferredLearnMoment = HeldLearnMoment()
     var unwatchableAppNotices = UnwatchableAppNotices()
 
     // MARK: Dictionary, styles, whisper mode and stats (logic in AppState+Enhancements.swift)
@@ -2168,7 +2168,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
             }
             stopAndTranscribe()
         case .cancelSilently:
+            // A quick Fn + Control tap is too short to be a command, but it is still the brake
+            // for a running multi-step task (the chord never reaches here: it has its own path).
+            let brakesTask = shortcutSessionController.lastSilentCancelWasActionKeyTap
             cancelShortcutSessionSilently(announceCancelled: false)
+            if brakesTask && rioActionsEnabled { stopRunningTaskNow() }
         case .switchedToToggle:
             clearRioActionSession()
             if isRecording {
@@ -3530,7 +3534,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
                                 } else {
                                     self.overlayManager.dismiss()
                                     // The previous edit's sign, held back while this dictation ran.
-                                    if let moment = self.deferredLearnMoment.take() { self.showTeddyMoment(moment) }
+                                    if let moment = self.deferredLearnMoment.take(now: ProcessInfo.processInfo.systemUptime) {
+                                        self.showTeddyMoment(moment)
+                                    }
                                 }
                             }
 
@@ -4106,6 +4112,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
         rioPendingTaskStop?.cancel()
         rioPendingTaskStop = nil
         guard rioActionSessionRequested else { return }
+        stopRunningTaskNow()
+    }
+
+    private func stopRunningTaskNow() {
         MainActor.assumeIsolated { if RioTaskProgress.shared.isRunning { RioTaskActionHandler.shared.stop() } }
     }
 
@@ -4137,6 +4147,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
     }
 
     private static let rioActionResultSeconds: TimeInterval = 2.5
+    /// How long after a dictation closes its held "Learned" sign may still be shown.
+    private static let heldLearnSignGraceSeconds: TimeInterval = 1.5
     private static let rioActionListeningSafetySeconds: TimeInterval = 30
 
     /// The transcript of an action session: a Teddy trick (name optional) or a command.
@@ -4336,8 +4348,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
             finishStopListening(transcript: transcript)
             return
         }
-        if let stop = RioConversationCommands.bareStop(transcript) {
-            stopEverythingRioIsDoing(stop)
+        if RioConversationCommands.isBareStop(transcript) {
+            stopEverythingRioIsDoing(transcript)
             return
         }
         guard !isRioCommandRunning, !RioConfirmationCenter.shared.isShowing,
@@ -4353,7 +4365,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     /// Rio's own voice. When none of those was going, a plain stop goes on to the parser's own
     /// stop handler (it pauses playing media and never cancels a running countdown); "wait" or
     /// "forget it" with nothing running does nothing.
-    @MainActor private func stopEverythingRioIsDoing(_ kind: RioConversationCommands.BareStop) {
+    @MainActor private func stopEverythingRioIsDoing(_ transcript: String) {
         var stoppedSomething = false
         if RioTimerCenter.shared.isRinging {
             RioTimerCenter.shared.stopRinging()
@@ -4369,12 +4381,20 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
         if RioVoice.shared.isSpeaking { stoppedSomething = true }
         RioVoice.shared.stopSpeaking()
-        if !stoppedSomething, kind == .stop, !isRioCommandRunning, !RioConfirmationCenter.shared.isShowing,
-           !isRecording, !isTranscribing {
+        // Only a plain "stop" goes on to the parser's stop (it pauses playing media); "be quiet",
+        // "enough" and the like, or a stop just after Rio finished talking, only acknowledge.
+        let speech = RioConversationMode.shared.rioSpeechState(now: Date())
+        if let forwarded = RioConversationStopForward.forwardedCommand(
+            for: transcript, stoppedSomething: stoppedSomething,
+            isRioSpeaking: speech.isSpeaking, secondsSinceRioSpoke: speech.secondsSinceSpoke
+        ), !isRioCommandRunning, !RioConfirmationCenter.shared.isShowing, !isRecording, !isTranscribing {
             statusText = "Working..."
             setRioActionPhase(.working("Working on it"))
-            Task { @MainActor [weak self] in await self?.runRioCommand("stop", source: .conversation) }
+            Task { @MainActor [weak self] in await self?.runRioCommand(forwarded, source: .conversation) }
             return
+        }
+        if speech.isSpeaking || speech.secondsSinceSpoke.map({ $0 < RioConversationBargeIn.echoTailSeconds }) == true {
+            stoppedSomething = true
         }
         let status = stoppedSomething ? "Stopped" : "Okay"
         statusText = status
@@ -4466,8 +4486,19 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 RioTranslatorMode.shared.setBusy(.dictation, dictating)
                 self.rioConversationResumeWork?.cancel()
                 guard !dictating else {
+                    self.deferredLearnMoment.sessionStarted(now: ProcessInfo.processInfo.systemUptime)
                     RioConversationMode.shared.setDictationActive(true)
                     return
+                }
+                // A "Learned" sign held for this dictation is shown by the plain-paste path as it
+                // closes; any other ending (a tap, silence, an error, a cancel, an action, Enter)
+                // drops it shortly after, so it can't pop up after some later dictation.
+                self.deferredLearnMoment.sessionEnded(now: ProcessInfo.processInfo.systemUptime)
+                if self.deferredLearnMoment.isHolding {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Self.heldLearnSignGraceSeconds) { [weak self] in
+                        guard let self, !self.isRecording, !self.isTranscribing else { return }
+                        self.deferredLearnMoment.dropIfSessionEnded()
+                    }
                 }
                 let work = DispatchWorkItem { RioConversationMode.shared.setDictationActive(false) }
                 self.rioConversationResumeWork = work

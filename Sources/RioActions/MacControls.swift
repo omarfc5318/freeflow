@@ -60,10 +60,14 @@ enum MacControls {
         }
     }
 
-    // MARK: Playback state (Spotify and Music only, never prompting)
+    // MARK: Playback state (Spotify and Music asked directly, never prompting; other apps by
+    // CoreAudio's output flag)
 
     /// Asks only players that are running and that Rio is already allowed to automate: an
-    /// Automation permission prompt is never raised from here. The scripts are fixed strings.
+    /// Automation permission prompt is never raised from here. The scripts are fixed strings, each
+    /// wrapped in `with timeout of 2 seconds` (`RioMediaPlan.stateScript`) so a hung player can't
+    /// hold the main thread for the default two-minute Apple Event timeout. A paused player does
+    /// not mean nothing plays: YouTube in a browser still has to be paused by "pause" or "stop".
     static func playbackState() -> RioPlaybackState {
         var answers: [String?] = []
         for bundleIdentifier in RioMediaPlan.players {
@@ -72,7 +76,7 @@ enum MacControls {
                   let source = RioMediaPlan.stateScript(bundleIdentifier: bundleIdentifier) else { continue }
             answers.append(runScript(source)?.stringValue)
         }
-        return RioPlaybackState.combine(answers)
+        return RioPlaybackState.combine(answers, otherAppPlaying: RioAudioOutputMonitor.isOtherAppPlaying())
     }
 
     /// True only when macOS already allows Rio to send Apple Events to the app. Asks nobody.

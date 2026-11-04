@@ -26,6 +26,11 @@ final class DictationShortcutSessionController {
     /// half of a double-tap: it ends silently (no transcription, no Pop, no shrug) instead of
     /// stopping normally, and the second press is free to start the hands-free session.
     var discardsShortHoldTaps = false
+    /// The action modifier (Control) joined the running hold.
+    private var actionModifierEngagedDuringHold = false
+    /// The last `.cancelSilently` was a short Fn + Control tap (not a double-tap half and not the
+    /// conversation chord): it still brakes a running multi-step task.
+    private(set) var lastSilentCancelWasActionKeyTap = false
 
     /// True when a tap of the hold key can be the first half of the toggle's double-tap.
     static func shortHoldTapsMayStartDoubleTap(hold: ShortcutBinding, toggle: ShortcutBinding) -> Bool {
@@ -37,8 +42,12 @@ final class DictationShortcutSessionController {
     ) -> DictationShortcutAction? {
         // Paste Again is handled before this controller runs; if it ever
         // reaches here, treat as a no-op so dictation state is unaffected.
-        if event == .copyAgainTriggered || event == .undoLastTriggered || event == .fixLastTriggered
-            || event == .holdActionModifierEngaged { return nil }
+        lastSilentCancelWasActionKeyTap = false
+        if event == .holdActionModifierEngaged {
+            if activeMode == .hold { actionModifierEngagedDuringHold = true }
+            return nil
+        }
+        if event == .copyAgainTriggered || event == .undoLastTriggered || event == .fixLastTriggered { return nil }
         if event == .conversationChord {
             guard let mode = activeMode else { return nil }
             // A hands-free session keeps recording: the Fn press that was part of the chord is
@@ -68,6 +77,7 @@ final class DictationShortcutSessionController {
                 activeMode = .hold
                 toggleStopArmed = false
                 holdStartedAt = now
+                actionModifierEngagedDuringHold = false
                 return .start(.hold)
             case .holdDeactivated, .toggleDeactivated:
                 return nil
@@ -88,8 +98,11 @@ final class DictationShortcutSessionController {
                 return .switchedToToggle
             case .holdDeactivated:
                 let wasTap = holdStartedAt.map { now - $0 < ShortcutTiming.maxTapDuration } ?? false
+                let withActionKey = actionModifierEngagedDuringHold
                 reset()
-                return discardsShortHoldTaps && wasTap ? .cancelSilently : .stop
+                guard discardsShortHoldTaps && wasTap else { return .stop }
+                lastSilentCancelWasActionKeyTap = withActionKey
+                return .cancelSilently
             case .holdActivated, .toggleDeactivated:
                 return nil
             case .copyAgainTriggered, .undoLastTriggered, .fixLastTriggered, .holdActionModifierEngaged,
@@ -148,5 +161,6 @@ final class DictationShortcutSessionController {
         startedByDoubleTap = false
         toggleStopPending = false
         holdStartedAt = nil
+        actionModifierEngagedDuringHold = false
     }
 }
