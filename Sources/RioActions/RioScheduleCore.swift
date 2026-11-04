@@ -20,6 +20,12 @@ enum RioScheduleParser {
         text = RioText.replacing(#"\b([ap])\.\s?m\.?"#, with: "$1m", in: text)
         text = RioText.collapseWhitespace(text.trimmingCharacters(in: CharacterSet(charactersIn: " .!?,;:")))
 
+        // "in 5 seconds", "after 10 minutes", "in an hour and a half": a plain delay, to the second.
+        if let seconds = relativeSeconds(text) {
+            let fire = now.addingTimeInterval(TimeInterval(seconds))
+            let parts = calendar.dateComponents([.hour, .minute], from: fire)
+            return RioParsedSchedule(recurrence: .once, hour: parts.hour ?? 0, minute: parts.minute ?? 0, firstFire: fire)
+        }
         guard let (recurrence, rest) = extractRecurrence(text) else {
             guard let result = RioDateTimeParser.parse(text, now: now, calendar: calendar),
                   result.remainder.isEmpty, result.start > now else { return nil }
@@ -33,6 +39,15 @@ enum RioScheduleParser {
               let first = RioScheduleMath.nextFire(after: now, recurrence: recurrence, hour: hour, minute: minute, calendar: calendar)
         else { return nil }
         return RioParsedSchedule(recurrence: recurrence, hour: hour, minute: minute, firstFire: first)
+    }
+
+    /// Seconds for a whole "in/after <duration>" phrase (up to a day), else nil.
+    private static func relativeSeconds(_ text: String) -> Int? {
+        guard let rest = RioText.firstMatch(#"^(?:in|after)\s+(.+?)(?:\s+from\s+now)?$"#, in: text)?[1] else { return nil }
+        let tokens = RioWords.tokens(rest)
+        guard let found = RioTimerDuration.scan(tokens: tokens), found.range == 0..<tokens.count,
+              (1...RioTimerDuration.maxSeconds).contains(found.seconds) else { return nil }
+        return found.seconds
     }
 
     private static func extractRecurrence(_ text: String) -> (RioRecurrence, String)? {

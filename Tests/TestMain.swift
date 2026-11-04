@@ -110,6 +110,7 @@ struct FreeFlowTests {
         await RioOutsideWeatherNewsTests.run()
         await RioOutsideIntegrationsTests.run()
         RioPhoneTests.run()
+        RioR3PhrasesTests.run(); await RioR3PhrasesTests.runAsync()
         await TranscriptionServiceTests.run()
         await APIConfigurationDraftTests.run()
         let leakedPlists = PreferenceLeakCheck.leakedSinceStart(before: preferencePlistsBefore)

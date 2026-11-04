@@ -72,7 +72,11 @@ final class RioMemoryActionHandler: RioActionHandling {
         let noticePending = store.recoveredCorruptFile != nil && !corruptNoticeGiven
         let result = recall(query)
         guard RioMemorySettings.isEnabled, !noticePending, case .none = store.recall(query) else { return result }
-        return await RioRecallFallback.resolve(memory: result, query: query, executor: executor)
+        // Conversation mode hears the room: a dictation snippet is never read aloud from it.
+        // (A precise per-request source would come from the coordinator; while the mode is on,
+        // the action key gets the hint too, which only costs a "search my dictations for ...".)
+        let allowsHistory = !RioConversationMode.shared.isOn
+        return await RioRecallFallback.resolve(memory: result, query: query, executor: executor, allowsHistory: allowsHistory)
     }
 
     private func recall(_ query: String) -> RioActionResult {
