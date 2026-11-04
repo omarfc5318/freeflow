@@ -25,6 +25,7 @@ enum RioArabicVocabulary {
             ("انستجرام", "Instagram"), ("انستا", "Instagram"), ("تويتر", "Twitter"), ("فيسبوك", "Facebook"), ("لينكدان", "LinkedIn"),
             ("لينكد ان", "LinkedIn"), ("تيك توك", "TikTok"), ("ريديت", "Reddit"), ("جوجل", "Google"),
             ("قوقل", "Google"), ("غوغل", "Google"), ("شات جي بي تي", "ChatGPT"),
+            ("كانفاس", "Canvas"), ("كانفس", "Canvas"), ("كنفاس", "Canvas"),
         ]
         return Dictionary(table.map { (key(for: $0.0), $0.1) }, uniquingKeysWith: { first, _ in first })
     }()
@@ -100,11 +101,17 @@ enum RioArabicVocabulary {
     static func isGreeting(_ word: String) -> Bool { greetings.contains(word.lowercased()) }
     static func isWakeWord(_ word: String) -> Bool { wakeWords.contains(word.lowercased()) }
 
-    /// Words dropped wherever they appear: politeness, "I want", "now", "a bit".
+    /// Words dropped wherever they appear: politeness, "I want (you to)", "now", "a bit", and the
+    /// sounds people make while thinking ("يعني", "امم", "اه"). A lone "ال" (the article split off
+    /// by speech-to-text, "ال volume") goes too.
     static let fillers: Set<String> = [
         "الحين", "الان", "بسرعه", "ابي", "ابغي", "ابغا", "ممكن", "تقدر", "بتقدر", "يلا", "طيب", "ياخي",
         "حبيبي", "عاد", "لي", "شوي", "شويه", "شويا", "قليلا", "بليز", "تكفي",
+        "ابيك", "ابغاك", "ابغيك", "بغيتك", "يعني", "اه", "اها", "امم", "اممم", "ممم", "اوه", "هاه", "ال",
     ]
+    /// English politeness around an Arabic command ("can you افتح لي الكروم please"), dropped only
+    /// before the first Arabic word or at the very end.
+    static let latinPoliteness: Set<String> = ["can", "could", "would", "you", "please", "pls", "plz", "kindly", "uh", "um", "so"]
     /// Two-word politeness phrases dropped as a unit.
     static let fillerPhrases: [[String]] = [["لو", "سمحت"], ["من", "فضلك"], ["لو", "تكرمت"], ["الله", "يعافيك"]]
 

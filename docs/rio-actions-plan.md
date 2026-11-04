@@ -514,6 +514,13 @@ Wave 3 wiring (done by the lead; branch `feat/rio-actions` already contains wave
   Whisper (coordinate through `RioConversationMode`/`WakeWordListener`, C's files; M may edit
   WakeWordListener.swift for this hook only). The action key path already uses Whisper, which is
   multilingual.
+  **Default: OFF, pending an explicit owner decision (2026-11-04).** The conversation-mode
+  re-listen ("Understand Arabic commands in conversation mode", `RioTranslatorSettings.
+  arabicConversationDefault`) was flipped on by default in round 1 (c502e02) without a recorded
+  owner decision. Each re-listen sends about 1.5 s of audio before the command plus the command
+  to the transcription provider (Groq Whisper by default), which is a provider call that can be
+  billed and new data transmission under AGENTS.md. It is back to off until the owner explicitly
+  says "on by default"; the setting text says it is off by default and what is sent.
 - Arabic (and any non-English) commands: on the action key and in conversation mode, when the
   transcript isn't English (the existing spoken-language detection or Whisper's language),
   translate it to English (Groq Whisper's `/audio/translations` for audio, or the LLM for text)
