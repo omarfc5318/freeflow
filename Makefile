@@ -23,6 +23,9 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioFindPhrases.swift \
 	Sources/RioActions/RioOutsidePhrases.swift \
 	Sources/RioActions/RioMeetingPhrases.swift \
+	Sources/RioActions/RioMeetingAudio.swift \
+	Sources/RioActions/RioMeetingPolicy.swift \
+	Sources/RioActions/RioClaudeScreen.swift \
 	Sources/RioActions/RioTranslatorPhrases.swift \
 	Sources/RioActions/RioTranslatorLanguages.swift \
 	Sources/RioActions/RioSpeechChunker.swift \

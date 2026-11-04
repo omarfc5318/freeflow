@@ -86,6 +86,7 @@ struct FreeFlowTests {
         RioFixCTests.run()
         RioTranslatorPhrasesTests.run()
         RioTranslatorAudioTests.run()
+        RioMeetingTests.run()
         await TranscriptionServiceTests.run()
         await APIConfigurationDraftTests.run()
         let leakedPlists = PreferenceLeakCheck.leakedSinceStart(before: preferencePlistsBefore)
