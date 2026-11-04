@@ -381,10 +381,24 @@ enum RioUnderstandingRoutingTests {
     @MainActor private static func coordinator(
         _ analysis: RioParseAnalysis, _ executor: FakeExecutor, _ resolver: FakeResolver?, context: RioSmartContextProviding? = nil
     ) -> RioActionCoordinator {
-        RioActionCoordinator(
+        let coordinator = RioActionCoordinator(
             parser: FakeParser(analysis: analysis), executor: executor, smartResolver: resolver,
             smartContext: context, isTrustingConversation: { true }
         )
+        // A window where every planned click or fill names its control exactly and harmlessly.
+        coordinator.plannedTargetResolver = ExactTargetResolver()
+        return coordinator
+    }
+
+    /// Resolves a planned click or fill to an element whose text is exactly the label.
+    @MainActor private final class ExactTargetResolver: RioTaskTargetResolving {
+        func resolveTarget(for action: RioAction) async -> RioTaskTargetResolution {
+            switch action {
+            case .click(let label, _): return .resolved(candidates: [RioTaskTarget(texts: [label], kind: .button)], isExact: true)
+            case .fillField(let label, _): return .resolved(candidates: [RioTaskTarget(texts: [label], kind: .textField)], isExact: true)
+            default: return .notApplicable
+            }
+        }
     }
 
     @MainActor private static func testLowConfidenceGoesToResolver() async {

@@ -152,23 +152,24 @@ enum RioTaskSafety {
     static func chromeHandBackReason(
         for action: RioAction, observation: RioTaskObservation, target: RioTaskTargetResolution
     ) -> String? {
-        // Only a browser has chrome around its content; in any other app the fields are the app's own.
-        guard observation.isBrowser else { return nil }
+        // Address fields are refused in ANY app that shows one (fail closed, even for a browser
+        // missing from the list). Only the "outside the page" rule is limited to browsers, because
+        // in other apps the fields are the app's own.
+        let browser = observation.isBrowser || observation.pageURL != nil || observation.focusedIsAddressField
+        let addressBar = "That's the browser's address bar, so please use it yourself."
         let chrome = "That's part of the browser, not the page, so please do that one yourself."
         switch action {
         case .fillField:
             guard case .resolved(let candidates, _) = target else { return nil }
-            if candidates.contains(where: { $0.isAddressField }) {
-                return "That's the browser's address bar, so please use it yourself."
-            }
-            if candidates.contains(where: { !$0.isInWebArea }) { return chrome }
+            if candidates.contains(where: { $0.isAddressField }) { return addressBar }
+            if browser, candidates.contains(where: { !$0.isInWebArea }) { return chrome }
         case .typeText:
-            if observation.focusedIsAddressField { return "That's the browser's address bar, so please use it yourself." }
-            if !observation.focusedInWebArea { return chrome }
+            if observation.focusedIsAddressField { return addressBar }
+            if browser, !observation.focusedInWebArea { return chrome }
         case .pressKeys(let combo):
             guard combo.key == "return" || combo.key == "space" else { return nil }
-            if observation.focusedIsAddressField { return "That's the browser's address bar, so please use it yourself." }
-            if !observation.focusedInWebArea { return chrome }
+            if observation.focusedIsAddressField { return addressBar }
+            if browser, !observation.focusedInWebArea { return chrome }
         default:
             break
         }

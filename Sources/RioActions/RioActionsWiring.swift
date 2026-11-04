@@ -117,7 +117,7 @@ enum RioActionsWiring {
         typeText: @escaping @MainActor (String) async -> Bool
     ) -> RioActionCoordinator {
         RioInstalledApps.shared.startObserving()
-        return RioActionCoordinator(
+        let coordinator = RioActionCoordinator(
             parser: RioCatalogParser(),
             executor: RioActionExecutor(
                 windowController: WindowController(),
@@ -145,5 +145,8 @@ enum RioActionsWiring {
             observer: RioUndoJournal.shared,
             confirmer: RioConfirmationCenter.shared
         )
+        // The AI's planned clicks and fills are checked against the live window first.
+        coordinator.plannedTargetResolver = RioTaskTargetResolver()
+        return coordinator
     }
 }

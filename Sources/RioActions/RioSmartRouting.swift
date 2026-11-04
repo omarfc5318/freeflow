@@ -108,6 +108,30 @@ enum RioSmartRouting {
 
     /// A step the brain planned (not the owner's own words) that presses something which may send,
     /// buy, submit, delete or empty the Trash, or fills a private field: it asks first.
+    /// A planned click or fill judged on the element it really resolves to (the executor presses
+    /// whatever the matcher makes of the label): unresolved, non-exact, risky or private targets,
+    /// and card-like values, all ask first.
+    static func resolvedPlannedStepNeedsConfirmation(_ action: RioAction, _ resolution: RioTaskTargetResolution) -> Bool {
+        switch action {
+        case .click, .fillField: break
+        default: return false
+        }
+        guard case .resolved(let candidates, let isExact) = resolution else { return true }
+        if !isExact { return true }
+        if candidates.contains(where: { $0.texts.contains(where: { RioTaskSafety.isRiskyText($0) || RioTaskSafety.isSensitiveLabel($0) }) }) {
+            return true
+        }
+        if case .fillField(_, let text) = action, RioTaskSafety.containsSensitiveValue(text) { return true }
+        return false
+    }
+
+    static func isClickOrFill(_ action: RioAction) -> Bool {
+        switch action {
+        case .click, .fillField: return true
+        default: return false
+        }
+    }
+
     static func plannedStepNeedsConfirmation(_ action: RioAction) -> Bool {
         switch action {
         case .click(let label, _):

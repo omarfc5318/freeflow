@@ -11,6 +11,39 @@ enum RioLeadHardeningTests {
         phoneRefusesRiskyActions()
         claudeMishearings()
         automationsCantBeLaundered()
+        plannedClicksResolveBeforeDeciding()
+        addressBarGuardFailsClosed()
+    }
+
+    /// A click or fill the AI planned is judged on the element it really resolves to.
+    private static func plannedClicksResolveBeforeDeciding() {
+        let click = RioAction.click(label: "Place", ordinal: nil)
+        let placeOrder = RioTaskTarget(texts: ["Place order"], kind: .button)
+        TestSupport.expect(RioSmartRouting.resolvedPlannedStepNeedsConfirmation(click, .resolved(candidates: [placeOrder], isExact: false)),
+                           "a loose match asks")
+        TestSupport.expect(RioSmartRouting.resolvedPlannedStepNeedsConfirmation(click, .unresolved), "unresolved asks")
+        let buy = RioTaskTarget(texts: ["Buy now"], kind: .button)
+        TestSupport.expect(RioSmartRouting.resolvedPlannedStepNeedsConfirmation(.click(label: "Buy now", ordinal: nil), .resolved(candidates: [buy], isExact: true)),
+                           "an exact but risky control asks")
+        let next = RioTaskTarget(texts: ["Next page"], kind: .button)
+        TestSupport.expect(!RioSmartRouting.resolvedPlannedStepNeedsConfirmation(.click(label: "Next page", ordinal: nil), .resolved(candidates: [next], isExact: true)),
+                           "an exact harmless control runs")
+        let email = RioTaskTarget(texts: ["Search"], kind: .textField)
+        TestSupport.expect(RioSmartRouting.resolvedPlannedStepNeedsConfirmation(.fillField(label: "Search", text: "4111 1111 1111 1111"), .resolved(candidates: [email], isExact: true)),
+                           "a card number never fills silently")
+    }
+
+    /// The address bar is refused in ANY app that shows one, not only listed browsers.
+    private static func addressBarGuardFailsClosed() {
+        var observation = RioTaskObservation(appName: "Some Browser", windowTitle: nil, outline: "", focusedField: nil, imageDataURL: nil)
+        observation.isBrowser = false
+        observation.focusedIsAddressField = true
+        observation.focusedInWebArea = false
+        let enter = RioAction.pressKeys(KeyCombo(key: "return", command: false, shift: false, option: false, control: false))
+        TestSupport.expect(RioTaskSafety.chromeHandBackReason(for: enter, observation: observation, target: .notApplicable) != nil,
+                           "Return in an address field is handed back even for an unlisted browser")
+        TestSupport.expect(RioTaskSafety.chromeHandBackReason(for: .typeText("x"), observation: observation, target: .notApplicable) != nil,
+                           "typing into an address field is handed back")
     }
 
     /// Automations run later with automation trust, so creating or running one is refused from the

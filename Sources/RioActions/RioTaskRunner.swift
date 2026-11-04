@@ -253,8 +253,8 @@ final class RioTaskRunner {
             of: action, targetLabel: target, narration: narration, modelFlagged: flagged, goal: goal,
             resolution: resolution, currentPage: state.pageURL,
             // Outside a browser the app's own content counts as "the page".
-            focusInWebArea: observation.isBrowser ? observation.focusedInWebArea : true,
-            focusIsAddressField: observation.isBrowser && observation.focusedIsAddressField
+            focusInWebArea: (observation.isBrowser || observation.pageURL != nil) ? observation.focusedInWebArea : true,
+            focusIsAddressField: observation.focusedIsAddressField
         ) {
             let detail = context(observation) + description
             guard await confirm(title: reason, detail: detail, state: &state) else { return .cancelled }

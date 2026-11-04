@@ -256,6 +256,9 @@ final class RioActionCoordinator {
     private let smartContext: RioSmartContextProviding?
     private let observer: RioActionObserving?
     private let confirmer: RioConfirming?
+    /// Resolves the AI's planned clicks and fills against the live window before deciding whether
+    /// to ask (security review). Nil fails closed: every planned click or fill asks.
+    var plannedTargetResolver: RioTaskTargetResolving?
     private let isTrustingConversation: () -> Bool
     private let now: () -> Date
     /// The words the last run could not place (set when it ends `.unknown`, cleared otherwise).
@@ -433,7 +436,21 @@ final class RioActionCoordinator {
         var summaries: [String] = []
         for (index, action) in actions.enumerated() {
             progress(RioActionText.working(for: action))
-            let riskyPlannedStep = planned && RioSmartRouting.plannedStepNeedsConfirmation(action)
+            var riskyPlannedStep = planned && RioSmartRouting.plannedStepNeedsConfirmation(action)
+            var action = action
+            if planned, !riskyPlannedStep, RioSmartRouting.isClickOrFill(action) {
+                if let resolver = plannedTargetResolver {
+                    let resolution = await resolver.resolveTarget(for: action)
+                    if RioSmartRouting.resolvedPlannedStepNeedsConfirmation(action, resolution) {
+                        riskyPlannedStep = true
+                    } else {
+                        // Press exactly the element that was checked.
+                        action = RioTaskTargetMapper.bind(action, to: resolution)
+                    }
+                } else {
+                    riskyPlannedStep = true
+                }
+            }
             if source.refuses(action) || (riskyPlannedStep && source == .phone) {
                 return .stopped(.failed("I won't do that from your phone. Do it on your Mac."))
             }
