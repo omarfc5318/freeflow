@@ -7,6 +7,9 @@ enum RioUndoEventKit {
     static func delete(_ item: RioCreatedItem) -> RioActionResult {
         let store = EKEventStore()
         switch item {
+        case .downloadsMoved:
+            // Undone through `RioUndoInverse.restoreDownloads`, never by deleting.
+            return .failed(message: "I can't remove that")
         case .calendarEvent(let identifier):
             guard hasFullAccess(.event) else { return .failed(message: "I don't have calendar access to remove that") }
             guard let event = store.event(withIdentifier: identifier) else {

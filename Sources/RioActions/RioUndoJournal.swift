@@ -108,6 +108,8 @@ import Foundation
             guard timers.countdown != nil else { return .failed(message: "That timer already finished") }
             timers.cancel()
             return .done(summary: "")
+        case .restoreDownloads:
+            return RioDownloadsOrganizer.shared.undo()
         case .restoreWindow:
             guard let window else { return .failed(message: RioUndoPlan.cantUndoMessage) }
             return WindowController().restore(window)

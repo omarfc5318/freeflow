@@ -8,6 +8,8 @@ import Foundation
 enum RioCreatedItem: Equatable {
     case calendarEvent(identifier: String)
     case reminder(identifier: String)
+    /// `.organizeDownloads` moved this many files; the organizer holds the move log undo reads.
+    case downloadsMoved(count: Int)
 }
 
 /// What the journal learned about the world just before (and just after) an action ran.
@@ -34,6 +36,8 @@ enum RioUndoInverse: Equatable {
     /// Cancel the countdown Rio started, and nothing else: never "stop", which would also stop a
     /// running task. Goes straight to the timer centre, not through the executor.
     case cancelCountdown
+    /// Move the files `.organizeDownloads` filed away back to where they were.
+    case restoreDownloads
 
     /// False when a failed inverse means its target is gone (the timer already finished), so
     /// the record is dropped instead of answering "no timer" for the next 15 minutes.
@@ -108,6 +112,10 @@ enum RioUndoPlan {
         case .createReminder:
             if case .reminder? = snapshot.created, let item = snapshot.created { return .reversible(.deleteCreated(item)) }
             return .irreversible
+        case .organizeDownloads:
+            // Only a run that actually moved something is worth undoing; a no-op must not hide an earlier action.
+            if case .downloadsMoved? = snapshot.created { return .reversible(.restoreDownloads) }
+            return .ignore
         case .selectionTask(let task):
             if case .improve = task { return .irreversible }
             return .ignore
@@ -122,7 +130,7 @@ enum RioUndoPlan {
              .openFile, .revealFile, .joinNextMeeting, .pressKeys, .browser, .emptyTrash,
              .click, .fillField, .runTask, .remember, .forget, .draftEmail, .addNote,
              .editLastDictation, .writeForMe, .smartPaste, .scheduleCommand, .addTrigger, .removeAutomation,
-             .recordMacro, .runMacro, .findThing, .organizeDownloads, .copyTextFromScreen, .playMusic,
+             .recordMacro, .runMacro, .findThing, .copyTextFromScreen, .playMusic,
              .notionAdd, .claudeCode:
             return .irreversible
         }
@@ -161,8 +169,10 @@ enum RioUndoPlan {
         switch inverse {
         case .restoreWindow: return "Undone: window put back"
         case .cancelCountdown: return "Undone: timer cancelled"
+        case .restoreDownloads: return "Undone: put your files back in Downloads"
         case .deleteCreated(.calendarEvent): return "Undone: removed the event"
         case .deleteCreated(.reminder): return "Undone: removed the reminder"
+        case .deleteCreated(.downloadsMoved): return "Undone: put your files back in Downloads"
         case .actions(let actions):
             guard let first = actions.first else { return "Undone" }
             return "Undone: \(phrase(for: first))"

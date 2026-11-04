@@ -68,6 +68,7 @@ struct FreeFlowTests {
         RioMeetingLinksTests.run()
         RioCalendarSummaryTests.run()
         RioFilesTests.run()
+        RioFindTests.run()
         RioClipboardTests.run()
         RioScreenPhrasesTests.run()
         RioClickMatcherTests.run()
