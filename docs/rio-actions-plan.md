@@ -593,6 +593,29 @@ unaffected (the key itself proves it was the owner).
   picker remains on Control+Command+Space. Regression tests: hold, double-tap, tap-then-hold
   timing, Fn+Control, the chord, and Right Command Fix Last.
 
+- OWNER REPORT (build 117): "the 3 key conversation mode… did not seem to work". The chord IS
+  detected (a synthetic left Fn+Ctrl+Opt toggled the mic on, and again off), but there's no
+  clear feedback: Fn+Ctrl shows the action "alert" pose first, and the "I'm listening" line can be
+  dropped while the cancelled session clears. Fix: a distinct chime; speak "I'm listening"
+  after the silent cancel completes (~0.3 s); the bear holds a persistent LISTENING pose while
+  conversation mode is on (ears up, small waves), and the menu bar teddy shows a listening
+  variant (`RioMenuBarIcon.listeningTemplateImage`).
+- OWNER DESIGN CHANGE (2026-11-03): "I need it to be basically an agent that runs my laptop
+  hands-free… You shouldn't hard-code commands. It should hear what I say, understand it, and
+  then go and do it." ("open another Chrome window" said "couldn't find an app called another
+  Chrome window"). Understanding-first routing:
+  (1) The local parser acts alone only on high-confidence parses (the app or target verifiably
+  resolves, or an unambiguous control command); anything else goes to the LLM resolver.
+  (2) The resolver gets context: front app and window title, running apps, installed app names,
+  the last command, and it may plan multi-step closed-set actions INCLUDING allow-listed pressKeys,
+  browser commands and menu-item clicks ("another Chrome window" → switchToApp Chrome +
+  pressKeys ⌘N). Security: the resolver's input is the owner's own words plus local state, so
+  allow-listed keys are OK; typeText stays local-only.
+  (3) On a failed step ("couldn't find…"), feed the error back to the resolver once or twice to
+  re-plan.
+  (4) Requests that need looking at the screen escalate to the task agent, generalised beyond
+  the browser.
+
 ## Wave 4 (after this build is tested and shipped)
 
 Owner picks: #32 text Rio from your iPhone (Messages from the owner's own handle only, risky
