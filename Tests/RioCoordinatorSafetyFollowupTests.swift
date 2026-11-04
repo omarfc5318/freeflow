@@ -115,6 +115,8 @@ enum RioCoordinatorSafetyFollowupTests {
         let plans: [[RioAction]] = [
             [.switchToApp(name: "Notes"), .pressKeys(commandTab), .typeText(payload), .pressKeys(enter)],
             [.switchToApp(name: "Notes"), .click(label: "Warp", ordinal: nil), .typeText(payload)],
+            // Allowlist: any other step in between (here an AI answer) also makes the target unknown.
+            [.switchToApp(name: "Notes"), .answer("sure"), .typeText(payload)],
         ]
         for plan in plans {
             let executor = FocusExecutor(front: RioFrontApp(name: "Notes", bundleID: "com.apple.Notes"), afterCommandTab: warp)

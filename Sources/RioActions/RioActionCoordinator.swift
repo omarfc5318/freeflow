@@ -674,20 +674,21 @@ final class RioActionCoordinator {
         case .typeText, .pressKeys: break
         default: return false
         }
-        // The app this command brought forward is only a hint (security review): a later step that
-        // can move focus makes the target unknown, and the live frontmost app is always checked.
+        // The app this command brought forward is only a hint (security review). Allowlist: only
+        // plain typing and unmodified keys are known to keep focus; any other step in between makes
+        // the target unknown, so Rio asks. The live frontmost app is always checked as well.
         var namedTerminal = false
         lookback: for previous in actions[..<index].reversed() {
             switch previous {
             case .openApp(let name), .switchToApp(let name):
                 namedTerminal = RioTaskSafety.isTerminal(appName: name)
                 break lookback
-            case .pressKeys(let combo) where combo.command || combo.control || combo.option:
-                return true
-            case .click, .runTask:
-                return true
-            default:
+            case .typeText:
                 continue
+            case .pressKeys(let combo) where !(combo.command || combo.control || combo.option):
+                continue
+            default:
+                return true
             }
         }
         if namedTerminal { return true }
