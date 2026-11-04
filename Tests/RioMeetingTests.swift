@@ -124,6 +124,9 @@ enum RioMeetingTests {
         TestSupport.expect(rule.tick(now: t0.addingTimeInterval(60), micInUse: true) == nil, "running")
         TestSupport.expect(rule.tick(now: t0.addingTimeInterval(7_199), micInUse: true) == nil, "just under 2 h")
         TestSupport.expectEqual(rule.tick(now: t0.addingTimeInterval(7_200), micInUse: true), .tooLong)
+        for reason in [RioMeetingStopReason.callEnded, .tooLong, .captureStopped] {
+            TestSupport.expect(reason.spokenLine.contains("wiped"), "auto-stop line says the audio is gone: \(reason)")
+        }
     }
 
     private static func testAutoStopCallEnded() {

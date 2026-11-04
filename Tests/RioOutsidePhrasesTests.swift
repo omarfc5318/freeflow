@@ -160,7 +160,7 @@ enum RioOutsidePhrasesTests {
         TestSupport.expectEqual(parser.parse("what's due on Canvas"), .actions([.canvasDue(range: nil)]))
         TestSupport.expectEqual(parser.parse("add buy milk to Notion"), .actions([.notionAdd(text: "buy milk", page: nil)]))
         TestSupport.expectEqual(parser.parse("what's the news about AI"), .actions([.news(topic: "AI")]))
-        TestSupport.expectEqual(parser.parse("play"), .actions([.media(.playPause)]))
+        TestSupport.expectEqual(parser.parse("play"), .actions([.media(.play)]))
         TestSupport.expectEqual(parser.parse("next song"), .actions([.media(.next)]))
         TestSupport.expectEqual(parser.parse("what's on my clipboard"), .actions([.clipboard(.readCurrent)]))
     }

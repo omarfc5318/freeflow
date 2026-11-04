@@ -103,7 +103,8 @@ final class RioCompanionModel: ObservableObject {
             mode: mode,
             hasTimer: machine.timerText() != nil,
             hasErrorCard: errorText.map { now < $0.until } ?? false,
-            gate: gate
+            gate: gate,
+            secondsSinceLastEvent: machine.secondsSinceLastEvent(at: now)
         )
         if next != schedule { schedule = next }
     }

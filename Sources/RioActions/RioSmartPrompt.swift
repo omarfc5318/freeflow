@@ -31,7 +31,7 @@ enum RioSmartPrompt {
         {"action":"webSearch","query":"<words>"}
         {"action":"volume","mode":"up|down|mute|unmute|set","level":<0-100, set only>}
         {"action":"brightness","mode":"up|down|set","level":<0-100, set only>}
-        {"action":"media","command":"playPause|next|previous"}
+        {"action":"media","command":"play|pause|playPause|next|previous"}
         {"action":"playMusic","query":"<song, artist or playlist>"}
         {"action":"screenshot","kind":"fullScreen|selection|window"}
         {"action":"doNotDisturb","isOn":true|false}

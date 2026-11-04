@@ -187,6 +187,9 @@ enum RioSystemCoreTests {
         TestSupport.expectApproximatelyEqual(Double(RioBrightness.scalar(fromPercent: 50)), 0.5)
         TestSupport.expectApproximatelyEqual(Double(RioBrightness.scalar(fromPercent: 400)), 1.0)
         TestSupport.expectEqual(RioBrightness.target(after: .up, fromPercent: 41), 51)
+        TestSupport.expectEqual(RioBrightness.summary(target: 5, after: .set(0)), "Brightness at 5 percent. I kept a little light on.")
+        TestSupport.expectEqual(RioBrightness.summary(target: 5, after: .set(5)), "Brightness at 5 percent")
+        TestSupport.expectEqual(RioBrightness.summary(target: 5, after: .down), "Brightness at 5 percent")
         TestSupport.expectEqual(RioBrightness.target(after: .up, fromPercent: 95), 100)
         // A hands-free owner must still see the screen: spoken brightness never goes below 5%.
         TestSupport.expectEqual(RioBrightness.target(after: .down, fromPercent: 5), RioBrightness.minimumSpoken)

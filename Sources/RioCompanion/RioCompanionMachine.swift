@@ -257,6 +257,10 @@ struct RioCompanionMachine {
         run.start + run.plan.totalDuration + RioDockRunPlan.returnDuration
     }
 
+    /// Seconds since the last event the machine saw, for the redraw tier (the listening pose
+    /// settles to the slow tier a few seconds after anything happened).
+    func secondsSinceLastEvent(at now: TimeInterval) -> TimeInterval { now - lastEvent }
+
     /// The moment he last did something; the 20 s of rest count from here.
     private func idleSince(at now: TimeInterval) -> TimeInterval {
         var latest = lastEvent

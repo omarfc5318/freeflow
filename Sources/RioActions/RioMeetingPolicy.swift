@@ -3,6 +3,17 @@ import Foundation
 enum RioMeetingStopReason: Equatable {
     case callEnded
     case tooLong
+    /// The capture stream stopped on its own (permission revoked, display change).
+    case captureStopped
+
+    /// What Rio says when the copilot stops by itself, so a hands-free owner isn't left guessing.
+    var spokenLine: String {
+        switch self {
+        case .callEnded: return "The call ended, so I stopped listening and wiped what I heard."
+        case .tooLong: return "I stopped listening to the call after two hours and wiped what I heard."
+        case .captureStopped: return "I lost the call audio, so I stopped listening and wiped what I heard."
+        }
+    }
 }
 
 /// When the meeting copilot stops by itself. The clock is injected, so tests need no waiting.

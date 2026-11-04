@@ -182,7 +182,7 @@ enum RioArabicCommandTests {
             ("طفّي الصوت", .volume(.mute)),
             ("شغّل الصوت", .volume(.unmute)),
             ("خلي الصوت خمسين", .volume(.set(50))),
-            ("شغّل الموسيقى", .media(.playPause)),
+            ("شغّل الموسيقى", .media(.play)),
             ("الأغنية الجاية", .media(.next)),
             ("قفّل الشاشة", .lockScreen),
             ("خذ لقطة شاشة", .screenshot(.fullScreen)),

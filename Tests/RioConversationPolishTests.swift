@@ -173,6 +173,11 @@ enum RioConversationPolishTests {
             mode: .conversing, hasTimer: false, hasErrorCard: false, gate: gate, secondsSinceLastEvent: 0.5
         )
         TestSupport.expectEqual(fresh, listening)
+        // The model passes the machine's own clock: 3 s after an event the pose settles.
+        var machine = RioCompanionMachine()
+        machine.showMoment(.undone, at: 10)
+        TestSupport.expectEqual(machine.secondsSinceLastEvent(at: 14), 4)
+        TestSupport.expectEqual(machine.secondsSinceLastEvent(at: 10.5), 0.5)
         var hidden = gate
         hidden.displayAsleep = true
         TestSupport.expectEqual(RioRedrawPolicy.schedule(mode: .conversing, hasTimer: false, hasErrorCard: false, gate: hidden), .paused)

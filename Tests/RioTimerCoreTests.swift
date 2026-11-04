@@ -232,6 +232,8 @@ enum RioTimerCoreTests {
             ("10 minute timer", .actions([.startTimer(seconds: 600, label: nil)])),
             ("Rio, set a timer for 20 minutes called laundry", .actions([.startTimer(seconds: 1200, label: "laundry")])),
             ("timer 30 seconds called pasta", .actions([.startTimer(seconds: 30, label: "pasta")])),
+            // An Arabic label survives the word scanner (round 1: "...للشاي").
+            ("set a timer for 20 minutes called الشاي", .actions([.startTimer(seconds: 1200, label: "الشاي")])),
             ("cancel the timer", .actions([.cancelTimer])),
             ("how much time is left", .actions([.timerStatus])),
             ("stop", .actions([.cancelTimer])),

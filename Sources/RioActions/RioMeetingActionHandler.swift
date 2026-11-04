@@ -19,6 +19,7 @@ import Foundation
         static let needsKeys = "I need your transcription and AI keys set up first, the same ones as dictation."
         static let needsScreenRecording = "I need Screen and System Audio Recording permission to hear the call. You can allow it in System Settings, Privacy and Security, then try again."
         static let captureFailed = "I couldn't start listening to the call."
+        static let noCall = "I don't see a call. Start the meeting copilot once your call has begun."
         static let quiet = "I haven't heard anyone speaking yet."
         static let transcribeFailed = "I couldn't transcribe the call just now."
         static let summariseFailed = "I couldn't summarise that just now."
@@ -61,11 +62,15 @@ import Foundation
     private func start() async -> RioActionResult {
         guard RioMeetingSettings.isEnabled else { return .failed(message: Text.off) }
         if copilot.isRecording { return .done(summary: "I'm already listening to the call") }
+        // Announced out loud: nothing else tells the owner the copilot stopped by itself.
+        copilot.onAutoStopped = { reason in RioVoice.shared.speak(reason.spokenLine) }
         do {
             try await copilot.start()
             return .done(summary: "Listening to the call. I keep the last five minutes on this Mac only")
         } catch RioMeetingCopilot.StartFailure.needsScreenRecording {
             return .failed(message: Text.needsScreenRecording)
+        } catch RioMeetingCopilot.StartFailure.noCall {
+            return .failed(message: Text.noCall)
         } catch {
             return .failed(message: Text.captureFailed)
         }

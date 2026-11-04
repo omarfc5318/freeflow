@@ -19,11 +19,23 @@ enum RioHistoryPolicy {
         let label = actions.lazy.compactMap(sensitiveLabel).first
         let outcome: String
         if let label {
-            outcome = didSucceed ? label : "\(label) (didn't work)"
+            if didSucceed {
+                outcome = label
+            } else if actions.contains(where: isScreenQuestion), let reason = RioVisionMessages.historyReason(for: outcomeText) {
+                // A fixed Rio reason only (permission, offline...), never the screen or an answer.
+                outcome = "\(label) (didn't work: \(reason))"
+            } else {
+                outcome = "\(label) (didn't work)"
+            }
         } else {
             outcome = outcomeText
         }
         return Entry(transcript: redactTranscript ? redactedTranscript : trimmed, outcome: outcome)
+    }
+
+    private static func isScreenQuestion(_ action: RioAction) -> Bool {
+        if case .describeScreen = action { return true }
+        return false
     }
 
     /// Memory and clipboard commands carry the private content in what was said.

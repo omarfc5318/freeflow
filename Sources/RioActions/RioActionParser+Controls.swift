@@ -59,10 +59,17 @@ extension RioActionParser {
 
     static func parseMedia(_ s: String) -> RioAction? {
         let obj = #"(?:\s+(?:the|my|some))?\s+(?:music|song|track|audio|video|playback)"#
-        if RioText.matches("^(?:play|pause|resume|continue|unpause)(?:\(obj))?$", s)
-            || RioText.matches(#"^(?:play\s+pause|play\s+and\s+pause|toggle\s+(?:play|playback))$"#, s) {
+        // "Stop the music" pauses; it never cancels a timer (bare "stop" does, elsewhere).
+        if RioText.matches(#"^stop\s+(?:(?:the|my|this|that)\s+)?(?:music|song|track|audio|playback|spotify)(?:\s+please)?$"#, s)
+            || RioText.matches(#"^stop\s+playing(?:\s+(?:(?:the|my|this|that)\s+)?(?:music|songs?|track|this|that|it))?(?:\s+please)?$"#, s) {
+            return .media(.pause)
+        }
+        // A blind toggle only when the words ask for one.
+        if RioText.matches(#"^(?:play\s+pause|play\s+and\s+pause|toggle\s+(?:play|playback))$"#, s) {
             return .media(.playPause)
         }
+        if RioText.matches("^pause(?:\(obj))?$", s) { return .media(.pause) }
+        if RioText.matches("^(?:play|resume|continue|unpause)(?:\(obj))?$", s) { return .media(.play) }
         if RioText.matches(#"^(?:(?:play\s+)?(?:the\s+)?next(?:\s+(?:song|track|one))?|skip(?:\s+(?:this|the|that|it))?(?:\s+(?:song|track|one))?|skip\s+forward)$"#, s) {
             return .media(.next)
         }

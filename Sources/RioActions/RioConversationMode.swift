@@ -135,6 +135,12 @@ import Foundation
         listenerStarting = true
         let listener = self.listener ?? WakeWordListener { [weak self] command in self?.handle(command: command) }
         listener.onStopped = { [weak self] message in self?.failToStart(message) }
+        // A bare "Rio" and a thinking pause: a short "yes?" cue so the owner knows he's heard.
+        // Not while Rio is talking, so his own voice saying the name can't trigger it.
+        listener.onBareName = { [weak self] in
+            guard let self, self.core.isOn, !self.core.isPaused, !self.rioSpeaking else { return }
+            self.playSound?("Tink")
+        }
         self.listener = listener
         Task { @MainActor [weak self] in
             let result = await listener.start()

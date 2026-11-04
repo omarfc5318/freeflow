@@ -99,6 +99,12 @@ final class RioAutomationActionHandler: RioActionHandling {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let chosen = clean.isEmpty ? "Macro \(store.data.macros.count + 1)" : clean
         guard RioMacroRecorder.shared.start(name: chosen) else { return .failed(message: "I'm already watching you.") }
+        // The recorder stops watching after a few minutes but keeps the steps; remind the owner
+        // that nothing is saved until he says so. The name is his own; no step content is spoken.
+        RioMacroRecorder.shared.onAutoStop = { name, _ in
+            let minutes = Int(RioMacroMapper.maxRecordingSeconds / 60)
+            RioVoice.shared.speak("I stopped watching \(name) after \(minutes) minutes. Say stop recording to save it.")
+        }
         return .done(summary: "I'm watching. Do your steps, then say \"stop recording the macro\".")
     }
 
@@ -109,7 +115,8 @@ final class RioAutomationActionHandler: RioActionHandling {
         guard !result.steps.isEmpty else { return .failed(message: "I didn't see anything to save.") }
         store.save(RioMacro(id: UUID(), name: result.name, steps: result.steps, createdAt: Date()))
         if store.lastSaveFailed { return .failed(message: "I couldn't save that to this Mac's disk.") }
-        return .done(summary: "Saved \(result.name) with \(result.steps.count) steps")
+        let typed = RioMacroMapper.typedCharacterCount(result.steps)
+        return .done(summary: "Saved \(result.name): \(result.steps.count) steps, \(typed) typed characters")
     }
 
     private func runMacro(_ name: String, executor: RioActionExecuting) async -> RioActionResult {

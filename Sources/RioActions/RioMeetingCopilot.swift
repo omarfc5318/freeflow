@@ -24,7 +24,7 @@ final class RioMeetingCopilot: ObservableObject {
 
     /// Called after the copilot stops by itself (the call ended, two hours passed, or the
     /// capture stream stopped on its own: permission revoked, display change).
-    var onAutoStopped: ((RioMeetingStopReason) -> Void)?
+    var onAutoStopped: (@MainActor (RioMeetingStopReason) -> Void)?
 
     /// True while `start()` waits for the capture stream, so a second start can't open a second
     /// stream and a stop in that window isn't lost.
@@ -106,7 +106,7 @@ final class RioMeetingCopilot: ObservableObject {
     private func captureStoppedItself(session stopped: Int) {
         guard stopped == session, isRecording else { return }
         stop()
-        onAutoStopped?(.callEnded)
+        onAutoStopped?(.captureStopped)
     }
 
     /// The last `seconds` of the call, mixed. Empty when not recording.

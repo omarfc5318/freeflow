@@ -132,7 +132,7 @@ enum RioActionParserTests {
             ("mute and open spotify", a(.volume(.mute), o("Spotify"))),
             ("open chrome and search for cats", a(o(gc), .webSearch(query: "cats"))),
             ("search for cats and dogs", a(.webSearch(query: "cats and dogs"))),
-            ("open chrome then volume up then play", a(o(gc), .volume(.up), .media(.playPause))),
+            ("open chrome then volume up then play", a(o(gc), .volume(.up), .media(.play))),
 
             // Search
             ("search for pizza near me", a(.webSearch(query: "pizza near me"))),
@@ -202,11 +202,16 @@ enum RioActionParserTests {
             ("turn it", unk("turn it")),
 
             // Media
-            ("play", a(.media(.playPause))),
-            ("Pause.", a(.media(.playPause))),
-            ("pause the music", a(.media(.playPause))),
-            ("play music", a(.media(.playPause))),
-            ("resume", a(.media(.playPause))),
+            ("play", a(.media(.play))),
+            ("Pause.", a(.media(.pause))),
+            ("pause the music", a(.media(.pause))),
+            ("play music", a(.media(.play))),
+            ("resume", a(.media(.play))),
+            ("play pause", a(.media(.playPause))),
+            ("toggle playback", a(.media(.playPause))),
+            ("stop playing", a(.media(.pause))),
+            ("stop playing this song", a(.media(.pause))),
+            ("stop spotify please", a(.media(.pause))),
             ("next song", a(.media(.next))),
             ("skip", a(.media(.next))),
             ("skip this song", a(.media(.next))),
@@ -215,7 +220,7 @@ enum RioActionParserTests {
             ("previous song", a(.media(.previous))),
             ("go back", a(.browser(.back))),
             ("play taylor swift", .actions([.playMusic(query: "taylor swift")])),
-            ("stop the music", unk("stop the music")),
+            ("stop the music", a(.media(.pause))),
 
             // Lock and screenshots
             ("lock my screen", a(.lockScreen)),
@@ -480,7 +485,7 @@ enum RioParserRoundOneTests {
                      "Rio open Chrome inshallah", "Rio, never mind, open Chrome.", "oh open chrome", "wallah, open chrome"] {
             eq(parser.parse(text), a(.openApp(name: gc)), text)
         }
-        eq(parser.parse("Rio, wait, pause the music."), a(.media(.playPause)))
+        eq(parser.parse("Rio, wait, pause the music."), a(.media(.pause)))
         eq(parser.parse("Rio, oops, undo that."), parser.parse("undo that"))
         eq(parser.parse("Rio, never mind, put it back"), parser.parse("put it back"))
         eq(RioActionParser.stripEnvelope("never mind"), "never mind")

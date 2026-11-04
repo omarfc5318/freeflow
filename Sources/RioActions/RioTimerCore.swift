@@ -149,7 +149,7 @@ enum RioWords {
     }
 
     static func ranges(in text: String) -> [(token: String, range: Range<String.Index>)] {
-        guard let regex = try? NSRegularExpression(pattern: #"[0-9]+(?:\.[0-9]+)?|[A-Za-z']+"#) else { return [] }
+        guard let regex = try? NSRegularExpression(pattern: #"[0-9]+(?:\.[0-9]+)?|[\p{L}\p{M}']+"#) else { return [] }
         let full = NSRange(text.startIndex..., in: text)
         return regex.matches(in: text, range: full).compactMap { match in
             guard let range = Range(match.range, in: text) else { return nil }

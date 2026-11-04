@@ -154,4 +154,12 @@ enum RioBrightness {
         case .mute, .unmute: return nil
         }
     }
+
+    /// What Rio says after setting `target`; a request below the floor says why it stopped there.
+    static func summary(target: Int, after change: VolumeChange) -> String {
+        if case .set(let level) = change, level < minimumSpoken {
+            return "Brightness at \(target) percent. I kept a little light on."
+        }
+        return "Brightness at \(target) percent"
+    }
 }

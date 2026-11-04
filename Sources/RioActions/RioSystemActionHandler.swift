@@ -74,6 +74,6 @@ import Foundation
             return .failed(message: "I can only raise, lower or set brightness")
         }
         guard RioDisplayBrightness.set(percent: target) else { return unsupported }
-        return .done(summary: "Brightness at \(target) percent")
+        return .done(summary: RioBrightness.summary(target: target, after: change))
     }
 }
