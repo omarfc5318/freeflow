@@ -22,6 +22,8 @@ enum RioMeetingPhrases {
     private static let claude = "\(claudeName)(?:\\s+code)?"
     private static let please = #"(?:(?:please|hey)\s+)?"#
     private static let yes = #"(?:(?:yes|yeah|yep|ok|okay|sure)\s+)?"#
+    /// "tell Claude Code in Warp to run the linter".
+    private static let place = #"(?:\s+(?:in|on)\s+(?:warp|the\s+terminal|terminal|iterm2?))?"#
     private static let thatIt = #"(?:that|it|this|the\s+(?:permission|request|prompt)|(?:claudes?|clouds?)\s+(?:request|permission))"#
 
     private static let approvePatterns = [
@@ -45,6 +47,7 @@ enum RioMeetingPhrases {
         "^\(please)check\\s+on\\s+\(claude)$",
         "^\(please)(?:is|has)\\s+\(claude)\\s+(?:done|finished|waiting|stuck)(?:\\s+(?:yet|already|for\\s+me))?$",
         "^\(please)does\\s+\(claude)\\s+need\\s+me$",
+        "^\(please)ask\\s+\(claude)\\s+(?:what\\s+(?:its|it\\s+is|hes|he\\s+is)\\s+(?:doing|up\\s+to|working\\s+on)|how\\s+(?:its|it\\s+is)\\s+going)(?:\\s+(?:right\\s+)?now)?$",
     ]
 
     private static func parseClaude(raw: String, text: String) -> RioAction? {
@@ -60,14 +63,22 @@ enum RioMeetingPhrases {
     private static func parseSend(_ raw: String) -> RioAction? {
         let line = raw.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\u{2019}", with: "'")
         let patterns = [
-            "^\(please)tell\\s+\(claude)[,:]?\\s+(?:to|that)\\s+(.+)$",
             // "tell Claude no, use Supabase instead": the answer and the new instruction go together.
-            "^\(please)tell\\s+\(claude)[,:]?\\s+((?:no|yes|nope)\\b[,.!]?\\s+.+)$",
-            "^\(please)ask\\s+\(claudeName)\\s+code[,:]?\\s+(?:to\\s+)?(.+)$",
-            "^\(please)ask\\s+\(claudeName)[,:]?\\s+to\\s+(.+)$",
+            "^\(please)tell\\s+\(claude)\(place)[,:]?\\s+((?:no|yes|nope)\\b[,.!]?\\s+.+)$",
+            // "tell Claude to/that ...", "tell Claude Code in Warp to ...".
+            "^\(please)tell\\s+\(claude)\(place)[,:]?\\s+(?:to|that)\\s+(.+)$",
+            "^\(please)ask\\s+\(claudeName)\\s+code\(place)[,:]?\\s+(?:to\\s+)?(.+)$",
+            "^\(please)ask\\s+\(claudeName)\(place)[,:]?\\s+to\\s+(.+)$",
         ]
-        for pattern in patterns {
+        // "tell Claude: run the tests", "Claude, add a dark mode toggle" (a comma or colon after
+        // a bare "Claude"). Without "to" the words must read as an instruction, never a menu answer.
+        let barePatterns = [
+            "^\(please)tell\\s+\(claude)\(place)[,:]?\\s+(.+)$",
+            "^\(please)claude(?:\\s+code)?\\s*[,:]\\s+(.+)$",
+        ]
+        for (index, pattern) in (patterns + barePatterns).enumerated() {
             guard let groups = RioText.firstMatch(pattern, in: line), let body = groups[1] else { continue }
+            if index >= patterns.count, !isInstruction(body) { return nil }
             let trailing = CharacterSet(charactersIn: ". !").union(.whitespaces)
             let stripped = body.trimmingCharacters(in: trailing)
             let isQuestion = body.trimmingCharacters(in: .whitespaces).hasSuffix("?")
@@ -77,6 +88,14 @@ enum RioMeetingPhrases {
             return .claudeCode(.send(prompt))
         }
         return nil
+    }
+
+    /// Two or more words starting with a word, and not an answer to a permission menu
+    /// ("yes", "1", "approve"): those stay with the approve and deny phrases.
+    private static func isInstruction(_ body: String) -> Bool {
+        let text = body.trimmingCharacters(in: .whitespaces)
+        return RioText.matches(#"^\p{L}[\p{L}'\-]*[,]?\s+\S"#, text)
+            && !RioText.matches(#"^(?:yes|yeah|yep|yup|no|nope|ok|okay|sure|approve|approved|deny|denied|allow|accept|reject|decline|continue|proceed|go\s+ahead|do\s+it)\b"#, text)
     }
 
     // MARK: Meeting copilot

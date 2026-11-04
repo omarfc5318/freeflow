@@ -53,6 +53,7 @@ struct FreeFlowTests {
         AppTextInsertionDispatchTests.run()
         RioFollowUpMemory.shared.clear() // earlier coordinator tests recorded follow-up context
         RioActionParserTests.run()
+        RioParserClauseTests.run()
         RioSystemPhraseTests.run()
         RioSystemCoreTests.run()
         RioTimerCoreTests.run()

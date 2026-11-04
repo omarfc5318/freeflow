@@ -78,6 +78,15 @@ extension RioActionParser {
             let layout = actions + [Self.sideBySide(names[names.count - 2]), Self.sideBySide(names[names.count - 1], right: true)]
             return RioParseAnalysis(parse: .actions(layout), isConfident: opened.isConfident, resolverText: text)
         }
+        // "Chrome left, Warp right": two installed apps, one per side.
+        let sides = #"^(.+?)\s+(?:(?:on|to)\s+(?:the\s+)?)?(left|right)[\s,]+(?:and\s+)?(.+?)\s+(?:(?:on|to)\s+(?:the\s+)?)?(left|right)$"#
+        if let groups = RioText.firstMatch(sides, in: text), let firstSide = groups[2]?.lowercased(), let secondSide = groups[4]?.lowercased(),
+           firstSide != secondSide, let first = groups[1].flatMap(knownAppName), let second = groups[3].flatMap(knownAppName), first != second {
+            let (left, right) = firstSide == "left" ? (first, second) : (second, first)
+            return RioParseAnalysis(
+                parse: .actions([Self.sideBySide(left), Self.sideBySide(right, right: true)]), isConfident: true, resolverText: text
+            )
+        }
         let named = [
             #"^(?:(?:put|place|snap|tile|arrange|show|set\s+up)\s+)?(.+?)\s+and\s+(.+?)\s+(?:side\s+by\s+side|next\s+to\s+each\s+other)$"#,
             #"^(?:split\s+(?:the\s+)?(?:screen|view)|split\s+screen)(?:\s+(?:with|between))?\s+(.+?)\s+and\s+(.+)$"#,
@@ -204,6 +213,13 @@ extension RioActionParser {
         if let url = RioWebURLs.localURL(fromSpoken: target) ?? RioWebURLs.domainURL(fromSpoken: target) {
             return ParsedClause(action: .openURL(url), verb: verbText)
         }
+        // "open chrome and canvas", "open canvas in safari": the owner's own Canvas site.
+        if RioText.compact(target) == "canvas", let canvas = RioCanvasConfig.configuredBase {
+            return ParsedClause(action: .openURL(canvas), verb: verbText)
+        }
+        if let file = documentTarget(raw: rawTarget, target: target) {
+            return ParsedClause(action: .openFile(query: file), verb: verbText)
+        }
         target = withoutArabicArticle(target)
         let site = RioWebURLs.knownSite(compactName: RioText.compact(target))
         if let match = AppNameMatcher.match(for: target, in: installedApps) {
@@ -219,6 +235,18 @@ extension RioActionParser {
         // Either way it is a guess, so the smart resolver gets the first say.
         guard Self.looksLikeAppName(raw: rawTarget, target: target) else { return nil }
         return ParsedClause(action: make(target), verb: verbText, isConfident: false)
+    }
+
+    private static let documentWords = #"\b(?:notes|homework|hw|slides|pdf|syllabus|lecture|essay|resume|doc|docs|document|documents)\b"#
+
+    /// "open my MAT 108 notes" is a file, not an app called "MAT 108 notes". A bare "my notes"
+    /// stays the Notes app, and an installed app or known site with that name wins.
+    private func documentTarget(raw: String, target: String) -> String? {
+        guard RioText.matches(#"^\s*(?:my|the|our)\s+"#, raw), target.split(separator: " ").count >= 2,
+              RioText.matches(Self.documentWords, target),
+              RioWebURLs.knownSite(compactName: RioText.compact(target)) == nil,
+              AppNameMatcher.match(for: target, in: installedApps)?.kind.isStrong != true else { return nil }
+        return target
     }
 
     /// "open el WhatsApp": the Arabic article goes only when the name without it is an app or a
