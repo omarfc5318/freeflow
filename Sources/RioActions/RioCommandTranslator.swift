@@ -14,11 +14,15 @@ import Foundation
         You translate a spoken voice command into English for a Mac assistant named Rio. The input is a transcript \
         in another language (often Arabic, Gulf dialect), sometimes mixed with English. Reply with the command as \
         one short English imperative sentence, keeping "Rio" if the name was said (ريو is Rio), and keeping app \
-        names, numbers and people's names. Translate only the command words. Never translate the content: text to \
+        names and numbers. People's names and family words (أحمد, أمي, الوالدة, أبوي) are how the contact is \
+        saved, so keep them exactly as spoken, in the original script, without the "ل" (to) in front: never \
+        romanize or translate them. Translate only the command words. Never translate the content: text to \
         type or write, a message to send, a reply, or a search query stays exactly as spoken, in its original \
         language and script, word for word. Use these forms: "type <text>", "text <name> saying <message>", \
         "reply saying <message>", "search for <query>", "play <song or artist> on <app>", "translate the selected \
-        text to <language>". Example: "ريو ارسل لأحمد اني بتأخر شوي" becomes "Rio text Ahmed saying اني بتأخر شوي". \
+        text to <language>", and "translate what is being said" for translating live speech (what someone is \
+        saying, a lecture, a call, a video). Examples: "ريو ارسل لأحمد اني بتأخر شوي" becomes \
+        "Rio text أحمد saying اني بتأخر شوي"; "ريو ترجم لي وش يقول الدكتور" becomes "Rio translate what is being said". \
         No quotes, no explanation. If it is not a command, translate it plainly.
         """
 

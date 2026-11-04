@@ -15,6 +15,12 @@ enum RioArabicCommandTable {
         let wake = stripWake(&tokens, &originals)
         (tokens, originals) = withoutFiller(tokens, originals)
         (tokens, originals) = withoutLatinPoliteness(tokens, originals)
+        // "خلاص روح نام", "خلاص وقف الترجمة": "خلاص" (right, okay then) leading into a command.
+        // Alone it is "stop" and stays as said; "خلاص ولا شي" still reads as "never mind".
+        if tokens.first == "خلاص", tokens.count > 1 {
+            tokens.removeFirst()
+            originals.removeFirst()
+        }
         commandFormOfFirstWord(&tokens, &originals)
         // Timers, search, help and "time left" read the whole sentence: the clause splitter would
         // cut "خمس دقائق وثلاثين ثانية" or a search query at every "و".
@@ -32,10 +38,26 @@ enum RioArabicCommandTable {
                 parts.append(app)
                 continue
             }
-            // An English clause after an Arabic one ("افتح كروم and put it on the left") is
-            // already what the parser reads.
-            if index > 0, clause.allSatisfy(isLatinWord) {
+            // "افتح كروم وسكره": "close it" after an app is that app ("quit it" reads the
+            // previous clause). Without an app before it, "it" is unknown and the LLM gets it.
+            if index > 0, previousWasApp, clause.count == 1, let verb = RioArabicClauses.pronounVerbStem(clause[0]),
+               RioArabicClauses.isQuitVerb(verb) {
+                parts.append("quit it")
+                previousWasApp = false
+                continue
+            }
+            // An English clause next to an Arabic one ("افتح كروم and put it on the left",
+            // "open YouTube و دور على lofi") is already what the parser reads.
+            if clauses.count > 1, clause.allSatisfy(isLatinWord) {
                 parts.append(clause.joined(separator: " "))
+                previousWasApp = false
+                continue
+            }
+            // "... و دور على 3blue1brown": a search clause with an English query.
+            if index > 0, let first = clause.first, RioArabicClauses.isSearchVerb(first),
+               let search = RioArabicClauses.whole(clause), search.hasPrefix("search for ") {
+                guard clause.dropFirst().allSatisfy({ isLatinWord($0) || ["عن", "على", "علي", "في"].contains($0) }) else { return nil }
+                parts.append(search)
                 previousWasApp = false
                 continue
             }
@@ -48,6 +70,66 @@ enum RioArabicCommandTable {
     }
 
     static func isLatinWord(_ word: String) -> Bool { word.unicodeScalars.allSatisfy(RioArabicText.isLatin) }
+
+    // MARK: English with Arabic around it
+
+    /// Verbs whose words after them are content to type or send: Arabic there may be part of the
+    /// message ("text Ali I'm late يلا"), so those commands are left exactly as said.
+    private static let messageVerbs: Set<String> = [
+        "type", "write", "text", "message", "reply", "tell", "send", "dictate", "note", "remember", "remind", "say", "email",
+    ]
+    /// Arabic words that only soften or pad a command, wherever they sit around English words.
+    private static let arabicPadding: Set<String> = RioArabicVocabulary.fillers.union(["خلاص", "بليز", "تكفى", "تكفي", "حبيبي"])
+
+    /// An English command with only Arabic padding around it: politeness ("لو سمحت", "الله
+    /// يخليك"), filler ("يلا", "يعني"), the name at the end ("يا ريو"), a stray "ال" split off
+    /// an English word ("ال volume up") or "و" (and) between English words ("open Chrome و
+    /// Safari"). Returns the English command ("Rio open Chrome"), or nil when a real Arabic word is
+    /// left, or the command carries a message (its Arabic may be content).
+    static func latinCommand(for transcript: String) -> String? {
+        let body = RioArabicText.withoutLeadingName(transcript)
+        guard body.unicodeScalars.contains(where: RioArabicText.isArabicScript) else { return nil }
+        let named = body != transcript
+        // Arabic punctuation goes; English words keep their spelling ("github.com", "1.5x").
+        let words = body.split(whereSeparator: \.isWhitespace).map { word in
+            String(word.unicodeScalars.filter { ![0x060C, 0x061B, 0x061F, 0x066A].contains($0.value) }.map(Character.init))
+        }.filter { !$0.isEmpty }
+        var keys = words.map(RioArabicText.matchingForm)
+        var kept = words
+        var index = 0
+        var outKeys: [String] = []
+        var outWords: [String] = []
+        while index < keys.count {
+            if let phrase = RioArabicVocabulary.fillerPhrases.first(where: { phrase in
+                index + phrase.count <= keys.count && Array(keys[index..<(index + phrase.count)]) == phrase
+            }) {
+                index += phrase.count
+                continue
+            }
+            let key = keys[index]
+            let nextIsLatin = index + 1 < kept.count && isLatinWord(kept[index + 1]) && !kept[index + 1].isEmpty
+            let previousIsLatin = outWords.last.map(isLatinWord) ?? false
+            if key == "و", previousIsLatin, nextIsLatin {
+                outKeys.append("and")
+                outWords.append("and")
+            } else if !arabicPadding.contains(key) {
+                outKeys.append(key)
+                outWords.append(kept[index])
+            }
+            index += 1
+        }
+        // The name said at the end: "open Chrome يا ريو".
+        while let last = outKeys.last, RioArabicVocabulary.isWakeWord(last) || (RioArabicVocabulary.isGreeting(last) && !isLatinWord(last)) {
+            outKeys.removeLast()
+            outWords.removeLast()
+        }
+        keys = outKeys
+        kept = outWords
+        guard !kept.isEmpty, kept.allSatisfy(isLatinWord),
+              !keys.contains(where: messageVerbs.contains) else { return nil }
+        let command = kept.joined(separator: " ")
+        return named ? "Rio \(command)" : command
+    }
 
     // MARK: Tokens
 
@@ -142,7 +224,8 @@ enum RioArabicCommandTable {
                       RioArabicVocabulary.apps[RioArabicVocabulary.key(for: attached)] != nil {
                 flush()
                 current = [attached]
-            } else if index > 0, let attached, attached.count >= 2, RioArabicClauses.isClauseVerb(attached) {
+            } else if index > 0, let attached, attached.count >= 2,
+                      RioArabicClauses.isClauseVerb(attached) || RioArabicClauses.pronounVerbStem(attached) != nil {
                 flush()
                 current = [attached]
             } else if index > 0, let attached, let verb, !current.isEmpty, RioArabicClauses.isTargetWord(attached) {
@@ -182,12 +265,19 @@ enum RioCommandTranslationPlan: Equatable {
         // (the parser strips the Arabic name itself), while an Arabic verb at the start ("Rio,
         // شغل music") makes it a command to translate whatever the share.
         let body = RioArabicText.withoutLeadingName(transcript)
-        guard RioArabicText.needsTranslation(body) || startsWithArabicVerb(body) else { return .unchanged }
+        // "Rio open Chrome لو سمحت", "Rio take a screenshot يلا", "Rio quit Slack و Zoom": English
+        // with only Arabic padding is the English command, whatever the share. No LLM call.
+        if let english = RioArabicCommandTable.latinCommand(for: transcript) { return .offline(english) }
         // "Rio type مرحبا", "text Ahmed وين انت": the command is already English and the Arabic is
         // what to type, send or search. Translating it would type or send the wrong language.
-        if RioArabicText.hasEnglishContentFrame(transcript) { return .unchanged }
+        let hasArabic = body.unicodeScalars.contains(where: RioArabicText.isArabicScript)
+        if hasArabic, RioArabicText.hasEnglishContentFrame(transcript) { return .unchanged }
+        // The table only answers what it fully understands, so a mostly English command with an
+        // Arabic clause ("open YouTube و دور على lofi") may use it too.
+        let needsTranslation = RioArabicText.needsTranslation(body) || startsWithArabicVerb(body)
+        guard needsTranslation || hasArabic else { return .unchanged }
         if let known = RioArabicCommandTable.english(for: transcript) { return .offline(known) }
-        return .llm
+        return needsTranslation ? .llm : .unchanged
     }
 
     private static func startsWithArabicVerb(_ text: String) -> Bool {

@@ -14,14 +14,14 @@ enum RioArabicVocabulary {
             ("تيليجرام", "Telegram"), ("تلجرام", "Telegram"), ("تلغرام", "Telegram"), ("تيليغرام", "Telegram"),
             ("ترمنال", "Terminal"), ("ترمينال", "Terminal"), ("تيرمنال", "Terminal"), ("تيرمينال", "Terminal"),
             ("فايندر", "Finder"), ("نوتس", "Notes"), ("ملاحظات", "Notes"), ("ميل", "Mail"), ("بريد", "Mail"),
-            ("رسائل", "Messages"), ("تقويم", "Calendar"), ("كاليندر", "Calendar"),
+            ("رسائل", "Messages"), ("تقويم", "Calendar"), ("كاليندر", "Calendar"), ("كالندر", "Calendar"),
             ("اعدادات", "System Settings"), ("اعدادات النظام", "System Settings"),
             ("زوم", "Zoom"), ("سلاك", "Slack"), ("ديسكورد", "Discord"), ("وورد", "Word"), ("ورد", "Word"),
             ("اكسل", "Excel"), ("بوربوينت", "PowerPoint"), ("اكس كود", "Xcode"),
             ("فيجوال ستوديو كود", "Visual Studio Code"), ("في اس كود", "Visual Studio Code"),
             ("صور", "Photos"), ("خرائط", "Maps"), ("ماب", "Maps"), ("مابس", "Maps"), ("ساعه", "Clock"), ("اله حاسبه", "Calculator"), ("حاسبه", "Calculator"), ("كالكيوليتر", "Calculator"), ("كالكوليتر", "Calculator"),
             ("نوشن", "Notion"), ("فيغما", "Figma"), ("فيجما", "Figma"),
-            ("يوتيوب", "YouTube"), ("جيميل", "Gmail"), ("نتفلكس", "Netflix"), ("انستقرام", "Instagram"),
+            ("يوتيوب", "YouTube"), ("جيميل", "Gmail"), ("نتفلكس", "Netflix"), ("نتفليكس", "Netflix"), ("انستقرام", "Instagram"), ("انستغرام", "Instagram"),
             ("انستجرام", "Instagram"), ("انستا", "Instagram"), ("تويتر", "Twitter"), ("فيسبوك", "Facebook"), ("لينكدان", "LinkedIn"),
             ("لينكد ان", "LinkedIn"), ("تيك توك", "TikTok"), ("ريديت", "Reddit"), ("جوجل", "Google"),
             ("قوقل", "Google"), ("غوغل", "Google"), ("شات جي بي تي", "ChatGPT"),
@@ -111,13 +111,16 @@ enum RioArabicVocabulary {
     ]
     /// English politeness around an Arabic command ("can you افتح لي الكروم please"), dropped only
     /// before the first Arabic word or at the very end.
-    static let latinPoliteness: Set<String> = ["can", "could", "would", "you", "please", "pls", "plz", "kindly", "uh", "um", "so"]
+    static let latinPoliteness: Set<String> = [
+        "can", "could", "would", "you", "please", "pls", "plz", "kindly", "uh", "um", "so", "ok", "okay", "yalla",
+    ]
     /// Two-word politeness phrases dropped as a unit.
-    static let fillerPhrases: [[String]] = [["لو", "سمحت"], ["من", "فضلك"], ["لو", "تكرمت"], ["الله", "يعافيك"]]
+    static let fillerPhrases: [[String]] = [["لو", "سمحت"], ["من", "فضلك"], ["لو", "تكرمت"], ["الله", "يعافيك"], ["الله", "يخليك"]]
 
-    /// The lookup form of a table key: normalised, spaces removed, leading "ال" dropped.
+    /// The lookup form of a table key: normalised, "ال" dropped from each word, spaces removed
+    /// ("الآلة الحاسبة" and "اله حاسبه" are the same key).
     static func key(for text: String) -> String {
-        stripArticle(RioArabicText.normalize(text).replacingOccurrences(of: " ", with: ""))
+        RioArabicText.normalize(text).split(separator: " ").map { stripArticle(String($0)) }.joined()
     }
 
     static func stripArticle(_ word: String) -> String {

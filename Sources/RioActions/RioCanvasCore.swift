@@ -36,8 +36,10 @@ enum RioCanvasRange {
 
     /// "next week MAT108" -> ("next week", "MAT108"); "MAT108" -> (nil, "MAT108"); "today" -> ("today", nil).
     static func parts(_ spoken: String?) -> (range: String?, course: String?) {
-        let text = RioText.collapseWhitespace(spoken ?? "")
+        var text = RioText.collapseWhitespace(spoken ?? "")
         guard !text.isEmpty else { return (nil, nil) }
+        // "tonight" is today's work (the resolver or the brain may pass it as said).
+        if text.lowercased() == "tonight" || text.lowercased().hasPrefix("tonight ") { text = "today" + text.dropFirst("tonight".count) }
         let lower = text.lowercased()
         for range in knownRanges where lower == range || lower.hasPrefix(range + " ") {
             let rest = String(text.dropFirst(range.count)).trimmingCharacters(in: .whitespaces)

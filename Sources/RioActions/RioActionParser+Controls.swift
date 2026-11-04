@@ -69,8 +69,11 @@ extension RioActionParser {
         if RioText.matches(#"^(?:play\s+pause|play\s+and\s+pause|toggle\s+(?:play|playback))$"#, s) {
             return .media(.playPause)
         }
-        if RioText.matches("^pause(?:\(obj))?$", s) { return .media(.pause) }
-        if RioText.matches("^(?:play|resume|continue|unpause)(?:\(obj))?$", s) { return .media(.play) }
+        // "pause spotify", "resume spotify", "play spotify", "pause youtube": the player named
+        // is the one to pause or resume, never a song called "spotify".
+        let player = #"(?:\s+(?:the|my))?\s+(?:spotify|youtube|youtube\s+music|apple\s+music|itunes|music\s+app|it|this)"#
+        if RioText.matches("^pause(?:\(obj)|\(player))?(?:\\s+please)?$", s) { return .media(.pause) }
+        if RioText.matches("^(?:play|resume|continue|unpause)(?:\(obj)|\(player))?(?:\\s+please)?$", s) { return .media(.play) }
         if RioText.matches(#"^(?:(?:play\s+)?(?:the\s+)?next(?:\s+(?:song|track|one))?|skip(?:\s+(?:this|the|that|it))?(?:\s+(?:song|track|one))?|skip\s+forward)$"#, s) {
             return .media(.next)
         }

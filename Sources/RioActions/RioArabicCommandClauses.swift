@@ -36,6 +36,18 @@ enum RioArabicClauses {
 
     static func isClauseVerb(_ word: String) -> Bool { clauseVerbs.contains(word) }
 
+    static func isQuitVerb(_ word: String) -> Bool { quitVerbs.contains(word) }
+
+    /// "سكره", "افتحه", "شغلها": a clause verb with "it"/"them" written on it. The verb, or nil.
+    /// ("عليه" is "on it", not "raise it".)
+    static func pronounVerbStem(_ word: String) -> String? {
+        for suffix in ["هم", "ها", "ه"] where word.hasSuffix(suffix) {
+            let stem = String(word.dropLast(suffix.count))
+            if stem.count >= 2, !["علي", "عل"].contains(stem), clauseVerbs.contains(stem) { return stem }
+        }
+        return nil
+    }
+
     /// Any verb that starts an Arabic command: the clause verbs, mute, search and type/send.
     static func isCommandVerb(_ word: String) -> Bool {
         clauseVerbs.contains(word) || muteVerbs.contains(word) || searchVerbs.contains(word) || contentVerbs.contains(word)
@@ -79,6 +91,11 @@ enum RioArabicClauses {
         let verb = first
         let rest = Array(tokens.dropFirst())
         let target = classify(rest)
+        // "افتح اعدادات الوايفاي" (open the wifi settings) is a settings pane, not "turn on wifi":
+        // a state change nobody asked for. Only "the settings" themselves open (System Settings).
+        if words.dropFirst().contains(where: isSettingsWord) {
+            guard case .app = target else { return nil }
+        }
         if openVerbs.contains(verb) { return open(verb, rest, target) }
         if let result = volumeAndBrightness(verb, rest, target) { return Result(english: result, isAppCommand: false) }
         if case .window = target {
@@ -87,8 +104,12 @@ enum RioArabicClauses {
             return nil
         }
         if closeVerbs.contains(verb) { return close(verb, rest, target) }
-        // "الصوت خمسين": no verb, just the thing and a number.
-        if words.first == "صوت", let number = number(in: Array(words.dropFirst())) { return Result(english: "set volume to \(number)", isAppCommand: false) }
+        // "الصوت خمسين", "الصوت للنص": no verb, just the thing and a level.
+        let levelWords = Array(words.dropFirst()).map(withoutToPrefix)
+        if words.first == "صوت", let number = number(in: levelWords) { return Result(english: "set volume to \(number)", isAppCommand: false) }
+        if ["اضاءه", "سطوع"].contains(words[0]), let number = number(in: levelWords) {
+            return Result(english: "set brightness to \(number)", isAppCommand: false)
+        }
         return nil
     }
 
@@ -101,8 +122,10 @@ enum RioArabicClauses {
             let rest = Array(words.dropFirst())
             // "هذا"/"هذي" or the Gulf "هال" written on the noun ("هالكلام", "هالنص") points at the
             // selection, so it is checked before the room words ("الكلام" alone is the room).
+            // ("هالمحاضرة", "هالفيديو" are a lecture or a video playing: the room.)
             let pointsAtSelection = rest.contains {
-                ["هذا", "هاذا", "هذه", "هاذي", "هذي", "ذا", "نص"].contains($0) || ($0.hasPrefix("هال") && $0.count > 3)
+                ["هذا", "هاذا", "هذه", "هاذي", "هذي", "ذا", "نص"].contains($0)
+                    || ($0.hasPrefix("هال") && $0.count > 3 && !isLiveSource(String($0.dropFirst(3))))
             }
             if pointsAtSelection {
                 for word in rest {
@@ -111,12 +134,24 @@ enum RioArabicClauses {
                 return "translate this to English"
             }
             let roomWords = ["ينقال", "يتقال", "يقولون", "يقوله", "يصير", "يقال", "كلام", "يسمع", "يتكلم", "حوالي", "حولي", "محادثه", "غرفه", "يدور", "يحصل"]
-            let glue: Set<String> = ["لي", "الي", "ما", "عم", "قاعد", "قاعدين", "هنا", "اللي"]
+            let glue: Set<String> = [
+                "لي", "الي", "ما", "عم", "قاعد", "قاعده", "قاعدين", "هنا", "اللي", "وش", "ايش", "شو", "شنو", "ماذا", "هو", "هي", "هم", "انا",
+            ]
+            func isRoomWord(_ word: String) -> Bool {
+                roomWords.contains { word.hasPrefix($0) } || isSpeechVerb(word) || isLiveSource(word)
+                    || (word.hasPrefix("هال") && isLiveSource(String(word.dropFirst(3))))
+            }
             // Only the room itself starts the live microphone: every word is a room word (or a
-            // word with an ending, "يقولونه") or glue. "ترجم الكلام اللي على الشاشة" (the screen),
-            // "ترجم كلام احمد" (a message) and a bare "ترجم لي" go to the LLM instead.
-            let isRoom = !rest.isEmpty && rest.contains { word in roomWords.contains { word.hasPrefix($0) } }
-                && rest.allSatisfy { word in glue.contains(word) || roomWords.contains { word.hasPrefix($0) } }
+            // word with an ending, "يقولونه"), a verb of speech ("يقول", "اسمعه"), a live source
+            // ("المحاضرة", "الفيديو") or glue. With a verb of speech, one or two more words may
+            // name the speaker ("وش يقول الدكتور"), unless one is about text or a screen.
+            // "ترجم الكلام اللي على الشاشة" (the screen), "ترجم كلام احمد" (a message) and a bare
+            // "ترجم لي" go to the LLM instead.
+            let others = rest.filter { !glue.contains($0) && !isRoomWord($0) }
+            let hasSpeechVerb = rest.contains(where: isSpeechVerb)
+            let speakerOnly = hasSpeechVerb && others.count <= 2
+                && !others.contains(where: isNotASpeaker)
+            let isRoom = rest.contains(where: isRoomWord) && (others.isEmpty || speakerOnly)
             return isRoom ? "translate what is being said" : nil
         }
         if hasTranslationWord {
@@ -129,6 +164,27 @@ enum RioArabicClauses {
         if ["قولها", "قولهم", "انطقها", "اسمعنيها"].contains(first), tokens.count == 1 { return "say it" }
         if sayVerbs.contains(first), words.count == 2, targets.contains(words[1]) { return "say it" }
         return nil
+    }
+
+    /// A verb of speech or hearing in any person: "يقول", "تقول", "يحكي", "اسمعه", "نسمع".
+    private static func isSpeechVerb(_ word: String) -> Bool {
+        let stems = ["قول", "حكي", "تكلم", "تحدث", "سمع", "شرح"]
+        return ["ي", "ت", "ا", "ن"].contains { prefix in stems.contains { word.hasPrefix(prefix + $0) } }
+    }
+
+    /// Something that plays speech out loud: a lecture, a class, a meeting, a call, a video.
+    private static func isLiveSource(_ word: String) -> Bool {
+        let bare = RioArabicVocabulary.stripArticle(word)
+        return ["محاضره", "محاضرات", "درس", "حصه", "كلاس", "اجتماع", "ميتنق", "ميتينق", "مكالمه", "اتصال", "فيديو", "خطبه", "مقابله", "بودكاست"]
+            .contains(bare)
+    }
+
+    /// Words that make "ترجم وش يقول ..." about text rather than a speaker: the screen, a message,
+    /// an email, a page, a file ("وش يقول الايميل"), or "in"/"from" something ("في الرساله").
+    private static func isNotASpeaker(_ word: String) -> Bool {
+        let exact: Set<String> = ["في", "من", "عن", "نص", "ملف", "بريد", "كلمه", "صوره", "ورقه"]
+        let textNouns = ["شاشه", "رساله", "رسائل", "رسايل", "مسج", "ايميل", "صفحه", "مقال", "كتاب", "تعليق", "موقع", "مستند", "بالشاشه", "بالرساله"]
+        return exact.contains(word) || textNouns.contains { word.hasPrefix($0) }
     }
 
     private static func simple(_ tokens: [String], _ words: [String], _ text: String) -> String? {
@@ -281,6 +337,13 @@ enum RioArabicClauses {
         return nil
     }
 
+    /// "اعدادات", "إعدادات", "الضبط", "settings", "سيتنقز": the settings, not the thing they set.
+    private static func isSettingsWord(_ word: String) -> Bool {
+        let bare = RioArabicVocabulary.stripArticle(word).lowercased()
+        return ["اعدادات", "اعداد", "ضبط", "ضبطات", "settings", "setting", "preferences"].contains(bare)
+            || bare.hasPrefix("سيتن") || bare.hasPrefix("اعدادات")
+    }
+
     private static let musicWords: Set<String> = ["موسيقي", "اغنيه", "اغاني", "ميوزك", "مزيكا", "music"]
 
     private static func language(_ word: String) -> String? {
@@ -320,7 +383,8 @@ enum RioArabicClauses {
 // MARK: - Whole-sentence commands: timers, search, help, time left
 
 extension RioArabicClauses {
-    private static let searchVerbs: Set<String> = ["ابحث", "ابحثي", "دور", "دوري", "فتش", "فتشي", "سيرش"]
+    /// "قوقل لي مطاعم": the search engine's name said as the verb (Google it) counts too.
+    private static let searchVerbs: Set<String> = ["ابحث", "ابحثي", "دور", "دوري", "فتش", "فتشي", "سيرش", "قوقل", "قوقلي", "جوجل", "جوجلي", "غوغل"]
     private static let searchGlue: Set<String> = ["عن", "على", "علي", "في"]
     private static let questionWords: Set<String> = ["ماذا", "شو", "ايش", "وش", "شنو", "ما", "مذا", "شنهو"]
     private static let abilityWords: Set<String> = ["تفعل", "تسوي", "تعمل", "تستطيع", "يمكنك", "تسويه", "تقدر", "تعرف"]
@@ -351,9 +415,57 @@ extension RioArabicClauses {
         // "وش عندي واجبات": what homework is due (Canvas).
         if words.contains(where: { ["واجب", "واجبات", "واجباتي"].contains($0) }),
            words.contains(where: { questionWords.contains($0) || $0 == "عندي" }) {
-            return "what homework is due"
+            return homework(tokens)
         }
         return nil
+    }
+
+    // MARK: Homework
+
+    /// "وش عندي واجبات هالأسبوع" -> "what homework is due this week". The time said is kept
+    /// ("بكرة" tomorrow, "اليوم"/"الليلة" today, "الأسبوع الجاي" next week) and a course code
+    /// ("MAT108") is passed on; any other word means the sentence is more than this question,
+    /// so the LLM gets it rather than a range silently dropped.
+    private static func homework(_ tokens: [String]) -> String? {
+        let known: Set<String> = questionWords.union([
+            "عندي", "عندنا", "علي", "هل", "في", "فيه", "اي", "واجب", "واجبات", "واجباتي", "مطلوب", "مطلوبه", "باقي",
+            "متبقي", "لازم", "اسلم", "اسلمها", "تسليم", "متي",
+        ])
+        var range: String?
+        var course: String?
+        var index = 0
+        func setRange(_ value: String) -> Bool {
+            guard range == nil || range == value else { return false }
+            range = value
+            return true
+        }
+        while index < tokens.count {
+            let word = RioArabicVocabulary.stripArticle(tokens[index])
+            let next = index + 1 < tokens.count ? RioArabicVocabulary.stripArticle(tokens[index + 1]) : nil
+            if word == "هالاسبوع" || (word == "هذا" && next == "اسبوع") || (word == "اسبوع" && next == "هذا") {
+                guard setRange("this week") else { return nil }
+                index += word == "هالاسبوع" ? 1 : 2
+                continue
+            }
+            if word == "اسبوع", let next, ["جاي", "قادم", "الجاي", "القادم", "الياي"].contains(next) {
+                guard setRange("next week") else { return nil }
+                index += 2
+                continue
+            }
+            if ["بكره", "باكر", "بكرا"].contains(word) {
+                guard setRange("tomorrow") else { return nil }
+            } else if ["يوم", "اليوم", "ليله", "الليله", "هاليوم"].contains(tokens[index]) || word == "ليله" {
+                guard setRange("today") else { return nil }
+            } else if course == nil, RioArabicCommandTable.isLatinWord(tokens[index]),
+                      RioText.matches(#"^[A-Za-z]{2,5}\d{2,4}[A-Za-z]?$"#, tokens[index]) {
+                course = tokens[index].uppercased()
+            } else if !known.contains(word) && !known.contains(tokens[index]) {
+                return nil
+            }
+            index += 1
+        }
+        let parts = [range, course.map { "for \($0)" }].compactMap { $0 }
+        return (["what homework is due"] + parts).joined(separator: " ")
     }
 
     // MARK: Never mind
@@ -380,7 +492,13 @@ extension RioArabicClauses {
     private static func latinContent(_ tokens: [String], _ originals: [String]) -> String? {
         guard let first = tokens.first else { return nil }
         var start = 1
-        if searchVerbs.contains(first) { while start < tokens.count, searchGlue.contains(tokens[start]) { start += 1 } }
+        if searchVerbs.contains(first) {
+            while start < tokens.count, searchGlue.contains(tokens[start]) { start += 1 }
+            if tokens.count - start >= 2, isGoogle(tokens[start]) {
+                start += 1
+                while start < tokens.count, searchGlue.contains(tokens[start]) { start += 1 }
+            }
+        }
         guard start < tokens.count, tokens[start...].allSatisfy(RioArabicCommandTable.isLatinWord) else { return nil }
         let content = originals[start...].joined(separator: " ")
         if searchVerbs.contains(first) { return "search for \(content)" }
@@ -393,8 +511,15 @@ extension RioArabicClauses {
 
     private static func search(_ tokens: [String], _ originals: [String]) -> String? {
         guard let first = tokens.first, searchVerbs.contains(first) else { return nil }
+        // "قوقل كروم" is the app Google Chrome, not a search for "كروم".
+        if RioArabicCommandTable.appName(tokens) != nil { return nil }
         var start = 1
         while start < tokens.count, searchGlue.contains(tokens[start]) { start += 1 }
+        // "ابحث في جوجل عن مطاعم": Google is where to search, not part of the query.
+        if tokens.count - start >= 2, isGoogle(tokens[start]) {
+            start += 1
+            while start < tokens.count, searchGlue.contains(tokens[start]) { start += 1 }
+        }
         // "ابحث في يوتيوب عن قطط"
         if tokens.count - start >= 2, let site = RioArabicVocabulary.apps[RioArabicVocabulary.key(for: tokens[start])], site == "YouTube" {
             var queryStart = start + 1
@@ -410,6 +535,10 @@ extension RioArabicClauses {
         if query.contains(where: { personalWords.contains(RioArabicVocabulary.stripArticle($0)) }) { return nil }
         // The query is the user's own words, not the matching spelling ("قريبة", not "قريبه").
         return "search for \(originals[start...].joined(separator: " "))"
+    }
+
+    private static func isGoogle(_ word: String) -> Bool {
+        word.lowercased() == "google" || RioArabicVocabulary.apps[RioArabicVocabulary.key(for: word)] == "Google"
     }
 
     /// Words that make a search about the owner's own files, mail, messages or photos.
