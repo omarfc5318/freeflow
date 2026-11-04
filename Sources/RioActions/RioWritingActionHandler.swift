@@ -60,16 +60,14 @@ enum RioWritingSettings {
         await host.replaceLast(original, text)
     }
 
+    /// Fails closed: with no app identity, no readable focused element or no readable role,
+    /// there is no target (Rio can't rule out a password field it can't see).
     func focusedTarget() -> RioWritingTarget? {
-        guard let app = RioAX.frontmostApp() else { return nil }
-        var isSingleLine = false
-        var isSecure = false
-        if let focused = RioAX.focusedElement(of: app) {
-            let role = RioAX.role(focused)
-            let subrole = RioAX.string(focused, kAXSubroleAttribute as String)
-            isSecure = role == "AXSecureTextField" || subrole == "AXSecureTextField"
-            isSingleLine = role == "AXTextField" || role == "AXComboBox" || subrole == "AXSearchField"
-        }
+        guard let app = RioAX.frontmostApp(), app.bundleIdentifier != nil,
+              let focused = RioAX.focusedElement(of: app), let role = RioAX.role(focused) else { return nil }
+        let subrole = RioAX.string(focused, kAXSubroleAttribute as String)
+        let isSecure = role == "AXSecureTextField" || subrole == "AXSecureTextField"
+        let isSingleLine = role == "AXTextField" || role == "AXComboBox" || subrole == "AXSearchField"
         return RioWritingTarget(
             bundleIdentifier: app.bundleIdentifier, appName: app.localizedName,
             isSingleLine: isSingleLine, isSecure: isSecure

@@ -214,7 +214,7 @@ enum RioActionParserTests {
             ("play the next song", a(.media(.next))),
             ("previous song", a(.media(.previous))),
             ("go back", a(.browser(.back))),
-            ("play taylor swift", unk("play taylor swift")),
+            ("play taylor swift", .actions([.playMusic(query: "taylor swift")])),
             ("stop the music", unk("stop the music")),
 
             // Lock and screenshots
@@ -281,7 +281,7 @@ enum RioActionParserTests {
             ("   ", .empty),
 
             // Not an action: left for the smart resolver
-            ("what's the weather", unk("what's the weather")),
+            ("what's the weather", .actions([.weather(place: nil)])),
             ("tell me a joke", unk("tell me a joke")),
             ("chrome", unk("chrome")),
             ("hello there", unk("hello there")),

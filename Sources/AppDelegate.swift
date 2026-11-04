@@ -32,6 +32,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // History search and the writing-style profile read the owner's own dictations (builder N).
         RioContextMemoryActionHandler.shared.historyProvider = { [appState] in appState.pipelineHistory }
         RioContextMemoryActionHandler.shared.refreshStyleProfile(from: appState.pipelineHistory)
+        // Writing (builder O) edits the last dictation in place and writes in the owner's style.
+        appState.installRioWritingHost()
+        RioWritingHost.shared.styleHint = {
+            let guidance = RioStyleProfileProvider.shared.writingGuidance()
+            return guidance.isEmpty ? nil : guidance
+        }
+        // Texts from the owner's iPhone (builder S); off until enabled in Settings.
+        RioPhoneTexting.shared.bind(to: appState)
         styleProfileSubscription = appState.$pipelineHistory
             .dropFirst()
             .debounce(for: .seconds(5), scheduler: DispatchQueue.main)

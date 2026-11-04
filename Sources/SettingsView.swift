@@ -643,6 +643,12 @@ struct GeneralSettingsView: View {
                 SettingsCard("Meetings & Claude Code", icon: "person.3.sequence") {
                     RioMeetingSettingsSection()
                 }
+                SettingsCard("Writing for You", icon: "pencil.and.outline") {
+                    RioWritingSettingsSection()
+                }
+                SettingsCard("Weather, Music & Integrations", icon: "puzzlepiece.extension") {
+                    RioIntegrationsSettingsSection()
+                }
                 SettingsCard("Edit Mode", icon: "pencil") {
                     commandModeSection
                 }
