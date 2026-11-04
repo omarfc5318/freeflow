@@ -221,7 +221,7 @@ struct MenuBarView: View {
                     }
                 }
 
-                ForEach(ShortcutPreset.allCases) { preset in
+                ForEach(ShortcutPreset.presets(for: .hold)) { preset in
                     Button {
                         _ = appState.setShortcut(preset.binding, for: .hold)
                     } label: {
@@ -265,7 +265,7 @@ struct MenuBarView: View {
                     }
                 }
 
-                ForEach(ShortcutPreset.allCases) { preset in
+                ForEach(ShortcutPreset.presets(for: .toggle)) { preset in
                     Button {
                         _ = appState.setShortcut(preset.binding, for: .toggle)
                     } label: {
@@ -309,7 +309,7 @@ struct MenuBarView: View {
                     }
                 }
 
-                ForEach(ShortcutPreset.allCases) { preset in
+                ForEach(ShortcutPreset.presets(for: .copyAgain)) { preset in
                     Button {
                         _ = appState.setShortcut(preset.binding, for: .copyAgain)
                     } label: {

@@ -24,6 +24,17 @@ struct ShortcutInputState: Equatable {
     var fixLastTainted = false
     /// A Rio action modifier was seen during the current hold (emitted once per hold).
     var holdActionModifierEngaged = false
+    /// Double-tap tracking for a `.doubleTapModifierKey` toggle binding (Fn double-tap).
+    var doubleTapKeyIsDown = false
+    var doubleTapDownAt: TimeInterval = 0
+    /// Something else was pressed while the double-tap key was down, so it is not a tap.
+    var doubleTapPressDirty = false
+    /// This press of the key is the second tap of a double-tap (true until it is released).
+    var doubleTapPressActive = false
+    /// When the last clean short tap of the key was released, if it can still start a double-tap.
+    var lastShortTapEndAt: TimeInterval?
+    /// Left Fn + Control + Option are all down; the chord fired for this press.
+    var conversationChordActive = false
 
     var currentModifiers: ShortcutModifiers {
         ShortcutBinding.modifiers(for: pressedModifierKeyCodes)
@@ -98,17 +109,18 @@ enum ShortcutMatcher {
     static func reduce(
         state: ShortcutInputState,
         event: ShortcutInputEvent,
-        configuration: ShortcutConfiguration
+        configuration: ShortcutConfiguration,
+        now: TimeInterval = 0
     ) -> ShortcutMatchResult {
         switch event {
         case .backendReset:
-            return reduceBackendReset(state: state, configuration: configuration)
+            return reduceBackendReset(state: state, configuration: configuration, now: now)
 
         case .modifierSnapshot(let pressedModifierKeyCodes):
             var nextState = state
             nextState.pressedModifierKeyCodes = pressedModifierKeyCodes
 
-            let emittedEvents = updateActiveBindings(in: &nextState, configuration: configuration)
+            let emittedEvents = updateActiveBindings(in: &nextState, configuration: configuration, now: now)
             return ShortcutMatchResult(
                 state: nextState,
                 emittedEvents: emittedEvents,
@@ -134,7 +146,7 @@ enum ShortcutMatcher {
                 state: nextState,
                 configuration: configuration
             )
-            let emittedEvents = updateActiveBindings(in: &nextState, configuration: configuration)
+            let emittedEvents = updateActiveBindings(in: &nextState, configuration: configuration, now: now)
             return ShortcutMatchResult(
                 state: nextState,
                 emittedEvents: emittedEvents,
@@ -168,7 +180,7 @@ enum ShortcutMatcher {
                 state: nextState,
                 configuration: configuration
             )
-            let emittedEvents = updateActiveBindings(in: &nextState, configuration: configuration)
+            let emittedEvents = updateActiveBindings(in: &nextState, configuration: configuration, now: now)
             return ShortcutMatchResult(
                 state: nextState,
                 emittedEvents: emittedEvents,
@@ -179,13 +191,14 @@ enum ShortcutMatcher {
 
     private static func reduceBackendReset(
         state: ShortcutInputState,
-        configuration: ShortcutConfiguration
+        configuration: ShortcutConfiguration,
+        now: TimeInterval
     ) -> ShortcutMatchResult {
         var nextState = state
         nextState.pressedKeyCodes.removeAll()
         nextState.pressedModifierKeyCodes.removeAll()
         nextState.fixLastTainted = true
-        let emittedEvents = updateActiveBindings(in: &nextState, configuration: configuration)
+        let emittedEvents = updateActiveBindings(in: &nextState, configuration: configuration, now: now)
         return ShortcutMatchResult(
             state: nextState,
             emittedEvents: emittedEvents,
@@ -195,7 +208,8 @@ enum ShortcutMatcher {
 
     private static func updateActiveBindings(
         in state: inout ShortcutInputState,
-        configuration: ShortcutConfiguration
+        configuration: ShortcutConfiguration,
+        now: TimeInterval
     ) -> [ShortcutEvent] {
         let previousHold = state.holdIsActive
         let previousToggle = state.toggleIsActive
@@ -203,10 +217,19 @@ enum ShortcutMatcher {
         let previousUndoLast = state.undoLastIsActive
         let previousFixLast = state.fixLastIsActive
 
+        let chordFired = updateConversationChord(in: &state, configuration: configuration)
+        updateDoubleTap(in: &state, configuration: configuration, now: now)
+
         state.holdIsActive = bindingIsActive(
             configuration.hold, state: state, configuration: configuration,
             extraPermittedModifiers: configuration.holdActionModifiers
         )
+        // The second press of a double-tap belongs to the toggle, never to the hold, and the
+        // conversation chord ends any hold it interrupted.
+        if state.doubleTapPressActive && configuration.hold.keyCode == configuration.toggle.keyCode {
+            state.holdIsActive = false
+        }
+        if state.conversationChordActive { state.holdIsActive = false }
         state.toggleIsActive = bindingIsActive(configuration.toggle, state: state, configuration: configuration)
         state.copyAgainIsActive = bindingIsActive(configuration.copyAgain, state: state, configuration: configuration)
         state.undoLastIsActive = bindingIsActive(configuration.undoLast, state: state, configuration: configuration)
@@ -231,7 +254,75 @@ enum ShortcutMatcher {
         if let engagement = updateActionEngagement(in: &state, configuration: configuration) {
             events.append(engagement)
         }
+        if chordFired {
+            // First, so the session controller cancels whatever the hold had started before the
+            // hold's own deactivation arrives.
+            events.insert(.conversationChord, at: 0)
+        }
         return events
+    }
+
+    /// Left Fn + Control + Option together: fires once, on the press that completes the chord,
+    /// in any key order. Right-side Control/Option are different key codes and never count.
+    private static func updateConversationChord(
+        in state: inout ShortcutInputState,
+        configuration: ShortcutConfiguration
+    ) -> Bool {
+        guard configuration.conversationChordEnabled else {
+            state.conversationChordActive = false
+            return false
+        }
+        let chordKeys = ShortcutConfiguration.conversationChordKeyCodes
+        if chordKeys.isSubset(of: state.pressedModifierKeyCodes), !state.conversationChordActive {
+            state.conversationChordActive = true
+            return true
+        }
+        // Stays latched until every chord key is up, so letting go of one key at a time never
+        // re-arms the Fn hold or the Fn + Control action key mid-release.
+        if chordKeys.isDisjoint(with: state.pressedModifierKeyCodes) {
+            state.conversationChordActive = false
+        }
+        return false
+    }
+
+    /// Tracks clean short taps of the double-tap key. A press is the second tap when it starts
+    /// within `doubleTapGap` of a clean short tap's release and nothing else is down.
+    private static func updateDoubleTap(
+        in state: inout ShortcutInputState,
+        configuration: ShortcutConfiguration,
+        now: TimeInterval
+    ) {
+        let binding = configuration.toggle
+        guard binding.kind == .doubleTapModifierKey, !binding.isDisabled else {
+            state.doubleTapKeyIsDown = false
+            state.doubleTapPressActive = false
+            state.doubleTapPressDirty = false
+            state.lastShortTapEndAt = nil
+            return
+        }
+        let keyDown = state.pressedModifierKeyCodes.contains(binding.keyCode)
+        let onlyThisKey = state.pressedModifierKeyCodes == [binding.keyCode] && state.pressedKeyCodes.isEmpty
+        switch (keyDown, state.doubleTapKeyIsDown) {
+        case (true, false):
+            state.doubleTapKeyIsDown = true
+            state.doubleTapDownAt = now
+            state.doubleTapPressDirty = !onlyThisKey
+            let withinGap = state.lastShortTapEndAt.map { now - $0 <= ShortcutTiming.doubleTapGap } ?? false
+            state.doubleTapPressActive = onlyThisKey && withinGap && !state.conversationChordActive
+            state.lastShortTapEndAt = nil
+        case (true, true):
+            if !onlyThisKey { state.doubleTapPressDirty = true }
+        case (false, true):
+            let isShortTap = !state.doubleTapPressDirty
+                && !state.doubleTapPressActive
+                && now - state.doubleTapDownAt < ShortcutTiming.maxTapDuration
+            state.lastShortTapEndAt = isShortTap ? now : nil
+            state.doubleTapKeyIsDown = false
+            state.doubleTapPressActive = false
+            state.doubleTapPressDirty = false
+        case (false, false):
+            break
+        }
     }
 
     /// Fn + Control, in either order: once per hold, the first moment the hold is active and a
@@ -312,6 +403,7 @@ enum ShortcutMatcher {
         extraPermittedModifiers: ShortcutModifiers = []
     ) -> Bool {
         guard !binding.isDisabled else { return false }
+        if binding.kind == .doubleTapModifierKey { return state.doubleTapPressActive }
         let activeModifiers = state.currentModifiers
         guard binding.modifiersAreActive(
             pressedModifierKeyCodes: state.pressedModifierKeyCodes,
@@ -327,7 +419,7 @@ enum ShortcutMatcher {
             return false
         case .key:
             return state.pressedKeyCodes.contains(binding.keyCode)
-        case .modifierKey:
+        case .modifierKey, .doubleTapModifierKey:
             return state.pressedModifierKeyCodes.contains(binding.keyCode)
         }
     }
@@ -369,7 +461,7 @@ enum ShortcutMatcher {
         let fixLast = configuration.fixLast.kind == .modifierKey ? ShortcutBinding.disabled : configuration.fixLast
         return [configuration.hold, configuration.toggle, configuration.copyAgain, configuration.undoLast, fixLast].filter { binding in
             switch binding.kind {
-            case .key, .modifierKey:
+            case .key, .modifierKey, .doubleTapModifierKey:
                 return modifierEvent(for: keyCode, affects: binding)
             case .disabled:
                 return false
@@ -436,7 +528,7 @@ private extension ShortcutBinding {
             return true
         }
 
-        guard kind == .modifierKey else { return false }
+        guard kind == .modifierKey || kind == .doubleTapModifierKey else { return false }
         return pressedModifierKeyCodes.contains(keyCode)
     }
 }

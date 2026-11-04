@@ -5,18 +5,61 @@ import SwiftUI
 /// confirms, Escape or Cancel declines, and 20 seconds of silence counts as Cancel. It never
 /// confirms on its own.
 @MainActor
-final class RioConfirmationCenter: RioConfirming {
+final class RioConfirmationCenter: RioConfirming, RioConversationConfirming {
     static let shared = RioConfirmationCenter()
 
     private var panel: RioConfirmationPanel?
     private var continuation: CheckedContinuation<Bool, Never>?
     private var timeout: Task<Void, Never>?
 
+    /// True while a question is on screen.
+    var isShowing: Bool { panel != nil }
+
     func confirm(_ action: RioAction) async -> Bool {
         // Only one question at a time; a newer one cancels the older.
         finish(false)
         guard let content = content(for: action) else { return false }
-        return await withCheckedContinuation { continuation in
+        return await ask(content)
+    }
+
+    /// Conversation mode with "Trust conversation mode" off (or any translator start from it):
+    /// Rio reads the action back and waits for Return or a click; "Rio, no" declines.
+    func confirmConversationAction(_ action: RioAction) async -> Bool {
+        finish(false)
+        let content = RioConfirmationCenter.conversationContent(for: action)
+        RioVoice.shared.speak("\(RioActionText.working(for: action)). Press Return to confirm, or say no.")
+        return await ask(content)
+    }
+
+    /// "Rio, no" / "Rio, cancel" while a question is up declines it. Speech never approves:
+    /// the room's audio is exactly the channel the check guards against, so approving takes
+    /// Return (a real key press) or a click. Returns true when it consumed the words.
+    func answerSpoken(_ transcript: String) -> Bool {
+        guard panel != nil, RioConversationCommands.declinesBySpeech(transcript) else { return false }
+        finish(false)
+        return true
+    }
+
+    static func conversationContent(for action: RioAction) -> RioConfirmationContent {
+        let detail: String
+        switch action {
+        case .typeText(let text): detail = text
+        case .fillField(let label, let text): detail = "\(label): \(text)"
+        case .click(let label, _): detail = "Click \(label)"
+        case .runTask(let goal): detail = goal
+        case .pressKeys(let combo): detail = "Press \(combo.key)"
+        case .quitApp(let name): detail = "Quit \(name)"
+        case .startTranslation:
+            detail = "Your microphone's sound will be sent to your transcription provider until you stop it."
+        default: detail = RioActionText.working(for: action)
+        }
+        return RioConfirmationContent(
+            title: "Run this from conversation mode?", detail: detail, confirmLabel: "Run it"
+        )
+    }
+
+    private func ask(_ content: RioConfirmationContent) async -> Bool {
+        await withCheckedContinuation { continuation in
             self.continuation = continuation
             show(content)
             timeout = Task { [weak self] in
@@ -54,6 +97,7 @@ final class RioConfirmationCenter: RioConfirming {
         let size = NSSize(width: 340, height: max(150, min(360, hosting.fittingSize.height)))
         let panel = RioConfirmationPanel(contentRect: NSRect(origin: .zero, size: size))
         panel.contentView = hosting
+        panel.shownAt = Date()
         panel.onConfirm = { [weak self] in self?.finish(true) }
         panel.onCancel = { [weak self] in self?.finish(false) }
         panel.setFrameOrigin(origin(for: size))
@@ -78,6 +122,7 @@ final class RioConfirmationCenter: RioConfirming {
 final class RioConfirmationPanel: NSPanel {
     var onConfirm: (() -> Void)?
     var onCancel: (() -> Void)?
+    var shownAt = Date()
 
     init(contentRect: NSRect) {
         super.init(
@@ -101,6 +146,16 @@ final class RioConfirmationPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     override func keyDown(with event: NSEvent) {
+        // Only the owner's real keyboard answers. A key Rio posted himself, or a Return in the
+        // first moments after the panel appears, is ignored (see RioConfirmationKeyPolicy).
+        let sourcePID = event.cgEvent?.getIntegerValueField(.eventSourceUnixProcessID) ?? 0
+        guard RioConfirmationKeyPolicy.accepts(
+            keyCode: event.keyCode,
+            eventSourcePID: sourcePID,
+            ownPID: Int64(getpid()),
+            secondsSincePanelShown: Date().timeIntervalSince(shownAt),
+            secondsSinceOwnSyntheticPost: RioSyntheticInput.secondsSinceLastPost
+        ) else { return }
         switch event.keyCode {
         case 36, 76: onConfirm?()
         case 53: onCancel?()
@@ -137,10 +192,10 @@ private struct RioConfirmationView: View {
                 .foregroundStyle(.secondary)
             HStack {
                 Spacer()
+                // No keyboardShortcut here on purpose: SwiftUI would answer a Return before the
+                // panel's keyDown could check where it came from.
                 Button("Cancel", action: onCancel)
-                    .keyboardShortcut(.cancelAction)
                 Button(content.confirmLabel, action: onConfirm)
-                    .keyboardShortcut(.defaultAction)
             }
         }
         .padding(14)

@@ -38,6 +38,17 @@ enum ShortcutBindingKind: String, Codable {
     case disabled
     case key
     case modifierKey
+    /// A modifier key tapped twice quickly (Fn double-tap = hands-free dictation). Timing lives
+    /// in ShortcutMatcher; see `ShortcutTiming`.
+    case doubleTapModifierKey
+}
+
+/// Windows that decide a quick tap and a double-tap of the Fn key.
+enum ShortcutTiming {
+    /// A press shorter than this, with nothing else pressed, counts as a tap.
+    static let maxTapDuration: TimeInterval = 0.3
+    /// The second press must start within this long after the tap was released.
+    static let doubleTapGap: TimeInterval = 0.35
 }
 
 enum RecordingTriggerMode: String, Codable {
@@ -81,6 +92,9 @@ enum ShortcutEvent: Equatable {
     /// A Rio action modifier (Control) went down while the hold shortcut was active, or was
     /// already down when it activated. Emitted once per hold; the hold itself keeps running.
     case holdActionModifierEngaged
+    /// Left Fn + left Control + left Option went down together. Fires once per press of all
+    /// three; anything the Fn hold or Fn + Control had started must be cancelled silently.
+    case conversationChord
 }
 
 struct ShortcutConfiguration: Equatable {
@@ -93,6 +107,12 @@ struct ShortcutConfiguration: Equatable {
     /// Modifiers that turn a hold into a Rio action session (Fn + Control). Pressing one never
     /// cancels the hold, even for an exact-modifier hold binding. Applies to the hold only.
     let holdActionModifiers: ShortcutModifiers
+    /// Left Fn + left Control + left Option toggles conversation mode (Rio actions only).
+    let conversationChordEnabled: Bool
+
+    /// The three physical keys of the conversation chord. Right Control (62) and right
+    /// Option (61) never count.
+    static let conversationChordKeyCodes: Set<UInt16> = [63, 59, 58]
 
     init(
         hold: ShortcutBinding,
@@ -101,7 +121,8 @@ struct ShortcutConfiguration: Equatable {
         undoLast: ShortcutBinding = .disabled,
         fixLast: ShortcutBinding = .disabled,
         permittedAdditionalExactMatchModifiers: ShortcutModifiers = [],
-        holdActionModifiers: ShortcutModifiers = []
+        holdActionModifiers: ShortcutModifiers = [],
+        conversationChordEnabled: Bool = false
     ) {
         self.hold = hold
         self.toggle = toggle
@@ -110,6 +131,7 @@ struct ShortcutConfiguration: Equatable {
         self.fixLast = fixLast
         self.permittedAdditionalExactMatchModifiers = permittedAdditionalExactMatchModifiers
         self.holdActionModifiers = holdActionModifiers
+        self.conversationChordEnabled = conversationChordEnabled
     }
 
     /// Control is the Rio action modifier, unless the hold shortcut already uses Control
@@ -129,14 +151,27 @@ enum ShortcutPreset: String, CaseIterable, Identifiable, Codable {
     case fnKey = "fn"
     case rightOption = "rightOption"
     case f5 = "f5"
+    case fnDoubleTap = "fnDoubleTap"
 
     var id: String { rawValue }
+
+    /// Presets offered for each dictation role. The double-tap only makes sense as the
+    /// hands-free (toggle) trigger; the single-key presets are hold-only choices.
+    static func presets(for role: ShortcutRole) -> [ShortcutPreset] {
+        switch role {
+        case .toggle:
+            return [.fnDoubleTap, .fnKey, .rightOption, .f5]
+        default:
+            return [.fnKey, .rightOption, .f5]
+        }
+    }
 
     var title: String {
         switch self {
         case .fnKey: return "Fn 🌐"
         case .rightOption: return "Right Option ⌥"
         case .f5: return "F5"
+        case .fnDoubleTap: return "Double-tap Fn 🌐"
         }
     }
 
@@ -164,6 +199,14 @@ enum ShortcutPreset: String, CaseIterable, Identifiable, Codable {
                 keyDisplay: "F5",
                 modifiers: [],
                 kind: .key,
+                preset: self
+            )
+        case .fnDoubleTap:
+            return ShortcutBinding(
+                keyCode: 63,
+                keyDisplay: "Fn",
+                modifiers: [],
+                kind: .doubleTapModifierKey,
                 preset: self
             )
         }
@@ -203,8 +246,14 @@ struct ShortcutBinding: Codable, Hashable, Identifiable, Equatable {
 
     var displayName: String {
         if isDisabled { return "Disabled" }
+        if kind == .doubleTapModifierKey { return "Double-tap \(primaryDisplayName)" }
         let parts = modifierDisplayNames + [primaryDisplayName]
         return parts.joined(separator: " + ")
+    }
+
+    /// "tap Fn + Command" / "double-tap Fn", for sentences like "Hold X or <phrase> to dictate".
+    var tapPhrase: String {
+        kind == .doubleTapModifierKey ? displayName.lowercased().replacingOccurrences(of: "fn", with: "Fn") : "tap \(displayName)"
     }
 
     var selectionTitle: String {
@@ -229,7 +278,7 @@ struct ShortcutBinding: Codable, Hashable, Identifiable, Equatable {
     }
 
     var requiresExactModifierMatch: Bool {
-        kind == .modifierKey || exactModifierKeyCodes != nil
+        kind == .modifierKey || kind == .doubleTapModifierKey || exactModifierKeyCodes != nil
     }
 
     func withAddedModifiers(_ extraModifiers: ShortcutModifiers) -> ShortcutBinding {
@@ -281,6 +330,8 @@ struct ShortcutBinding: Codable, Hashable, Identifiable, Equatable {
     func conflicts(with other: ShortcutBinding) -> Bool {
         guard !isDisabled, !other.isDisabled else { return false }
         guard primaryInputOverlaps(with: other) else { return false }
+        // A double-tap and a plain hold of the same key are designed to coexist.
+        if (kind == .doubleTapModifierKey) != (other.kind == .doubleTapModifierKey) { return false }
 
         let orderedModifierKeyCodes = Array(Self.modifierKeyCodes).sorted()
         let combinations = 1 << orderedModifierKeyCodes.count
@@ -328,6 +379,9 @@ struct ShortcutBinding: Codable, Hashable, Identifiable, Equatable {
     }
 
     private func primaryInputOverlaps(with other: ShortcutBinding) -> Bool {
+        let thisIsModifier = kind == .modifierKey || kind == .doubleTapModifierKey
+        let otherIsModifier = other.kind == .modifierKey || other.kind == .doubleTapModifierKey
+        if thisIsModifier && otherIsModifier { return keyCode == other.keyCode }
         guard kind == other.kind else { return false }
 
         switch kind {
@@ -335,7 +389,7 @@ struct ShortcutBinding: Codable, Hashable, Identifiable, Equatable {
             return false
         case .key:
             return keyCode == other.keyCode
-        case .modifierKey:
+        case .modifierKey, .doubleTapModifierKey:
             return keyCode == other.keyCode
         }
     }
@@ -359,7 +413,7 @@ struct ShortcutBinding: Codable, Hashable, Identifiable, Equatable {
             return false
         case .key:
             return true
-        case .modifierKey:
+        case .modifierKey, .doubleTapModifierKey:
             return pressedModifierKeyCodes.contains(keyCode)
         }
     }
@@ -372,7 +426,17 @@ struct ShortcutBinding: Codable, Hashable, Identifiable, Equatable {
         preset: nil
     )
     static let defaultHold = ShortcutPreset.fnKey.binding
-    static let defaultToggle = ShortcutPreset.fnKey.binding.withAddedModifiers(.command)
+    /// Hands-free dictation: tap Fn twice quickly (replaced Right Option, then Fn + Command).
+    static let defaultToggle = ShortcutPreset.fnDoubleTap.binding
+    /// The old default tap-to-toggle shortcut; kept so saved settings can be recognized.
+    static let legacyFnCommandToggle = ShortcutPreset.fnKey.binding.withAddedModifiers(.command)
+
+    /// Maps a saved toggle shortcut that the Fn double-tap replaces: a bare Right Option
+    /// (keyCode 61 modifier key). Anything else the owner chose is kept.
+    func migratedToggleShortcut() -> ShortcutBinding {
+        if kind == .modifierKey, keyCode == 61, modifiers.isEmpty { return .defaultToggle }
+        return self
+    }
     /// A lone tap of Right Command. Fires on release only when no other key or modifier was
     /// pressed meanwhile (see ShortcutMatcher), so Cmd chords never trigger it.
     static let defaultFixLast = ShortcutBinding(

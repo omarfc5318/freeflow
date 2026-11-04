@@ -33,20 +33,42 @@ enum RioOfflineTranscriber {
         request.requiresOnDeviceRecognition = true
         request.shouldReportPartialResults = false
         request.taskHint = .search
-        let text: String = try await withCheckedThrowingContinuation { continuation in
-            let gate = SingleResume(continuation)
-            let task = recognizer.recognitionTask(with: request) { result, error in
-                if let result, result.isFinal {
-                    gate.resume(returning: result.bestTranscription.formattedString)
-                } else if error != nil {
+        let box = RecognitionTaskBox()
+        let text: String = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let gate = SingleResume(continuation)
+                let task = recognizer.recognitionTask(with: request) { result, error in
+                    if let result, result.isFinal {
+                        gate.resume(returning: result.bestTranscription.formattedString)
+                    } else if let error {
+                        gate.resume(throwing: failure(for: error))
+                    }
+                }
+                box.set(task) { gate.resume(throwing: CancellationError()) }
+                gate.onFinish { task.cancel() }
+                // A recognizer that never answers must not leave the bear "working" forever.
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeoutSeconds) {
                     gate.resume(throwing: Failure.failed)
                 }
             }
-            gate.onFinish { task.cancel() }
+        } onCancel: {
+            box.cancel()
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw Failure.noSpeech }
         return trimmed
+    }
+
+    /// The recognizer gives up after this long without an answer.
+    static let timeoutSeconds: TimeInterval = 15
+
+    /// Apple reports silence as an error (kAFAssistantErrorDomain 1110, "No speech detected");
+    /// that is "I didn't catch that", not a failure.
+    static func failure(for error: Error) -> Failure {
+        let nsError = error as NSError
+        let message = nsError.localizedDescription.lowercased()
+        if nsError.code == 1110 || nsError.code == 203 || message.contains("no speech") { return .noSpeech }
+        return .failed
     }
 
     private static func hasPermission() async -> Bool {
@@ -91,5 +113,33 @@ private final class SingleResume: @unchecked Sendable {
         guard let continuation else { return }
         body(continuation)
         cleanup?()
+    }
+}
+
+/// Lets the cancellation handler (which runs on any thread) cancel the recognition task and
+/// release the waiting continuation.
+private final class RecognitionTaskBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: SFSpeechRecognitionTask?
+    private var onCancel: (() -> Void)?
+    private var cancelled = false
+
+    func set(_ task: SFSpeechRecognitionTask, onCancel: @escaping () -> Void) {
+        lock.lock()
+        self.task = task
+        self.onCancel = onCancel
+        let already = cancelled
+        lock.unlock()
+        if already { cancel() }
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let task = self.task
+        let onCancel = self.onCancel
+        lock.unlock()
+        task?.cancel()
+        onCancel?()
     }
 }

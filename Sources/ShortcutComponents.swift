@@ -137,7 +137,7 @@ struct ShortcutRoleSection: View {
                     action: { onSelect(.disabled) }
                 )
 
-                ForEach(ShortcutPreset.allCases) { preset in
+                ForEach(ShortcutPreset.presets(for: role)) { preset in
                     ShortcutPresetRow(
                         title: preset.title,
                         isSelected: selection == preset.binding,

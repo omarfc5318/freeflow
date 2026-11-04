@@ -45,6 +45,11 @@ final class SetupTestHotkeyHarness: ObservableObject {
             DispatchQueue.main.async {
                 self.onAction?(action)
             }
+        case .cancelSilently:
+            cancelPendingStart()
+            DispatchQueue.main.async {
+                self.onAction?(action)
+            }
         case .switchedToToggle:
             if pendingStartMode != nil {
                 pendingStartMode = .toggle

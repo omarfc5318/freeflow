@@ -3,7 +3,7 @@ import Combine
 import Foundation
 
 /// Conversation mode: Rio keeps the microphone open and acts on anything said after "Rio".
-/// Toggled by a three-finger trackpad tap, the menu bar item, or Settings. It turns itself off
+/// Toggled by the Fn + Control + Option key chord, the menu bar item, or Settings. It turns itself off
 /// on "Rio, stop listening" and after 5 minutes with no command, and it steps aside while
 /// another app is using the microphone (a call) or while you dictate.
 ///
@@ -16,7 +16,7 @@ import Foundation
     @Published private(set) var isOn = false
     /// True while conversation mode is on but paused (another app is using the mic, or dictation).
     @Published private(set) var isPaused = false
-    /// Why it couldn't start, or why the tap gesture is unavailable; shown in Settings.
+    /// Why it couldn't start; shown in Settings.
     @Published private(set) var statusMessage: String?
 
     /// Receives the text after "Rio" for every command heard. AppState runs it through the
@@ -32,7 +32,6 @@ import Foundation
     private var listener: WakeWordListener?
     private var listenerRunning = false
     private var listenerStarting = false
-    private var tapMonitor: ThreeFingerTapMonitor?
     private var pollTask: Task<Void, Never>?
 
     private init() {}
@@ -45,37 +44,21 @@ import Foundation
 
     func stop(_ reason: RioConversationCore.OffReason) { apply(core.turnOff(reason)) }
 
-    /// Enables or disables the three-finger tap that toggles conversation mode.
-    func setTapToggleEnabled(_ enabled: Bool) {
-        if enabled {
-            if tapMonitor == nil {
-                tapMonitor = ThreeFingerTapMonitor { [weak self] in self?.handleTap() }
-            }
-            if tapMonitor?.start() == true {
-                if statusMessage == Self.tapUnavailableMessage { statusMessage = nil }
-            } else {
-                statusMessage = Self.tapUnavailableMessage
-            }
-        } else {
-            tapMonitor?.stop()
-            if statusMessage == Self.tapUnavailableMessage { statusMessage = nil }
+    /// Left Fn + Control + Option. While the live translator is on, the chord belongs to it:
+    /// it stops translating and leaves conversation mode as it is.
+    func toggleFromChord() {
+        let translator = RioTranslatorMode.shared
+        if translator.isOn {
+            translator.stop(.chord)
+            return
         }
+        apply(core.toggle(now: Date(), offReason: .chord))
     }
 
     /// Dictation (Fn, Fn + Control) has the microphone; step aside until it is done.
     func setDictationActive(_ active: Bool) {
         core.setDictationActive(active, now: Date())
         reconcile()
-    }
-
-    private static let tapUnavailableMessage = "The three-finger tap isn't available on this Mac."
-
-    private func handleTap() {
-        // While the live translator is on, the tap belongs to it (it stops translating).
-        let translator = RioTranslatorMode.shared
-        guard !translator.isOn else { return }
-        if let stopped = translator.lastTapStop, Date().timeIntervalSince(stopped) < 1 { return }
-        apply(core.toggle(now: Date(), offReason: .tap))
     }
 
     private func handle(command: String) {
@@ -128,6 +111,7 @@ import Foundation
         guard !listenerStarting else { return }
         listenerStarting = true
         let listener = self.listener ?? WakeWordListener { [weak self] command in self?.handle(command: command) }
+        listener.onStopped = { [weak self] message in self?.failToStart(message) }
         self.listener = listener
         Task { @MainActor [weak self] in
             let result = await listener.start()

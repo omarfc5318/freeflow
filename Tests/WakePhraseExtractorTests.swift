@@ -51,8 +51,16 @@ enum WakePhraseExtractorTests {
     }
 
     private static func testNameMidSentence() {
+        // Fillers and a greeting may lead; the name must still start the utterance.
         check("uh so Rio put Chrome on the left", "put Chrome on the left")
-        check("I was saying that Rio open Spotify", "open Spotify")
+        check("okay Rio open Spotify", "open Spotify")
+        // Security: the name anywhere else is someone talking about Rio, or a video.
+        check("I was saying that Rio open Spotify", nil)
+        check("please tell Rio to open Chrome", nil)
+        check("the bear is called Rio lock my screen", nil)
+        // A new sentence counts as a fresh start.
+        check("that was great. Rio open Spotify", "open Spotify")
+        check("that was great Rio open Spotify", nil)
     }
 
     private static func testNoNameYieldsNothing() {

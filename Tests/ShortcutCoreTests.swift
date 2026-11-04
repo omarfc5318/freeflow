@@ -39,7 +39,7 @@ enum ShortcutCoreTests {
     private static func testDefaultShortcutSpecificityOrdering() {
         let configuration = ShortcutConfiguration(
             hold: .defaultHold,
-            toggle: .defaultToggle
+            toggle: .legacyFnCommandToggle
         )
         let commandDown = ShortcutMatcher.reduce(
             state: ShortcutInputState(),
@@ -226,7 +226,7 @@ enum ShortcutCoreTests {
     }
 
     private static func testBackendResetClearsActiveBindings() {
-        let configuration = ShortcutConfiguration(hold: .defaultHold, toggle: .defaultToggle)
+        let configuration = ShortcutConfiguration(hold: .defaultHold, toggle: .legacyFnCommandToggle)
         let commandDown = ShortcutMatcher.reduce(
             state: ShortcutInputState(),
             event: .modifierChanged(keyCode: 55, isDown: true),

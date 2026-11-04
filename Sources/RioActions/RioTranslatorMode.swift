@@ -5,7 +5,7 @@ import Foundation
 
 /// Live translator mode (#30). On by voice only ("Rio, translate what is being said"), visible the
 /// whole time (the subtitle card, the bear's headphones from `isOn`), and off on "stop
-/// translating", Esc, a three-finger tap, the card's close button or 10 quiet minutes.
+/// translating", Esc, the Fn + Control + Option chord, the card's close button or 10 quiet minutes.
 ///
 /// Privacy: while on, the microphone's sound is sent in short chunks to the transcription provider
 /// and the text to the AI provider; the card says so. Nothing is saved or logged.
@@ -23,7 +23,7 @@ import Foundation
     @Published private(set) var isPaused = false
 
     enum StopReason: Equatable {
-        case voice, escape, tap, closeButton, idle
+        case voice, escape, chord, closeButton, idle
         case failure(String)
     }
 
@@ -43,9 +43,27 @@ import Foundation
     private var ticker: Timer?
     private var tickCount = 0
     private var escapeMonitor: Any?
-    private var tapMonitor: ThreeFingerTapMonitor?
     private var speakingUntil = Date.distantPast
     private var commandUntil = Date.distantPast
+
+    /// True while the translation voice ("say it") is speaking, so conversation mode can pause
+    /// for it too. Polled only for the few seconds it speaks, never while idle.
+    @Published private(set) var translationVoiceActive = false
+    var speakerIsSpeaking: AnyPublisher<Bool, Never> { $translationVoiceActive.eraseToAnyPublisher() }
+    private var voiceWatch: Task<Void, Never>?
+
+    private func watchTranslationVoice() {
+        voiceWatch?.cancel()
+        translationVoiceActive = true
+        voiceWatch = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard let self else { return }
+                if !self.speaker.isSpeaking { break }
+            }
+            self?.translationVoiceActive = false
+        }
+    }
 
     private init() {}
 
@@ -96,12 +114,7 @@ import Foundation
         return .done(summary: "Translating. Subtitles are next to me")
     }
 
-    /// When a three-finger tap last stopped the translator, so conversation mode (which hears the
-    /// same tap) doesn't also toggle on.
-    private(set) var lastTapStop: Date?
-
     func stop(_ reason: StopReason) {
-        if case .tap = reason, isOn { lastTapStop = Date() }
         guard isOn else { return }
         ticker?.invalidate()
         ticker = nil
@@ -125,7 +138,9 @@ import Foundation
         guard let last = board.lastTranslation else { return .failed(message: "I haven't translated anything yet") }
         if RioVoice.shared.isRioRecordingProvider() { return .failed(message: "I'm listening right now, ask again in a second") }
         switch speaker.speak(last.text, in: last.language) {
-        case .speaking: return .done(summary: "Saying it in \(last.language.name)")
+        case .speaking:
+            watchTranslationVoice()
+            return .done(summary: "Saying it in \(last.language.name)")
         case .noVoice:
             return .failed(message: "No \(last.language.name) voice is installed. Add one in System Settings, Accessibility, Spoken Content")
         }
@@ -208,15 +223,10 @@ import Foundation
             guard event.keyCode == Self.escapeKeyCode else { return }
             Task { @MainActor in RioTranslatorMode.shared.stop(.escape) }
         }
-        let monitor = ThreeFingerTapMonitor { [weak self] in self?.stop(.tap) }
-        _ = monitor.start()
-        tapMonitor = monitor
     }
 
     private func removeStopTriggers() {
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
         escapeMonitor = nil
-        tapMonitor?.stop()
-        tapMonitor = nil
     }
 }
