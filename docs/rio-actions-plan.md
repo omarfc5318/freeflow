@@ -581,6 +581,18 @@ unaffected (the key itself proves it was the owner).
   MultitouchSupport files (no private trackpad API anymore). Update Settings text, the help
   catalogue, Info and docs.
 
+- OWNER CHANGE (2026-11-03): hands-free (tap-to-toggle) dictation moves from Right Option to an
+  **Fn double-tap**: a short Fn tap (<0.3 s held), then a second Fn press within ~0.35 s, starts
+  hands-free dictation (the first short tap's recording is discarded by the existing speech gate,
+  never pasted); a single Fn tap (or double-tap) stops it. Fn hold stays push-to-talk;
+  Fn+Control stays the action key; left Fn+Control+Option stays the conversation chord. Right
+  Option is freed (no longer a toggle default); migrate the owner's saved `toggle_shortcut`
+  (currently Right Option, keyCode 61) to the new Fn double-tap binding, and show it in Settings
+  as "Double-tap Fn". The lead already set macOS's Fn key to "Do Nothing"
+  (`com.apple.HIToolbox AppleFnUsageType = 0`) so the emoji picker no longer pops up; the emoji
+  picker remains on Control+Command+Space. Regression tests: hold, double-tap, tap-then-hold
+  timing, Fn+Control, the chord, and Right Command Fix Last.
+
 ## Wave 4 (after this build is tested and shipped)
 
 Owner picks: #32 text Rio from your iPhone (Messages from the owner's own handle only, risky
