@@ -33,6 +33,19 @@ enum RioActionOutcome: Equatable {
 enum RioCommandSource: Equatable {
     case actionKey
     case conversation
+    /// The owner's own scheduled commands, triggers and recorded macros (wave 4–5, builder P).
+    /// Treated like the action key; actions that always confirm still confirm.
+    case automation
+    /// A text from the owner's iPhone (builder S). Nobody can press Return on the Mac from there,
+    /// so anything that would need a confirmation is refused instead of asked.
+    case phone
+
+    /// Whether this source refuses `action` outright.
+    func refuses(_ action: RioAction) -> Bool {
+        guard self == .phone else { return false }
+        return action.requiresConfirmation || action.conversationAlwaysNeedsConfirmation
+            || action.conversationNeedsConfirmationWhenUntrusted
+    }
 }
 
 /// The "Trust conversation mode" setting. ON by default (owner decision, 2026-11-03).
@@ -138,6 +151,27 @@ enum RioActionText {
         case .startTranslation: return "Starting the translator"
         case .stopTranslation: return "Stopping the translator"
         case .speakLastTranslation: return "Saying it"
+        case .searchHistory: return "Searching what you've said"
+        case .editLastDictation: return "Rewriting that"
+        case .writeForMe: return "Writing it"
+        case .smartPaste: return "Pasting it"
+        case .scheduleCommand: return "Scheduling it"
+        case .addTrigger: return "Setting that up"
+        case .listAutomations: return "Checking your automations"
+        case .removeAutomation: return "Removing it"
+        case .recordMacro: return "Watching you"
+        case .stopRecordingMacro: return "Saving that"
+        case .runMacro(let name): return "Running \(name)"
+        case .findThing(let query): return "Looking for \(query)"
+        case .organizeDownloads: return "Tidying your Downloads"
+        case .copyTextFromScreen: return "Reading the text"
+        case .weather: return "Checking the weather"
+        case .news: return "Checking the news"
+        case .playMusic: return "Finding that"
+        case .notionAdd: return "Adding it to Notion"
+        case .canvasDue: return "Checking Canvas"
+        case .meeting: return "Checking the call"
+        case .claudeCode: return "Talking to Claude"
         }
     }
 }
@@ -252,6 +286,9 @@ final class RioActionCoordinator {
         lastActions = actions
         for action in actions {
             progress(RioActionText.working(for: action))
+            if source.refuses(action) {
+                return .failed("I won't do that from your phone. Do it on your Mac.")
+            }
             if needsConfirmation(action, source: source) {
                 // No confirmer means no way to ask, so never run it.
                 guard let confirmer else { return .cancelled }

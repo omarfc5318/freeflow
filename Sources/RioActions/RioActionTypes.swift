@@ -89,14 +89,65 @@ enum RioAction: Equatable, Codable {
     case stopTranslation
     case speakLastTranslation
 
+    // Waves 4–5 (contract v4). Owners in docs/rio-actions-plan.md "Waves 4–5".
+    // N: context and memory
+    case searchHistory(query: String)
+    // O: writing
+    case editLastDictation(instruction: String)
+    case writeForMe(instruction: String)
+    case smartPaste(instruction: String)
+    // P: automation
+    case scheduleCommand(command: String, when: String)
+    case addTrigger(command: String, trigger: String)
+    case listAutomations
+    case removeAutomation(name: String)
+    case recordMacro(name: String)
+    case stopRecordingMacro
+    case runMacro(name: String)
+    // Q: finding and files
+    case findThing(query: String)
+    /// Always confirmed (moves and renames files).
+    case organizeDownloads
+    case copyTextFromScreen
+    // S: outside world
+    case weather(place: String?)
+    case news(topic: String?)
+    case playMusic(query: String)
+    case notionAdd(text: String, page: String?)
+    case canvasDue(range: String?)
+    // T: meetings and Claude Code
+    case meeting(MeetingCommand)
+    case claudeCode(ClaudeCodeCommand)
+
     /// True for actions that reach another person or can't be undone; the coordinator must get
     /// an explicit confirmation from the user before running them.
     var requiresConfirmation: Bool {
         switch self {
-        case .sendMessage, .replyInConversation, .emptyTrash: return true
+        case .sendMessage, .replyInConversation, .emptyTrash, .organizeDownloads: return true
+        case .claudeCode(.approve): return true
         default: return false
         }
     }
+}
+
+enum MeetingCommand: String, Equatable, Codable {
+    /// Start keeping a rolling few minutes of call audio (on the Mac only).
+    case start
+    case stop
+    /// "What did they just say?"
+    case whatWasSaid
+    case actionItems
+    case recap
+}
+
+enum ClaudeCodeCommand: Equatable, Codable {
+    /// Types a prompt into the owner's Claude Code session and sends it.
+    case send(String)
+    /// Approves Claude Code's pending permission prompt. Always confirmed, showing the prompt.
+    case approve
+    case deny
+    /// "What's Claude doing?"
+    case status
 }
 
 enum ReadTarget: String, Equatable, Codable {

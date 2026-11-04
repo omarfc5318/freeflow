@@ -17,6 +17,12 @@ TEST_DISPATCH_HARNESS = $(BUILD_DIR)/AppTextInsertionDispatchHarness.swift
 TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioActionTypes.swift \
 	Sources/RioActions/RioActionHandlers.swift \
+	Sources/RioActions/RioContextMemoryPhrases.swift \
+	Sources/RioActions/RioWritingPhrases.swift \
+	Sources/RioActions/RioAutomationPhrases.swift \
+	Sources/RioActions/RioFindPhrases.swift \
+	Sources/RioActions/RioOutsidePhrases.swift \
+	Sources/RioActions/RioMeetingPhrases.swift \
 	Sources/RioActions/RioTranslatorPhrases.swift \
 	Sources/RioActions/RioTranslatorLanguages.swift \
 	Sources/RioActions/RioSpeechChunker.swift \

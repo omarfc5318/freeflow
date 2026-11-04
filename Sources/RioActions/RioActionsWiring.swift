@@ -127,6 +127,12 @@ enum RioActionsWiring {
                     RioTaskActionHandler.shared,
                     RioMemoryActionHandler.shared,
                     RioTranslatorActionHandler.shared,
+                    RioContextMemoryActionHandler.shared,
+                    RioWritingActionHandler.shared,
+                    RioAutomationActionHandler.shared,
+                    RioFindActionHandler.shared,
+                    RioOutsideActionHandler.shared,
+                    RioMeetingActionHandler.shared,
                     RioSmartActionHandler.shared,
                 ]
             ),

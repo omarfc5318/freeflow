@@ -4095,6 +4095,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     /// Runs a spoken command (action key or conversation mode) and shows the result.
     /// "Stop listening" ends conversation mode directly. Only one command runs at a time.
+    /// Entry point for commands that don't come from the keyboard or the mic: scheduled commands,
+    /// triggers and macros (`.automation`) and texts from the owner's iPhone (`.phone`).
+    @MainActor func runRioCommandText(_ text: String, source: RioCommandSource) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        Task { @MainActor [weak self] in await self?.runRioCommand(trimmed, source: source) }
+    }
+
     @MainActor private func runRioCommand(_ spokenTranscript: String, source: RioCommandSource) async {
         guard !isRioCommandRunning else {
             finishRioAction(.failed("I'm still working on the last one"), transcript: "", actions: [])

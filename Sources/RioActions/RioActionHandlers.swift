@@ -25,14 +25,28 @@ import Foundation
 /// before window/app verbs, so each must only claim phrasings that are unambiguously its own
 /// ("open my resume" yes, "open Chrome" never).
 enum RioExtraPhrases {
+    /// In order: earlier parsers win, so each must only claim phrasings that are its own.
+    private static let parsers: [(String, String) -> RioAction?] = [
+        { RioTranslatorPhrases.parse(raw: $0, simplified: $1) },     // M (before E's "translate this")
+        { RioWritingPhrases.parse(raw: $0, simplified: $1) },        // O (before E's reply/selection)
+        { RioAutomationPhrases.parse(raw: $0, simplified: $1) },     // P
+        { RioMeetingPhrases.parse(raw: $0, simplified: $1) },        // T
+        { RioOutsidePhrases.parse(raw: $0, simplified: $1) },        // S
+        { RioFindPhrases.parse(raw: $0, simplified: $1) },           // Q
+        { RioContextMemoryPhrases.parse(raw: $0, simplified: $1) },  // N
+        { RioContextPhrases.parse(raw: $0, simplified: $1) },        // E
+        { RioScreenPhrases.parse(raw: $0, simplified: $1) },         // J
+        { RioVoicePhrases.parse(raw: $0, simplified: $1) },          // G
+        { RioKnowledgePhrases.parse(raw: $0, simplified: $1) },      // H
+        { RioMemoryPhrases.parse(raw: $0, simplified: $1) },         // L
+        { RioSystemPhrases.parse(raw: $0, simplified: $1) },         // I
+        { RioTaskPhrases.parse(raw: $0, simplified: $1) },           // K (last: the broadest)
+    ]
+
     static func parse(raw: String, simplified: String) -> RioAction? {
-        RioTranslatorPhrases.parse(raw: raw, simplified: simplified)       // M (before E's "translate this")
-            ?? RioContextPhrases.parse(raw: raw, simplified: simplified)   // E
-            ?? RioScreenPhrases.parse(raw: raw, simplified: simplified)    // J
-            ?? RioVoicePhrases.parse(raw: raw, simplified: simplified)     // G
-            ?? RioKnowledgePhrases.parse(raw: raw, simplified: simplified) // H
-            ?? RioMemoryPhrases.parse(raw: raw, simplified: simplified)    // L
-            ?? RioSystemPhrases.parse(raw: raw, simplified: simplified)    // I
-            ?? RioTaskPhrases.parse(raw: raw, simplified: simplified)      // K (last: the broadest)
+        for parser in parsers {
+            if let action = parser(raw, simplified) { return action }
+        }
+        return nil
     }
 }

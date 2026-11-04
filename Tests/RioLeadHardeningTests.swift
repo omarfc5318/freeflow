@@ -8,6 +8,17 @@ enum RioLeadHardeningTests {
         goalMentionNeedsTheRealDomain()
         sharedHostingSuffixesAreSeparateSites()
         wildcardDNSHostsAreLocal()
+        phoneRefusesRiskyActions()
+    }
+
+    /// From the iPhone, nothing that would need a confirmation runs (no one can press Return).
+    private static func phoneRefusesRiskyActions() {
+        TestSupport.expect(RioCommandSource.phone.refuses(.sendMessage(to: "Ali", body: "hi")), "phone can't send messages")
+        TestSupport.expect(RioCommandSource.phone.refuses(.emptyTrash), "phone can't empty the trash")
+        TestSupport.expect(RioCommandSource.phone.refuses(.typeText("x")), "phone can't type into the Mac")
+        TestSupport.expect(!RioCommandSource.phone.refuses(.openApp(name: "Spotify")), "phone can open an app")
+        TestSupport.expect(!RioCommandSource.automation.refuses(.emptyTrash), "automation asks instead of refusing")
+        TestSupport.expect(!RioCommandSource.actionKey.refuses(.sendMessage(to: "Ali", body: "hi")), "the action key asks")
     }
 
     private static func target(_ texts: [String], webArea: Bool = true) -> RioTaskTarget {

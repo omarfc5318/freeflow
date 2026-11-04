@@ -633,6 +633,120 @@ actually working on.
 - #73 App integrations: Spotify ("play my Discover Weekly"), Notion ("add this to my Hala
   roadmap"), Canvas (assignments), each with its own consent and token in the Keychain.
 
+## Waves 4–5: the last Rio 2.0 features (contract v4)
+
+Owner (2026-11-03): "these are the last features to be added... build out all this as part of rio
+2.0 then we will go from there." Base: branch `feat/rio-actions` after the fix round.
+
+What the lead already wired:
+- v4 cases are in `RioActionTypes.swift` (`MeetingCommand`, `ClaudeCodeCommand`).
+- `.organizeDownloads` and `.claudeCode(.approve)` always confirm.
+- The undo plan marks every v4 case.
+- Phrase order (`RioExtraPhrases`): M, O, P, T, S, Q, N, then E, J, G, H, L, I, K.
+- Handler and phrase stubs per area.
+- `RioCommandSource.automation` (owner's schedules, triggers and macros; like the action key) and
+  `.phone` (iPhone texts; anything needing confirmation is refused).
+- `AppState.runRioCommandText(_:source:)` is the entry point for non-key, non-mic commands.
+
+Every builder:
+- Owns its stubs plus new files `Rio<Area>*.swift`.
+- Exposes a `Rio<Area>SettingsSection` (the lead embeds it).
+- Does NOT edit AppState, SettingsView, MenuBarView, the coordinator or other areas' files unless
+  its package says so. Otherwise it reports the exact change it needs.
+- Keeps every network use disclosed and toggleable.
+
+### N: context and memory (`feat/rio-w5-n`): #34 follow-ups, #70 timeline search, #65 writing style
+- **#34 Follow-ups.**
+  - "open it again", "do the same for Spotify", "close that", "make it bigger", "send that to Ali too".
+  - Use a pure pronoun/follow-up rewriter over the last command context. N may edit
+    RioActionCoordinator.swift to expose that context (last actions, app and target).
+- **#70 `.searchHistory(query:)`.**
+  - Search the owner's own DICTATION history (`PipelineHistoryStore`), locally only.
+  - Rank by match plus recency, and answer "On Monday you said: …".
+- **#65 Style profile.**
+  - Build a local profile from recent dictations: phrasings, emoji, capitalisation, sign-offs,
+    formality, Arabic/English mixing.
+  - Feed it into the cleanup prompt (PostProcessingService.swift; N may edit it for this only)
+    and into O's write-for-me via a pure `RioStyleProfile` API.
+  - Settings: on/off, a "what Rio learned" preview, reset.
+
+### O: writing (`feat/rio-w5-o`): #44 edit last dictation, #55 write for me, #56 smart paste
+- **#44 `.editLastDictation(instruction:)`.**
+  - "make that more formal / shorter / add a thank-you / fix the grammar / in Arabic".
+  - Rewrite in place, re-using the "Undo last dictation" selection machinery. O may add a NEW
+    file `AppState+RioWriting.swift` (extension). If it needs private members, report the exact
+    change instead.
+- **#55 `.writeForMe(instruction:)`.**
+  - Compose with the LLM (using N's `RioStyleProfile` if present) and type into the focused field.
+  - Never into terminals (`RioImprovePolicy`).
+- **#56 `.smartPaste(instruction:)`.** Transform the clipboard text, paste it, and restore the
+  clipboard.
+- Disclose all three in a `RioWritingSettingsSection`.
+
+### P: automation (`feat/rio-w5-p`): #48 scheduled commands, #49 triggers, #33 "watch me" macros
+- **#48 `.scheduleCommand(command:, when:)`.**
+  - Use H's `RioDateTimeParser` plus recurrence (daily, weekdays, weekly).
+  - Local JSON at 0600, a timer that survives sleep (check on wake), running via
+    `AppState.runRioCommandText(_, .automation)`. P gets this through a closure injected at
+    launch; report the one-line AppDelegate hook.
+- **#49 `.addTrigger(command:, trigger:)`.**
+  - Display connect (NSScreen notifications), audio output device such as AirPods (CoreAudio),
+    and Wi-Fi SSID (CoreWLAN; it needs Location on macOS 14+, so ask only when a Wi-Fi trigger is
+    created).
+- **`.listAutomations` / `.removeAutomation(name:)`.**
+- **#33 `.recordMacro(name:)` / `.stopRecordingMacro` / `.runMacro(name:)`.**
+  - Record app switches, clicks (the AX label at the point, as `.click`), allow-listed keys and
+    typed text into closed-set RioActions.
+  - Never inside secure fields or password managers.
+  - Replay with `.automation`.
+  - Publish `RioMacroRecorder.shared.isRecording` for a bear badge.
+- Settings: list and delete automations and macros.
+
+### Q: finding and files (`feat/rio-w5-q`): #38 find that thing, #39 Downloads cleanup, #57 copy text from screen
+- **#38 `.findThing(query:)`.**
+  - Search Spotlight (H's RioFilesSearch), Messages attachments (~/Library/Messages/Attachments,
+    which needs Full Disk Access; detect it and explain), Mail downloads and Downloads.
+  - Filter by person (Contacts → handles) and time; show a results panel and speak the best one.
+- **#39 `.organizeDownloads`** (confirmed).
+  - Plan moves by type into subfolders and give obvious renames.
+  - Show the plan in the confirmation. Never delete.
+  - Keep a move log so "undo" moves everything back.
+- **#57 `.copyTextFromScreen`.** Front-window capture (J's RioScreenCapture), on-device Vision OCR
+  (en and ar), copy the text and say how much. Nothing leaves the Mac.
+
+### S: outside world (`feat/rio-w5-s`): #58 weather and news, #73 integrations, #32 iPhone texting
+- **#58 Weather and news.**
+  - Weather: Open-Meteo (free, no key, with its geocoding; a default place in Settings).
+  - News: the provider's web-search-capable model (check ModelConfiguration for a Groq
+    compound/search model), else say it's unavailable.
+  - Short spoken answers.
+- **#73 Integrations.** Tokens go in the Keychain via `RioIntegrationsSettingsSection`, with setup steps.
+  - `.playMusic(query:)`: Spotify Web API (OAuth PKCE, loopback redirect, owner-registered client
+    ID); Apple Music `music://` search as the fallback.
+  - `.notionAdd(text:, page:)`: Notion internal integration token.
+  - `.canvasDue(range:)`: Canvas token plus base URL (default https://canvas.ucdavis.edu).
+- **#32 iPhone texting.**
+  - Watch ~/Library/Messages/chat.db read-only (Full Disk Access; detect it and show steps) for
+    NEW self-sent messages starting with "Rio".
+  - Run them via `runRioCommandText(_, .phone)`.
+  - Reply with the result to the owner's own handle.
+  - Off by default.
+
+### T: meetings and Claude Code (`feat/rio-w5-t`): #41 meeting copilot, #59 Claude Code by voice
+- **#41 `.meeting(...)`**, off by default.
+  - Keep a rolling 5 minutes of ScreenCaptureKit system audio plus the mic, in memory only.
+  - Publish `RioMeetingCopilot.shared.isRecording` for a bear badge.
+  - "what did they just say" transcribes the last ~60 s (Whisper) and summarises. "action
+    items" / "recap" use the LLM.
+  - It auto-stops at the end of the call or after 2 hours.
+  - Audio is sent only when asked, and that's disclosed.
+- **#59 `.claudeCode(...)`.**
+  - Find the owner's Claude Code session (a Warp or Terminal window showing Claude Code).
+  - `.send`: focus, paste and press Return.
+  - `.status`: read the visible text via Accessibility and summarise it.
+  - `.approve` / `.deny`: send the key the visible permission prompt expects. `.approve` always
+    confirms, showing the prompt.
+
 ## Rules for every builder
 - Read `AGENTS.md` first and follow it. No new dependencies, no SPM/Xcode project. Swift 6.2
   toolchain, deployment target macOS 13, `-warnings-as-errors`. Use `#available` for newer APIs.

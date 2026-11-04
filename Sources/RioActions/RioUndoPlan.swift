@@ -115,11 +115,15 @@ enum RioUndoPlan {
             if case .pasteRecent = command { return .irreversible }
             return .ignore
         case .undoLast, .showHelp, .timerStatus, .answer, .readAloud, .calendarAgenda, .batteryStatus, .stopListening,
-             .describeScreen, .recall, .calculate, .startTranslation, .stopTranslation, .speakLastTranslation:
+             .describeScreen, .recall, .calculate, .startTranslation, .stopTranslation, .speakLastTranslation,
+             .searchHistory, .listAutomations, .weather, .news, .canvasDue, .meeting, .stopRecordingMacro:
             return .ignore
         case .openURL, .webSearch, .lockScreen, .screenshot, .typeText, .sendMessage, .replyInConversation,
              .openFile, .revealFile, .joinNextMeeting, .pressKeys, .browser, .emptyTrash,
-             .click, .fillField, .runTask, .remember, .forget, .draftEmail, .addNote:
+             .click, .fillField, .runTask, .remember, .forget, .draftEmail, .addNote,
+             .editLastDictation, .writeForMe, .smartPaste, .scheduleCommand, .addTrigger, .removeAutomation,
+             .recordMacro, .runMacro, .findThing, .organizeDownloads, .copyTextFromScreen, .playMusic,
+             .notionAdd, .claudeCode:
             return .irreversible
         }
     }
