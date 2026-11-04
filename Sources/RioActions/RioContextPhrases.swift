@@ -116,17 +116,29 @@ enum RioContextPhrases {
 
     private static let sendPrefix = #"^(?:send\s+(?:an?\s+)?(?:text|message|imessage|i message|sms)(?:\s+message)?\s+to|text|message|imessage)\s+"#
 
+    /// Other messaging apps: `.sendMessage` is iMessage/SMS only, so "text Mom on WhatsApp ..." is
+    /// left to the resolver (switch to the app) instead of going out over iMessage.
+    private static let otherApps =
+        #"(?:whats\s?app|slack|telegram|signal|discord|(?:microsoft\s+|ms\s+)?teams|(?:facebook\s+)?messenger|instagram|insta|snapchat|wechat|viber|linkedin)"#
+    /// "on iMessage", "by text": the default channel, said out loud.
+    private static let defaultChannel = #"\s+(?:on|via|in|over|through|using|by)\s+(?:i\s?message|imessages?|messages|text|sms)$"#
+
     private static func parseMessage(_ text: String) -> RioAction? {
         let withConnector = sendPrefix + #"(.+?)\s*"# + connector + #"(.+)$"#
-        if let groups = RioText.firstMatch(withConnector, in: text),
-           let to = recipient(groups[1], maxWords: 2), let body = cleanBody(groups[2]) {
-            return .sendMessage(to: to, body: body)
+        if let groups = RioText.firstMatch(withConnector, in: text), let head = groups[1] {
+            if RioText.matches(#"\s(?:on|via|in|over|through|using)\s+(?:my\s+|the\s+)?"# + otherApps + #"(?:\s+app)?$"#, head) { return nil }
+            let named = RioText.replacing(defaultChannel, with: "", in: head)
+            if let to = recipient(named, maxWords: 2), let body = cleanBody(groups[2]) {
+                return .sendMessage(to: to, body: body)
+            }
         }
         // "text Ali I'll be late": one-word name, no connector.
         let bare = sendPrefix + #"(\S+)\s+(.+)$"#
         if let groups = RioText.firstMatch(bare, in: text), let first = groups[1],
            looksLikeBareName(first), let to = recipient(first, maxWords: 1), let body = cleanBody(groups[2]),
-           !RioText.matches(#"^(?:saying|that says|says|that|with)$"#, body) {
+           !RioText.matches(#"^(?:saying|that says|says|that|with)$"#, body),
+           // "text mom on WhatsApp saying I'm home": the app is not the message.
+           !RioText.matches(#"^(?:on|via|in|over|through|using)\s+(?:my\s+|the\s+)?"# + otherApps + #"\b"#, body) {
             return .sendMessage(to: to, body: body)
         }
         return nil

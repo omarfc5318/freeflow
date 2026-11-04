@@ -67,8 +67,12 @@ enum RioScreenPhrases {
 
     private static let ordinalWords: [String: Int] = [
         "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7,
-        "eighth": 8, "ninth": 9, "tenth": 10, "last": -1,
+        "eighth": 8, "ninth": 9, "tenth": 10, "eleventh": 11, "twelfth": 12, "thirteenth": 13,
+        "fourteenth": 14, "fifteenth": 15, "sixteenth": 16, "seventeenth": 17, "eighteenth": 18,
+        "nineteenth": 19, "twentieth": 20, "last": -1, "penultimate": -2,
     ]
+    /// "twenty first", "thirty second": compound ordinals, all past the cap.
+    private static let ordinalTens: Set<String> = ["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
     private static let numberWords: [String: Int] = [
         "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
         "nine": 9, "ten": 10,
@@ -85,6 +89,34 @@ enum RioScreenPhrases {
         return nil
     }
 
+    enum OrdinalPhrase: Equatable {
+        case none
+        /// The position and how many leading words said it.
+        case value(Int, used: Int)
+        /// "the twenty first one": a position past `maxOrdinal`, or one the matcher can't count.
+        case overCap
+    }
+
+    /// The ordinal at the start of `words`: "second", "3rd", "last", "second to last", "next to
+    /// last", "penultimate", "twenty first".
+    static func ordinalPhrase(_ words: [String]) -> OrdinalPhrase {
+        guard let first = words.first?.lowercased() else { return .none }
+        if words.count >= 3, ["to", "from"].contains(words[1].lowercased()), words[2].lowercased() == "last" {
+            if first == "second" || first == "next" { return .value(-2, used: 3) }
+            if first == "third" { return .value(-3, used: 3) }
+            return .overCap
+        }
+        if ordinalTens.contains(first), words.count >= 2, let unit = ordinalWords[words[1].lowercased()], unit > 0, unit < 10 {
+            return .overCap
+        }
+        if let groups = RioText.firstMatch(#"^(\d+)(?:st|nd|rd|th)$"#, in: first), let digits = groups[1], let value = Int(digits),
+           value > maxOrdinal || value == 0 {
+            return .overCap
+        }
+        if let value = ordinal(first) { return .value(value, used: 1) }
+        return .none
+    }
+
     private static func cardinal(_ word: String) -> Int? {
         let lower = word.lowercased()
         if let value = numberWords[lower] { return value }
@@ -94,8 +126,24 @@ enum RioScreenPhrases {
 
     // MARK: Pick one of the numbered choices
 
+    /// "open the 5th result", "select the third option", "choose the last link": a click.
+    private static let pickNouns: [String: String] = [
+        "result": "link", "results": "link", "search result": "link", "link": "link", "option": "option",
+        "item": "item", "one": "", "choice": "",
+    ]
+
     private static func parsePick(_ s: String) -> RioAction? {
         let text = s.lowercased()
+        let nounPick = #"^(?:open|select|choose|pick)\s+(?:the\s+)?(.+?)\s+(search\s+result|results?|link|option|item|one|choice)$"#
+        if let groups = RioText.firstMatch(nounPick, in: text), let words = groups[1], let noun = groups[2],
+           let label = pickNouns[noun] {
+            switch ordinalPhrase(words.split(separator: " ").map(String.init)) {
+            case .value(let value, let used) where used == words.split(separator: " ").count:
+                return .click(label: label, ordinal: value)
+            case .overCap: return nil
+            default: break
+            }
+        }
         let byNumber = #"^(?:(?:pick|choose|select|take|go with)\s+)?(?:the\s+)?(?:number|option|choice)\s+(\w+)$"#
         if let groups = RioText.firstMatch(byNumber, in: text), let word = groups[1], let value = cardinal(word) {
             return .click(label: "", ordinal: value)
@@ -179,9 +227,16 @@ enum RioScreenPhrases {
             words.removeFirst()
         }
         var ordinalValue: Int?
-        if let first = words.first, let value = ordinal(first) {
+        switch ordinalPhrase(words) {
+        case .overCap: return nil
+        case .value(let value, let used):
             ordinalValue = value
-            words.removeFirst()
+            words.removeFirst(used)
+        case .none: break
+        }
+        if ordinalValue != nil {
+            // "the last one", "the 1st one": any control at that position.
+            if words.count == 1, ["one", "ones"].contains(words[0].lowercased()) { words.removeAll() }
         } else if words.count >= 2, words[0].lowercased() == "number", let value = cardinal(words[1]) {
             ordinalValue = value
             words.removeFirst(2)

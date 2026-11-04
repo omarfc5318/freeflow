@@ -60,6 +60,31 @@ enum RioWebURLs {
         "trello": "https://trello.com",
         "medium": "https://medium.com",
         "quora": "https://www.quora.com",
+        // School
+        "gradescope": "https://www.gradescope.com",
+        "piazza": "https://piazza.com",
+        "overleaf": "https://www.overleaf.com",
+        "desmos": "https://www.desmos.com/calculator",
+        "wolframalpha": "https://www.wolframalpha.com",
+        "wolfram": "https://www.wolframalpha.com",
+        "quizlet": "https://quizlet.com",
+        "khanacademy": "https://www.khanacademy.org",
+        "leetcode": "https://leetcode.com",
+        "edstem": "https://edstem.org",
+        // Developer
+        "vercel": "https://vercel.com",
+        "verceldashboard": "https://vercel.com/dashboard",
+        "supabase": "https://supabase.com",
+        "supabasedashboard": "https://supabase.com/dashboard",
+        "linear": "https://linear.app",
+        "cloudflare": "https://dash.cloudflare.com",
+        "cloudflaredashboard": "https://dash.cloudflare.com",
+        "stripe": "https://stripe.com",
+        "stripedashboard": "https://dashboard.stripe.com",
+        "netlify": "https://app.netlify.com",
+        "gitlab": "https://gitlab.com",
+        "npm": "https://www.npmjs.com",
+        "npmjs": "https://www.npmjs.com",
     ]
 
     static func knownSite(compactName: String) -> URL? {
@@ -78,17 +103,80 @@ enum RioWebURLs {
         "ca", "au", "news", "tech", "online", "store", "site", "page", "club", "cloud", "design",
     ]
 
-    /// "hala discover dot com" -> https://haladiscover.com; "github.com" -> https://github.com.
-    /// Nil unless the text is a host name with a known top-level domain.
+    /// "hala discover dot com" -> https://haladiscover.com; "github.com" -> https://github.com;
+    /// "github dot com slash vercel slash next dot js" -> https://github.com/vercel/next.js.
+    /// Nil unless the text is a host name with a known top-level domain, optionally followed by
+    /// a path. A spoken host ("dot com") needs "slash" before each path segment; a written one
+    /// ("github.com/ofarhan", whose slashes the parser turned into spaces) takes the words as is.
     static func domainURL(fromSpoken spoken: String) -> URL? {
-        var text = spoken.lowercased()
-        text = RioText.replacing(#"\s+dot\s+"#, with: ".", in: text)
-        guard text.contains(".") else { return nil }
-        text = text.replacingOccurrences(of: " ", with: "")
-        guard RioText.matches(#"^(?:[a-z0-9-]+\.)+[a-z]{2,24}$"#, text),
-              let tld = text.split(separator: ".").last, allowedTLDs.contains(String(tld)),
-              !text.hasPrefix("-"), !text.contains("..") else { return nil }
-        return safeURL(string: "https://\(text)")
+        let original = RioText.collapseWhitespace(spoken.trimmingCharacters(in: .whitespacesAndNewlines))
+        let isWritten = !RioText.matches(#"(?:^|\s)dot(?:\s|$)"#, original)
+        let text = RioText.replacing(#"\s+dot\s+"#, with: ".", in: original)
+        guard text.contains("."),
+              let groups = RioText.firstMatch(#"^(.+?\.[A-Za-z]{2,24})(?:\s+(.+))?$"#, in: text),
+              let hostWords = groups[1] else { return nil }
+        let host = hostWords.lowercased().replacingOccurrences(of: " ", with: "")
+        guard RioText.matches(#"^(?:[a-z0-9-]+\.)+[a-z]{2,24}$"#, host),
+              let tld = host.split(separator: ".").last, allowedTLDs.contains(String(tld)),
+              !host.hasPrefix("-"), !host.contains("..") else { return nil }
+        guard let rest = groups[2] else { return safeURL(string: "https://\(host)") }
+        guard let path = path(fromSpoken: rest, isWritten: isWritten) else { return nil }
+        return safeURL(string: "https://\(host)\(path)")
+    }
+
+    /// "slash vercel slash next.js" -> "/vercel/next.js". Nil for anything that is not a plain path.
+    private static func path(fromSpoken rest: String, isWritten: Bool) -> String? {
+        let tokens = rest.split(separator: " ").map(String.init)
+        var segments: [String]
+        if tokens.contains(where: { $0.lowercased() == "slash" }) {
+            guard tokens.first?.lowercased() == "slash" else { return nil }
+            segments = []
+            var current = ""
+            for token in tokens.dropFirst() {
+                if token.lowercased() == "slash" {
+                    if !current.isEmpty { segments.append(current) }
+                    current = ""
+                } else {
+                    current += token
+                }
+            }
+            if !current.isEmpty { segments.append(current) }
+        } else {
+            guard isWritten else { return nil }
+            segments = tokens
+        }
+        guard !segments.isEmpty, segments.count <= 8,
+              segments.allSatisfy({ RioText.matches(#"^[A-Za-z0-9._~-]{1,80}$"#, $0) && $0 != "." && $0 != ".." }) else { return nil }
+        return "/" + segments.joined(separator: "/")
+    }
+
+    /// The spoken URL after "open"/"go to" written out, so the clause stays one short target:
+    /// "open github dot com slash vercel slash next dot js" -> "open github.com/vercel/next.js",
+    /// "open linear dot app" -> "open linear.app" (the trailing "app" is not an app suffix).
+    static func writingSpokenURLs(in text: String) -> String {
+        let verb = #"(?:open(?:\s+up)?|go\s+to|visit|navigate\s+to|take\s+me\s+to|pull\s+up|bring\s+up|load)"#
+        let host = #"((?:[A-Za-z0-9-]+\s+){0,3}?[A-Za-z0-9-]+(?:\s+dot\s+[A-Za-z0-9-]+)*\s+dot\s+([A-Za-z]{2,24}))"#
+        let path = #"((?:\s+slash\s+[A-Za-z0-9._~-]+(?:\s+dot\s+[A-Za-z0-9_~-]+)*)*)(?:\s+slash)?"#
+        let pattern = #"((?:^|\b(?:and|then)\s+|[,;]\s*)"# + verb + #"\s+(?:the\s+)?(?:web\s?site\s+|site\s+)?)"# + host + path
+            + #"(?=\s+(?:and|then)\b|\s*[,.;!?]|\s*$)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return text }
+        var result = text
+        let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+        for match in matches.reversed() {
+            guard let whole = Range(match.range, in: text), let lead = Range(match.range(at: 1), in: text),
+                  let hostRange = Range(match.range(at: 2), in: text), let tldRange = Range(match.range(at: 3), in: text),
+                  allowedTLDs.contains(text[tldRange].lowercased()) else { continue }
+            let written = RioText.replacing(#"\s+dot\s+"#, with: ".", in: String(text[hostRange])).replacingOccurrences(of: " ", with: "")
+            var pathText = ""
+            if let pathRange = Range(match.range(at: 4), in: text) {
+                let segments = String(text[pathRange]).components(separatedBy: "slash").map {
+                    RioText.replacing(#"\s+dot\s+"#, with: ".", in: $0).replacingOccurrences(of: " ", with: "")
+                }.filter { !$0.isEmpty }
+                if !segments.isEmpty { pathText = "/" + segments.joined(separator: "/") }
+            }
+            result.replaceSubrange(whole, with: String(text[lead]) + written + pathText)
+        }
+        return result
     }
 
     // MARK: Local addresses
@@ -98,7 +186,8 @@ enum RioWebURLs {
     /// "localhost 3000", "localhost:8081", "127.0.0.1 8080 slash api" -> http://localhost:3000.
     /// Only for the owner's own words: the smart resolver's URL rule still refuses local hosts.
     static func localURL(fromSpoken spoken: String) -> URL? {
-        let text = RioText.collapseWhitespace(spoken.lowercased().replacingOccurrences(of: ":", with: " ")
+        let spokenColon = RioText.replacing(#"\s+colon\s+"#, with: " ", in: spoken.lowercased())
+        let text = RioText.collapseWhitespace(spokenColon.replacingOccurrences(of: ":", with: " ")
             .replacingOccurrences(of: "/", with: " slash "))
         let pattern = #"^(localhost|local\s+host|127\.0\.0\.1)\s+(?:port\s+)?(\d{1,5})((?:\s+(?:slash\s+)?[a-z0-9_-]+)*)(?:\s+slash)?$"#
         guard let groups = RioText.firstMatch(pattern, in: text), let hostWord = groups[1],
@@ -172,9 +261,9 @@ enum RioWebURLs {
 /// the words". Rewritten to "search amazon for headphones" before the clauses are split.
 enum RioWebSearchRewrite {
     private static let pattern =
-        #"\b(?:go\s+to|go\s+on|open|visit|navigate\s+to|take\s+me\s+to)\s+(?:the\s+)?(youtube|you\s?tube|amazon)(?:\.com)?\s*,?\s*(?:and|then)\s+(?:then\s+)?(?:search|look)(?:\s+for|\s+up)?\s+"#
+        #"\b(?:go\s+to|go\s+on|open|visit|navigate\s+to|take\s+me\s+to)\s+(?:the\s+)?(youtube|you\s?tube|amazon)(?:\.com|\s+dot\s+com)?\s*,?\s*(?:and|then)\s+(?:then\s+)?(?:search|look)(?:\s+for|\s+up)?\s+"#
 
     static func apply(to text: String) -> String {
-        RioText.replacing(pattern, with: "search $1 for ", in: text)
+        RioWebURLs.writingSpokenURLs(in: RioText.replacing(pattern, with: "search $1 for ", in: text))
     }
 }

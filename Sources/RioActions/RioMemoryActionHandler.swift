@@ -30,7 +30,7 @@ final class RioMemoryActionHandler: RioActionHandling {
     func handle(_ action: RioAction, executor: RioActionExecuting) async -> RioActionResult? {
         switch action {
         case .remember(let fact): return remember(fact)
-        case .recall(let query): return recall(query)
+        case .recall(let query): return await recallOrHistory(query, executor: executor)
         case .forget(let query): return forget(query)
         case .addNote(let text): return RioNotesWriter.append(text)
         case .draftEmail(let to, let subject, let body): return await RioEmailDrafter.draft(to: to, subject: subject, body: body)
@@ -63,6 +63,16 @@ final class RioMemoryActionHandler: RioActionHandling {
         case .alreadyKnown: return .done(summary: "I already know that")
         case .rejected: return .failed(message: "I couldn't remember that. Keep it to one short sentence.")
         }
+    }
+
+    /// A memory miss on a real question ("what did I tell you about the seed round") looks
+    /// through the owner's dictations before saying it knows nothing; the memory's own miss
+    /// message stays when the dictations have nothing either.
+    private func recallOrHistory(_ query: String, executor: RioActionExecuting) async -> RioActionResult {
+        let noticePending = store.recoveredCorruptFile != nil && !corruptNoticeGiven
+        let result = recall(query)
+        guard RioMemorySettings.isEnabled, !noticePending, case .none = store.recall(query) else { return result }
+        return await RioRecallFallback.resolve(memory: result, query: query, executor: executor)
     }
 
     private func recall(_ query: String) -> RioActionResult {
