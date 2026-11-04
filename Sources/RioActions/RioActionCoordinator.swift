@@ -306,6 +306,8 @@ final class RioActionCoordinator {
             observer?.didExecute(action, result: result)
             switch result {
             case .done(let summary):
+                // So the next command can say "it", "that" or "the same" (see RioFollowUp.swift).
+                RioFollowUpMemory.shared.record(action)
                 summaries.append(summary)
             case .failed(let message):
                 return .failed(message)
