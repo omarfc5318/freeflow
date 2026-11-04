@@ -18,8 +18,6 @@ enum WakeWordListenerStartResult: Equatable {
 /// the engine) after each command, after an error, and every `taskLifetime` seconds, so it
 /// never hits Apple's roughly one-minute task limit.
 @MainActor final class WakeWordListener {
-    /// Silence after the last new word that ends a command.
-    static let silenceToEndCommand: TimeInterval = 1.2
     /// Replace the recognition task before Apple's ~1 minute limit.
     static let taskLifetime: TimeInterval = 50
     private static let maxConsecutiveFailures = 5
@@ -31,6 +29,9 @@ enum WakeWordListenerStartResult: Equatable {
     /// could not be reopened), with a user-facing reason, so conversation mode never keeps
     /// claiming to listen. Not called for a stop the owner of the listener asked for.
     var onStopped: (@MainActor (String) -> Void)?
+    /// Called once when Rio hears just his name ("Rio" and a pause), so the owner of the
+    /// listener can give a quick "yes?" cue while the listener waits for the command.
+    var onBareName: (@MainActor () -> Void)?
     private let engine = AVAudioEngine()
     private let requestBox = RecognitionRequestBox()
     private var recognizer: SFSpeechRecognizer?
@@ -45,6 +46,11 @@ enum WakeWordListenerStartResult: Equatable {
     /// Finals with no words in a row; each one doubles the wait before listening again.
     private var consecutiveEmptyFinals = 0
     private var lastHeardText = ""
+    /// When this recognition task heard a bare "Rio" (nothing after it yet).
+    private var bareNameHeardAt: Date?
+    /// Until when the next utterance counts as the command even without the name, after a
+    /// bare "Rio" whose recognition task ended before the command came.
+    private var commandExpectedUntil: Date?
     private var silenceTimer: Task<Void, Never>?
     private var lifetimeTimer: Task<Void, Never>?
     private var configObserver: NSObjectProtocol?
@@ -196,6 +202,7 @@ enum WakeWordListenerStartResult: Equatable {
         pendingCommand = nil
         commandAudioMark = nil
         lastHeardText = ""
+        bareNameHeardAt = nil
         task?.cancel()
         task = nil
         guard let recognizer else { return }
@@ -210,10 +217,13 @@ enum WakeWordListenerStartResult: Equatable {
 
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             let text = result?.bestTranscription.formattedString
+            let timed = result?.bestTranscription.segments.map {
+                WakePhraseExtractor.TimedWord(text: $0.substring, start: $0.timestamp, duration: $0.duration)
+            } ?? []
             let isFinal = result?.isFinal ?? false
             let failed = error != nil
             Task { @MainActor in
-                self?.handleResult(generation: current, text: text, isFinal: isFinal, failed: failed)
+                self?.handleResult(generation: current, text: text, timed: timed, isFinal: isFinal, failed: failed)
             }
         }
         lifetimeTimer = Task { [weak self] in
@@ -223,19 +233,32 @@ enum WakeWordListenerStartResult: Equatable {
         }
     }
 
-    private func handleResult(generation: Int, text: String?, isFinal: Bool, failed: Bool) {
+    private func handleResult(
+        generation: Int, text: String?, timed: [WakePhraseExtractor.TimedWord], isFinal: Bool, failed: Bool
+    ) {
         guard generation == self.generation, wantsListening, !isPaused else { return }
         if let text {
             consecutiveFailures = 0
             if !text.isEmpty { consecutiveEmptyFinals = 0 }
-            if let command = WakePhraseExtractor.command(in: text), command != pendingCommand {
+            // The name after a pause counts even when room speech ran into the same utterance.
+            let withPauses = timed.isEmpty ? text : WakePhraseExtractor.transcript(from: timed)
+            if let command = command(in: text, timed: timed), command != pendingCommand {
                 if pendingCommand == nil { commandAudioMark = requestBox.mark(secondsBack: Self.commandLeadSeconds) }
                 pendingCommand = command
-                scheduleSilenceTimer(generation: generation)
+                commandExpectedUntil = nil
+                scheduleSilenceTimer(generation: generation, after: WakeListenTiming.silenceToEnd(pendingCommand: command))
+            } else if pendingCommand == nil, WakePhraseExtractor.isBareName(withPauses) {
+                // "Rio" and a thinking pause: keep listening for the command instead of ending
+                // the utterance after the usual short silence.
+                if bareNameHeardAt == nil {
+                    bareNameHeardAt = Date()
+                    onBareName?()
+                }
+                if text != lastHeardText { scheduleSilenceTimer(generation: generation, after: WakeListenTiming.bareNameWindow) }
             } else if pendingCommand == nil, text != lastHeardText {
                 // Speech without the name: a pause ends the utterance, so the next "Rio" starts
                 // a fresh one (the name only counts at the start of an utterance).
-                scheduleSilenceTimer(generation: generation)
+                scheduleSilenceTimer(generation: generation, after: WakeListenTiming.silenceWithoutCommand)
             }
             lastHeardText = text
         }
@@ -250,10 +273,20 @@ enum WakeWordListenerStartResult: Equatable {
         }
     }
 
-    private func scheduleSilenceTimer(generation: Int) {
+    /// The command in what was heard: after the name (also after a pause mid-transcript), or the
+    /// whole utterance shortly after a bare "Rio" from the previous utterance.
+    private func command(in text: String, timed: [WakePhraseExtractor.TimedWord]) -> String? {
+        if let command = WakePhraseExtractor.command(in: text) { return command }
+        if !timed.isEmpty, let command = WakePhraseExtractor.command(in: timed) { return command }
+        guard let until = commandExpectedUntil, Date() < until, !WakePhraseExtractor.isBareName(text) else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        return trimmed.contains { $0.isLetter || $0.isNumber } ? trimmed : nil
+    }
+
+    private func scheduleSilenceTimer(generation: Int, after seconds: TimeInterval) {
         silenceTimer?.cancel()
         silenceTimer = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(Self.silenceToEndCommand * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             guard !Task.isCancelled else { return }
             self?.silenceElapsed(generation: generation)
         }
@@ -274,6 +307,13 @@ enum WakeWordListenerStartResult: Equatable {
     private func finishCommandAndRestart() {
         let command = pendingCommand
         let mark = commandAudioMark
+        // A bare "Rio" whose utterance ended early (the recognizer's own final, the task's
+        // lifetime): the next utterance within the window is the command.
+        if command == nil, let heardAt = bareNameHeardAt {
+            commandExpectedUntil = heardAt.addingTimeInterval(WakeListenTiming.bareNameWindow)
+        } else if command != nil {
+            commandExpectedUntil = nil
+        }
         pendingCommand = nil
         commandAudioMark = nil
         beginRecognitionTask()
@@ -292,17 +332,29 @@ enum WakeWordListenerStartResult: Equatable {
         }
     }
 
-    /// A final result with no words (silence): back off 0.25 s, 0.5 s, 1 s ... up to 5 s instead
-    /// of restarting recognition in a tight loop.
+    /// A final result with no words (silence): wait 0.25 s, then at most 0.5 s, instead of
+    /// restarting recognition in a tight loop, and listen again at once when sound arrives, so
+    /// a "Rio" said in a quiet room is not missed.
     private func restartAfterEmptyFinal() {
         consecutiveEmptyFinals += 1
-        let delay = min(0.25 * pow(2, Double(consecutiveEmptyFinals - 1)), 5)
+        let delay = WakeListenTiming.emptyFinalDelay(consecutive: consecutiveEmptyFinals)
         let current = generation
         silenceTimer?.cancel()
         task?.cancel()
         task = nil
+        _ = requestBox.takeHeardSound()
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            let step: TimeInterval = 0.05
+            var waited: TimeInterval = 0
+            while waited < delay {
+                try? await Task.sleep(nanoseconds: UInt64(step * 1_000_000_000))
+                waited += step
+                guard let self, current == self.generation else { return }
+                if self.requestBox.takeHeardSound() {
+                    self.consecutiveEmptyFinals = 0
+                    break
+                }
+            }
             guard let self, current == self.generation, self.wantsListening, !self.isPaused else { return }
             self.beginRecognitionTask()
         }
@@ -340,6 +392,9 @@ private final class RecognitionRequestBox: @unchecked Sendable {
     private var ringCount = 0
     private var written = 0
     private var recentRate = 16_000
+    /// Set when a sample louder than `soundThreshold` arrives; read and cleared by the listener.
+    private var heardSound = false
+    private static let soundThreshold: Float = 0.03
 
     func replace(with newRequest: SFSpeechAudioBufferRecognitionRequest?) {
         lock.lock()
@@ -354,6 +409,15 @@ private final class RecognitionRequestBox: @unchecked Sendable {
         request?.append(buffer)
         keepRecent(buffer)
         lock.unlock()
+    }
+
+    /// True when sound (not silence) arrived since the last call.
+    func takeHeardSound() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let heard = heardSound
+        heardSound = false
+        return heard
     }
 
     /// A position `secondsBack` before now, for `recentAudio(since:)`.
@@ -395,7 +459,9 @@ private final class RecognitionRequestBox: @unchecked Sendable {
         while index + step <= frames {
             var sum: Float = 0
             for offset in 0..<step { sum += channel[index + offset] }
-            ring[ringHead] = Int16(max(-1, min(1, sum / Float(step))) * 32_767)
+            let sample = max(-1, min(1, sum / Float(step)))
+            if abs(sample) > Self.soundThreshold { heardSound = true }
+            ring[ringHead] = Int16(sample * 32_767)
             ringHead = (ringHead + 1) % ring.count
             ringCount = min(ringCount + 1, ring.count)
             index += step

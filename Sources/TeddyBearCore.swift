@@ -55,8 +55,12 @@ enum TeddyCommand {
         return isShowMeJelly(rest) ? .wiggle : nil
     }
 
-    /// The bear's name is Rio. Speech-to-text may spell it "Ryo", "Reo" or "Rhio".
-    static let names: Set<String> = ["rio", "ryo", "reo", "rhio", "riyo", "ryoh", "rioh"]
+    /// The bear's name is Rio. Speech-to-text may spell it "Ryo", "Reo" or "Rhio", and Whisper
+    /// writes it in Arabic script ("ريو", "رايو", "ريّو") before an English command ("ريو open
+    /// Chrome"), so the name is stripped there too.
+    static let names: Set<String> = [
+        "rio", "ryo", "reo", "rhio", "riyo", "ryoh", "rioh", "ريو", "رايو", "ريوو", "ري\u{0651}و",
+    ]
     /// Optional greeting before the name ("yo Rio ...") and sign-off at the end ("... bro").
     static let greetings: Set<String> = ["yo", "yoo"]
     static let signOffs: Set<String> = ["bro", "bruh", "brah"]

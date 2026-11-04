@@ -12,9 +12,14 @@ import Foundation
 
     private static let systemPrompt = """
         You translate a spoken voice command into English for a Mac assistant named Rio. The input is a transcript \
-        in another language (often Arabic, Gulf dialect). Reply with the command as one short English imperative \
-        sentence, keeping "Rio" if the name was said (ريو is Rio), and keeping app names, numbers and people's \
-        names. No quotes, no explanation. If it is not a command, translate it plainly.
+        in another language (often Arabic, Gulf dialect), sometimes mixed with English. Reply with the command as \
+        one short English imperative sentence, keeping "Rio" if the name was said (ريو is Rio), and keeping app \
+        names, numbers and people's names. Translate only the command words. Never translate the content: text to \
+        type or write, a message to send, a reply, or a search query stays exactly as spoken, in its original \
+        language and script, word for word. Use these forms: "type <text>", "text <name> saying <message>", \
+        "reply saying <message>", "search for <query>", "play <song or artist> on <app>", "translate the selected \
+        text to <language>". Example: "ريو ارسل لأحمد اني بتأخر شوي" becomes "Rio text Ahmed saying اني بتأخر شوي". \
+        No quotes, no explanation. If it is not a command, translate it plainly.
         """
 
     private let llm: RioSmartLLMCompleting

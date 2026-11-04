@@ -137,9 +137,10 @@ import Foundation
     func speakLast() -> RioActionResult {
         guard let last = board.lastTranslation else {
             // No translation to repeat: "say that again" means his own last line.
+            // The outcome speaks it: speaking here too would be cut off by the success line.
             guard let line = RioVoice.shared.lastSpokenText else { return .failed(message: "I haven't translated anything yet") }
-            RioVoice.shared.speak(line)
-            return .done(summary: "")
+            RioPersonality.registerVerbatim(line)
+            return .done(summary: line)
         }
         if RioVoice.shared.isRioRecordingProvider() { return .failed(message: "I'm listening right now, ask again in a second") }
         switch speaker.speak(last.text, in: last.language) {

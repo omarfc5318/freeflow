@@ -9,11 +9,14 @@ enum RioArabicCommandTable {
         let normalized = RioArabicText.normalize(transcript)
         guard normalized.unicodeScalars.contains(where: RioArabicText.isArabicScript) else { return nil }
         var tokens = normalized.split(separator: " ").map(String.init)
-        let wake = stripWake(&tokens)
-        tokens = withoutFiller(tokens)
+        // The words as said, at the same positions, for search queries and timer labels.
+        let display = RioArabicText.displayWords(transcript)
+        var originals = display.count == tokens.count ? display : tokens
+        let wake = stripWake(&tokens, &originals)
+        (tokens, originals) = withoutFiller(tokens, originals)
         // Timers, search, help and "time left" read the whole sentence: the clause splitter would
         // cut "خمس دقائق وثلاثين ثانية" or a search query at every "و".
-        if let whole = RioArabicClauses.whole(tokens) { return wake ? "Rio \(whole)" : whole }
+        if let whole = RioArabicClauses.whole(tokens, originals: originals) { return wake ? "Rio \(whole)" : whole }
         let clauses = splitClauses(tokens)
         if clauses.isEmpty { return wake ? "Rio" : nil }
 
@@ -34,17 +37,19 @@ enum RioArabicCommandTable {
 
     // MARK: Tokens
 
-    /// Drops "يا ريو", "هلا ريو" or a bare "ريو" at the start. True when the name was there.
-    private static func stripWake(_ tokens: inout [String]) -> Bool {
+    /// Drops "يا ريو", "هلا ريو", "Hey Rio" or a bare "ريو" at the start. True when the name was there.
+    private static func stripWake(_ tokens: inout [String], _ originals: inout [String]) -> Bool {
         var index = 0
-        while index < tokens.count, RioArabicVocabulary.greetings.contains(tokens[index]) { index += 1 }
-        guard index < tokens.count, RioArabicVocabulary.wakeWords.contains(tokens[index].lowercased()) else { return false }
+        while index < tokens.count, RioArabicVocabulary.isGreeting(tokens[index]) { index += 1 }
+        guard index < tokens.count, RioArabicVocabulary.isWakeWord(tokens[index]) else { return false }
         tokens.removeFirst(index + 1)
+        originals.removeFirst(index + 1)
         return true
     }
 
-    private static func withoutFiller(_ tokens: [String]) -> [String] {
+    private static func withoutFiller(_ tokens: [String], _ originals: [String]) -> ([String], [String]) {
         var out: [String] = []
+        var outOriginals: [String] = []
         var index = 0
         while index < tokens.count {
             if let phrase = RioArabicVocabulary.fillerPhrases.first(where: { phrase in
@@ -53,25 +58,37 @@ enum RioArabicCommandTable {
                 index += phrase.count
                 continue
             }
-            if !RioArabicVocabulary.fillers.contains(tokens[index]) { out.append(tokens[index]) }
+            if !RioArabicVocabulary.fillers.contains(tokens[index]) {
+                out.append(tokens[index])
+                outOriginals.append(originals[index])
+            }
             index += 1
         }
-        return out
+        return (out, outOriginals)
     }
 
-    /// Splits on a standalone "و" (and), "بعدين"/"ثم" (then), and on "وسبوتيفاي" (and Spotify).
+    /// Splits on a standalone "و" (and), "بعدين"/"ثم" (then), on "و" written on an app
+    /// ("وسبوتيفاي": and Spotify) and on "و" written on a command verb ("وعلي الصوت",
+    /// "وشغل", "وافتح"), which is how Gulf and MSA speakers say "and".
     private static func splitClauses(_ tokens: [String]) -> [[String]] {
         var clauses: [[String]] = []
         var current: [String] = []
         let separators: Set<String> = ["و", "بعدين", "وبعدين", "ثم", "وبعد"]
         for (index, token) in tokens.enumerated() {
-            if separators.contains(token) {
+            let attached = token.hasPrefix("و") ? String(token.dropFirst()) : nil
+            // "خمس و ستين" is one number (65), not two clauses.
+            let joinsNumber = token == "و" && index > 0 && index + 1 < tokens.count
+                && RioArabicVocabulary.number(in: [tokens[index - 1], token, tokens[index + 1]], at: 0)?.next == 3
+            if separators.contains(token), !joinsNumber {
                 if !current.isEmpty { clauses.append(current) }
                 current = []
-            } else if index > 0, token.hasPrefix("و"), token.count > 3,
-                      RioArabicVocabulary.apps[RioArabicVocabulary.key(for: String(token.dropFirst()))] != nil {
+            } else if index > 0, let attached, token.count > 3,
+                      RioArabicVocabulary.apps[RioArabicVocabulary.key(for: attached)] != nil {
                 if !current.isEmpty { clauses.append(current) }
-                current = [String(token.dropFirst())]
+                current = [attached]
+            } else if index > 0, let attached, attached.count >= 2, RioArabicClauses.isClauseVerb(attached) {
+                if !current.isEmpty { clauses.append(current) }
+                current = [attached]
             } else {
                 current.append(token)
             }
@@ -100,9 +117,21 @@ enum RioCommandTranslationPlan: Equatable {
     static let maxReplyLength = 300
 
     static func plan(for transcript: String) -> RioCommandTranslationPlan {
-        guard RioArabicText.needsTranslation(transcript) else { return .unchanged }
+        // The script share is measured without the name, so "ريو stop" is the English "stop"
+        // (the parser strips the Arabic name itself), while an Arabic verb at the start ("Rio,
+        // شغل music") makes it a command to translate whatever the share.
+        let body = RioArabicText.withoutLeadingName(transcript)
+        guard RioArabicText.needsTranslation(body) || startsWithArabicVerb(body) else { return .unchanged }
+        // "Rio type مرحبا", "text Ahmed وين انت": the command is already English and the Arabic is
+        // what to type, send or search. Translating it would type or send the wrong language.
+        if RioArabicText.hasEnglishContentFrame(transcript) { return .unchanged }
         if let known = RioArabicCommandTable.english(for: transcript) { return .offline(known) }
         return .llm
+    }
+
+    private static func startsWithArabicVerb(_ text: String) -> Bool {
+        guard let first = text.split(whereSeparator: \.isWhitespace).first else { return false }
+        return RioArabicClauses.isClauseVerb(RioArabicText.matchingForm(String(first)))
     }
 
     /// An LLM reply worth using: one non-empty line of reasonable length, labels and quotes removed.
