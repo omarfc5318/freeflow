@@ -87,10 +87,11 @@ public struct ModelConfiguration {
                 shouldStripThinkTags: false
             )
         } else if cleanModel == "openai/gpt-oss-120b" {
+            // Rio's command brain (its own free-tier allowance): think briefly, like the 20b.
             return ModelConfig(
-                maxCompletionTokens: nil,
-                reasoningEffort: nil,
-                includeReasoning: nil,
+                maxCompletionTokens: 4096,
+                reasoningEffort: "low",
+                includeReasoning: false,
                 shouldStripThinkTags: false
             )
         } else if cleanModel == "openai/gpt-oss-safeguard-20b" {

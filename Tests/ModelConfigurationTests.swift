@@ -24,6 +24,12 @@ enum ModelConfigurationTests {
         TestSupport.expectEqual(gptOSS.includeReasoning, false)
         TestSupport.expectEqual(gptOSS.shouldStripThinkTags, false)
 
+        // Rio's command brain: brief thinking, no reasoning text, like the 20b.
+        let big = ModelConfiguration.config(for: "openai/gpt-oss-120b")
+        TestSupport.expectEqual(big.maxCompletionTokens, 4096)
+        TestSupport.expectEqual(big.reasoningEffort, "low")
+        TestSupport.expectEqual(big.includeReasoning, false)
+
         let qwen = ModelConfiguration.config(for: "qwen/qwen3.8-27b")
         TestSupport.expectEqual(qwen.reasoningEffort, "none")
         TestSupport.expectEqual(qwen.includeReasoning, false)
