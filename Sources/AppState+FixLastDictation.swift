@@ -19,14 +19,12 @@ extension AppState {
     /// editor can explain and stay open.
     func teachRio(original: String, edited: String) -> Bool {
         let corrections = ManualCorrectionCore.corrections(
-            original: original, edited: edited, isKnownWord: Self.spellCheckerKnowsWord
+            original: original, edited: edited, isKnownWord: Self.spellCheckerKnowsWord,
+            isVocabularyTerm: { [weak self] in self?.isCustomVocabularyTerm($0) ?? false }
         )
         guard !corrections.isEmpty else { return false }
-        if learn(from: corrections).isEmpty {
-            let status = "Rio already knows \(corrections.map { "“\($0.corrected)”" }.joined(separator: ", "))"
-            statusText = status
-            scheduleReadyStatusReset(after: 3, matching: [status])
-        }
+        // learn(from:) shows "Learned" or "Rio already knows" and sets the status either way.
+        learn(from: corrections)
         return true
     }
 

@@ -56,13 +56,6 @@ extension AppState {
 
     static let mishearingTallyStorageKey = "mishearing_tally"
 
-    /// What one batch of corrections taught Rio.
-    struct LearnOutcome {
-        var addedTerms: [String] = []
-        var newRules: [WordReplacement] = []
-        var isEmpty: Bool { addedTerms.isEmpty && newRules.isEmpty }
-    }
-
     /// Saves corrections learned from the user's edits and confirms them in the menu bar.
     /// Returns the terms that were new to the vocabulary.
     @discardableResult
@@ -70,13 +63,20 @@ extension AppState {
         learn(from: corrections).addedTerms
     }
 
-    /// Adds the corrected words to the vocabulary and counts each mishearing; one fixed twice
-    /// becomes a replacement rule, which also works when the word is already in the vocabulary.
-    @discardableResult
     private static func isDictionaryWord(_ word: String) -> Bool {
         NSSpellChecker.shared.checkSpelling(of: word, startingAt: 0).location == NSNotFound
     }
 
+    /// True when `term` is already in the custom vocabulary (case-insensitive).
+    func isCustomVocabularyTerm(_ term: String) -> Bool {
+        let lowered = term.lowercased()
+        return Self.vocabularyEntries(in: customVocabulary).contains { $0.lowercased() == lowered }
+    }
+
+    /// Adds the corrected words to the vocabulary and counts each mishearing; one fixed twice
+    /// becomes a replacement rule, which also works when the word is already in the vocabulary.
+    /// Always answers the owner: "Learned", or "Rio already knows" when nothing was new.
+    @discardableResult
     func learn(from corrections: [LearnedCorrection]) -> LearnOutcome {
         var outcome = LearnOutcome()
         outcome.addedTerms = addVocabularyTerms(corrections.map(\.corrected))
@@ -91,21 +91,30 @@ extension AppState {
         }
         Self.storeJSON(tally, forKey: Self.mishearingTallyStorageKey)
         if !outcome.newRules.isEmpty { wordReplacements = rules }
-        guard !outcome.isEmpty else { return outcome }
+        guard let feedback = CorrectionFeedbackCore.feedback(
+            corrections: corrections, addedTerms: outcome.addedTerms, newRules: outcome.newRules
+        ) else { return outcome }
 
-        let status: String
-        let label: String
-        if let rule = outcome.newRules.first {
-            status = "Rio will now write “\(rule.replacement)” when he hears “\(rule.heard)”"
-            label = TeddyLearnedCard.label(for: outcome.newRules.map { "\($0.heard) → \($0.replacement)" })
-        } else {
-            status = "Added \(outcome.addedTerms.map { "“\($0)”" }.joined(separator: ", ")) to vocabulary"
-            label = TeddyLearnedCard.label(for: outcome.addedTerms)
-        }
-        statusText = status
-        scheduleReadyStatusReset(after: 3, matching: [status])
-        Task { @MainActor in VocabularyNotificationManager.shared.flashCheckmark() }
-        showTeddyMoment(.learned(label))
+        statusText = feedback.status
+        scheduleReadyStatusReset(after: 3, matching: [feedback.status])
+        if !outcome.isEmpty { Task { @MainActor in VocabularyNotificationManager.shared.flashCheckmark() } }
+        presentLearnFeedback(feedback.moment)
         return outcome
+    }
+
+    /// Shows the sign now, or holds it until the next dictation closes when one is starting or
+    /// running (it would be wiped or dropped otherwise).
+    private func presentLearnFeedback(_ moment: TeddyMoment) {
+        if isDeferringLearnFeedback || isRecording || isTranscribing {
+            deferredLearnMoment.defer(moment)
+        } else {
+            showTeddyMoment(moment)
+        }
+    }
+
+    /// Once per app per session: tells the owner why edits in this app can't be learned.
+    func explainUnwatchableApp(_ appName: String?) {
+        guard let text = unwatchableAppNotices.noticeText(forApp: appName) else { return }
+        overlayManager.showNotice(text)
     }
 }

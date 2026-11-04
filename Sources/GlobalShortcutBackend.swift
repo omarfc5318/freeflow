@@ -24,6 +24,8 @@ final class GlobalShortcutBackend {
 
     var onInputEvent: ((ShortcutInputEvent) -> ShortcutConsumeDecision)?
     var onEscapeKeyPressed: (() -> Bool)?
+    /// Return or keypad Enter went down; observed only, never consumed.
+    var onReturnKeyPressed: (() -> Void)?
 
     func start() throws {
         stop()
@@ -153,6 +155,7 @@ final class GlobalShortcutBackend {
         }
 
         guard !ShortcutBinding.modifierKeyCodes.contains(event.keyCode) else { return false }
+        if (event.keyCode == 36 || event.keyCode == 76), !event.isARepeat { onReturnKeyPressed?() }
         let snapshotDecision = onInputEvent?(
             .modifierSnapshot(ModifierKeyEventState.pressedModifierKeyCodes(
                 for: event,

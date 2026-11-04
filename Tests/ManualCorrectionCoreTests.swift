@@ -20,6 +20,16 @@ enum ManualCorrectionCoreTests {
         testIgnoresRewrite()
         testDeduplicatesRepeatedFix()
         testFixAtEndOfText()
+        testLearnsVocabularyTermOverKnownWord()
+    }
+
+    private static func testLearnsVocabularyTermOverKnownWord() {
+        let result = ManualCorrectionCore.corrections(
+            original: "the hollow app", edited: "the Hala app",
+            isKnownWord: { (knownWords.union(["hollow", "hala"])).contains($0.lowercased()) },
+            isVocabularyTerm: { $0.lowercased() == "hala" }
+        )
+        TestSupport.expectEqual(result, [fix("hollow", "Hala")])
     }
 
     private static func learn(_ original: String, _ edited: String) -> [LearnedCorrection] {

@@ -25,6 +25,7 @@ struct FreeFlowTests {
         TranscriptTextCoreTests.run()
         CorrectionLearningCoreTests.run()
         ManualCorrectionCoreTests.run()
+        CorrectionFeedbackCoreTests.run()
         VocabularyMergeCoreTests.run()
         MishearingTallyCoreTests.run()
         FixLastShortcutTests.run()

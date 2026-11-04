@@ -124,6 +124,8 @@ struct TeddyBodyPose: Equatable {
 enum TeddyMoment: Equatable {
     /// Words just learned from the user's corrections.
     case learned(String)
+    /// Corrections the user made that Rio already had covered ("Rio already knows Claude").
+    case alreadyKnown(String)
     /// A tap of the shortcut or a recording with nothing said.
     case didntCatchThat
     /// Undo Last Dictation removed the text.
@@ -136,6 +138,7 @@ enum TeddyMoment: Equatable {
     var caption: String {
         switch self {
         case .learned: return "Learned"
+        case .alreadyKnown: return "Rio already knows"
         case .didntCatchThat: return "Hmm"
         case .undone: return "Oops"
         case .sent: return "Pressed Enter"
@@ -145,7 +148,7 @@ enum TeddyMoment: Equatable {
 
     var text: String {
         switch self {
-        case let .learned(label): return label
+        case let .learned(label), let .alreadyKnown(label): return label
         case .didntCatchThat: return "Didn't catch that"
         case .undone: return "Undone"
         case .sent: return "Sent"
@@ -155,7 +158,8 @@ enum TeddyMoment: Equatable {
 
     var seconds: TimeInterval {
         switch self {
-        case .learned: return 2.5
+        case .learned: return 3.8
+        case .alreadyKnown: return 3.5
         case .didntCatchThat: return 1.8
         case .undone: return 1.6
         case .sent: return 1.4

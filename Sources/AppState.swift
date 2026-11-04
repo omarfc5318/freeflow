@@ -649,9 +649,16 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private(set) lazy var correctionWatcher = CorrectionWatcher { [weak self] corrections in
-        self?.learnVocabulary(from: corrections)
-    }
+    private(set) lazy var correctionWatcher = CorrectionWatcher(
+        onLearned: { [weak self] corrections in self?.learnVocabulary(from: corrections) },
+        isVocabularyTerm: { [weak self] term in self?.isCustomVocabularyTerm(term) ?? false },
+        onUnwatchable: { [weak self] appName in self?.explainUnwatchableApp(appName) }
+    )
+    /// Set while a new dictation starts, so the previous edit's sign waits for that dictation to
+    /// close instead of being wiped by it.
+    var isDeferringLearnFeedback = false
+    var deferredLearnMoment = DeferredMoment()
+    var unwatchableAppNotices = UnwatchableAppNotices()
 
     // MARK: Dictionary, styles, whisper mode and stats (logic in AppState+Enhancements.swift)
 
@@ -2020,6 +2027,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         hotkeyManager.onEscapeKeyPressed = { [weak self] in
             self?.handleEscapeKeyPress() ?? false
         }
+        hotkeyManager.onReturnKeyPressed = { [weak self] in
+            self?.correctionWatcher.returnKeyPressed()
+        }
         restartHotkeyMonitoring()
     }
 
@@ -2049,6 +2059,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         hotkeyMonitoringErrorMessage = nil
         hotkeyManager.onShortcutEvent = nil
         hotkeyManager.onEscapeKeyPressed = nil
+        hotkeyManager.onReturnKeyPressed = nil
         hotkeyManager.stop()
     }
 
@@ -2486,7 +2497,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let t0 = CFAbsoluteTimeGetCurrent()
         os_log(.info, log: recordingLog, "startRecording() entered")
         guard !isRecording && !isTranscribing else { return }
+        isDeferringLearnFeedback = true
         correctionWatcher.stop()
+        isDeferringLearnFeedback = false
         let scheduledSelectionSnapshot = pendingSelectionSnapshot
         let selectionSnapshot = scheduledSelectionSnapshot
             ?? contextService.collectSelectionSnapshot(captureInsertionTarget: originalFieldInsertionEnabled)
@@ -3481,6 +3494,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
                                     self.showClosingMoment(.sent)
                                 } else {
                                     self.overlayManager.dismiss()
+                                    // The previous edit's sign, held back while this dictation ran.
+                                    if let moment = self.deferredLearnMoment.take() { self.showTeddyMoment(moment) }
                                 }
                             }
 

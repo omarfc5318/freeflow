@@ -303,7 +303,7 @@ enum RioCompanionPoseBuilder {
             pose.face.eyes = .happy
             pose.face.mouth = .grin
             return RioCompanionFigure(pose: pose, effects: [.confetti, .sparkle])
-        case .learned, .none:
+        case .learned, .alreadyKnown, .none:
             var figure = happy(time: time)
             figure.pose.rightArm = .init(angle: 2.0, length: 6.2)
             figure.pose.rightPaw = .round

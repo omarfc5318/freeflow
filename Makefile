@@ -126,6 +126,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/AppTextInsertionTarget.swift \
 	Sources/ContextInferenceFailure.swift \
 	Sources/ContextVocabularyCore.swift \
+	Sources/CorrectionFeedbackCore.swift \
 	Sources/CorrectionLearningCore.swift \
 	Sources/DictationStyleCore.swift \
 	Sources/FLACUploadAudio.swift \

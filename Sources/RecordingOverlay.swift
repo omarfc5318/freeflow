@@ -345,6 +345,14 @@ final class RecordingOverlayManager {
         }
     }
 
+    /// A short line on the corner bear's speech card; the notch pill has no card for it.
+    func showNotice(_ text: String, seconds: TimeInterval = 6) {
+        DispatchQueue.main.async {
+            guard self.usesCorner else { return }
+            self.withCompanion { $0.showNotice(text, seconds: seconds) }
+        }
+    }
+
     func dismiss() {
         DispatchQueue.main.async {
             if self.usesCorner {
