@@ -32,7 +32,7 @@ extension RioSystemPhrases {
     }
 
     private static let tabTarget = #"(?:the\s+|this\s+|that\s+|current\s+|my\s+|the\s+current\s+)?(?:browser\s+)?tab"#
-    private static let scrollTail = #"(?:\s+(?:a\s+bit|a\s+little|a\s+lot|some|more|the\s+page|a\s+page|please))?"#
+    private static let scrollTail = #"(?:\s+(?:a\s+little\s+bit|a\s+tiny\s+bit|slightly|a\s+bit|a\s+little|a\s+lot|some|more|the\s+page|a\s+page|please))?"#
     private static let pageWord = #"(?:the\s+|this\s+)?(?:page|screen)"#
 
     static func parseBrowser(_ s: String) -> RioAction? {

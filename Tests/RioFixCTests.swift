@@ -112,7 +112,7 @@ enum RioFixCTests {
     private static func unmatchedOpen() {
         // Not installed, not a site, nothing that names an app: the smart resolver's job.
         expectParse("open camera", .unknown("open camera"))
-        expectParse("open the first result", .unknown("open the first result"))
+        actions("open the first result", .click(label: "link", ordinal: 1))
         expectParse("open rio grande", .unknown("open rio grande"))
         // A name that clearly is an app still gets "I couldn't find it".
         actions("open Photoshop", .openApp(name: "Photoshop"))
@@ -155,7 +155,7 @@ enum RioFixCTests {
         actions("paste my email address", .clipboard(.pasteRecent(matching: "email")))
         actions("paste", key("v", command: true))
         actions("email Sam saying I'm running late", .draftEmail(to: "Sam", subject: nil, body: "I'm running late"))
-        actions("draft an email to Sam about lunch", .draftEmail(to: "Sam", subject: "Lunch", body: ""))
+        expectParse("draft an email to Sam about lunch", .unknown("draft an email to Sam about lunch"))
         actions("write an email to john at example dot com subject hello saying see you soon",
                 .draftEmail(to: "john@example.com", subject: "Hello", body: "See you soon"))
         actions("compose an email", .draftEmail(to: nil, subject: nil, body: ""))

@@ -70,7 +70,7 @@ enum RioSystemPhrases {
 
     private static let screenWord = #"(?:(?:screen|display|monitor|laptop|mac)\s+)?"#
     private static let article = #"(?:(?:the|my)\s+)?"#
-    private static let amount = #"(?:\s+(?:a\s+bit|a\s+little|a\s+lot|some|a\s+notch))?"#
+    private static let amount = #"(?:\s+(?:a\s+little\s+bit|a\s+tiny\s+bit|a\s+bit|a\s+little|a\s+lot|some|a\s+notch|slightly|a\s+tad))?"#
 
     private static func parseBrightness(_ s: String) -> RioAction? {
         if let level = brightnessLevel(s) { return .brightness(.set(RioBrightness.clampSpoken(level))) }

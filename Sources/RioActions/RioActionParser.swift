@@ -199,6 +199,9 @@ struct RioActionParser {
 
     private func parseClause(_ raw: String, state: ClauseState) -> ParsedClause? {
         if let app = state.lastApp, let pronoun = Self.pronounAppVerb(raw, app: app) { return pronoun }
+        // "search for cats and open the first result": a pick from results that haven't loaded yet
+        // is the brain's job. On its own, "open the first one" clicks what is on screen.
+        if !state.actions.isEmpty, RioText.matches(Self.resultPick, RioText.simplify(raw)) { return nil }
         if let direct = parseDirect(raw) { return direct }
         let rest = RioText.simplify(raw)
         guard let verb = state.inheritedVerb else {
@@ -241,9 +244,7 @@ struct RioActionParser {
             return ParsedClause(action: .pressKeys(combo), verb: "press")
         }
         // "search youtube for lofi and play the first one": a pick from the results, not a song.
-        if RioText.matches(#"^(?:play|open|click)\s+(?:the\s+)?(?:first|second|third|top|last|next)\s+(?:one|result|video|link|song|hit)$"#, s) {
-            return nil
-        }
+        if RioText.matches(Self.resultPick, s), s.hasPrefix("play") { return nil }
         if let action = RioExtraPhrases.parse(raw: raw, simplified: s) {
             if case .pressKeys = action { return ParsedClause(action: action, verb: "press") }
             // "open canvas and chrome": the next clause can borrow "open".
@@ -255,6 +256,8 @@ struct RioActionParser {
         if let window = parseWindow(s, inherited: false) { return window }
         return parseAppVerb(s, inherited: false)
     }
+
+    static let resultPick = #"^(?:play|open|click)\s+(?:the\s+)?(?:first|second|third|top|last|next)\s+(?:one|result|video|link|song|hit)$"#
 
     private static func opensSomething(_ action: RioAction) -> Bool {
         switch action {

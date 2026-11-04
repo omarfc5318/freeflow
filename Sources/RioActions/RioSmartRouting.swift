@@ -365,7 +365,7 @@ enum RioQuestionShape {
     /// Spoken lead-ins dropped before looking at the question.
     private static let lead = #"^(?:(?:answer\s+(?:this|that|me)(?:\s+question)?|quick\s+question|tell\s+me|do\s+you\s+know)[\s:,]+)+"#
     /// Small talk with Rio himself ("how are you", "tell me a joke"): no Mac needed to answer.
-    private static let smallTalk = #"^(?:(?:hey|hi|so|rio|okay|ok)\s+)*(?:how\s+are\s+you(?:\s+doing)?|how\s+is\s+it\s+going|hows\s+it\s+going|who\s+are\s+you|what\s+are\s+you|whats\s+your\s+name|what\s+is\s+your\s+name|how\s+old\s+are\s+you|where\s+are\s+you\s+from|tell\s+me\s+(?:a|another)\s+(?:joke|riddle|fun\s+fact|story)|(?:say\s+)?(?:a|another)\s+joke)(?:\s+(?:today|tonight|rio|buddy|teddy|bear|man|then|please))*$"#
+    private static let smallTalk = #"^(?:(?:hey|hi|so|rio|okay|ok)\s+)*(?:how\s+are\s+you(?:\s+doing)?|whats\s+up|what\s+is\s+up|how\s+is\s+it\s+going|hows\s+it\s+going|who\s+are\s+you|what\s+are\s+you|whats\s+your\s+name|what\s+is\s+your\s+name|how\s+old\s+are\s+you|where\s+are\s+you\s+from|tell\s+me\s+(?:a|another)\s+(?:joke|riddle|fun\s+fact|story)|(?:say\s+)?(?:a|another)\s+joke)(?:\s+(?:today|tonight|rio|buddy|teddy|bear|man|then|please))*$"#
     /// Words that tie the question to this Mac, the owner or what just happened.
     private static let local: Set<String> = [
         "i", "im", "ive", "id", "me", "my", "mine", "myself", "we", "us", "our", "you", "your",

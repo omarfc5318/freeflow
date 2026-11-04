@@ -53,7 +53,7 @@ enum RioContextMemoryTests {
         ETest.eq(parse("open it again", afterOpen), .openApp(name: "Spotify"))
         ETest.eq(parse("open that again", afterOpen), .openApp(name: "Spotify"))
         ETest.eq(parse("open it", afterOpen), .openApp(name: "Spotify"))
-        ETest.eq(parse("close that", afterOpenFront), .quitApp(name: "Spotify"))
+        ETest.eq(parse("close that", afterOpenFront), .pressKeys(cmdW), "close it = its window, not the app")
         ETest.eq(parse("quit it", afterOpenFront), .quitApp(name: "Spotify"))
         ETest.eq(parse("hide that", afterOpenFront), .hideApp(name: "Spotify"))
         ETest.eq(parse("go back to it", afterOpen), .switchToApp(name: "Spotify"))
@@ -92,7 +92,9 @@ enum RioContextMemoryTests {
     /// K45, K33, F35: "close this" quit the last app Rio touched up to 15 minutes ago.
     private static func followUpCloseNeedsAFreshFrontApp() {
         let fresh = context([.openApp(name: "Google Chrome")], front: "Google Chrome", age: 5)
-        ETest.eq(parse("close this", fresh), .quitApp(name: "Google Chrome"))
+        ETest.eq(parse("close this", fresh), .pressKeys(cmdW))
+        ETest.eq(parse("close the app", fresh), .quitApp(name: "Google Chrome"))
+        ETest.eq(parse("quit it", fresh), .quitApp(name: "Google Chrome"))
         ETest.eq(parse("hide this", fresh), .hideApp(name: "Google Chrome"))
         // Stale: closes the front window instead of quitting, and never quits or hides by pronoun.
         let stale = context([.openApp(name: "Google Chrome")], front: "Google Chrome", age: RioFollowUpRewriter.quitReferentLifetime + 1)
@@ -105,8 +107,22 @@ enum RioContextMemoryTests {
         ETest.eq(parse("open it again", stale), .openApp(name: "Google Chrome"), "reopening is harmless")
         // Not in front any more.
         let behind = context([.openApp(name: "Google Chrome")], front: "Claude", age: 3)
-        ETest.eq(parse("close it", behind), .pressKeys(cmdW))
-        ETest.eq(parse("quit that", behind), nil)
+        ETest.eq(parse("close it", behind), .answer(RioFollowUpRewriter.whichOne), "not in front, not launched by Rio: ask")
+        ETest.eq(parse("quit that", behind), .quitApp(name: "Google Chrome"), "an explicit quit, front or not")
+        ETest.eq(parse("close the app", behind), .quitApp(name: "Google Chrome"))
+        ETest.eq(parse("hide it", behind), nil)
+        // Rio started the process itself: "close it" may quit it even from behind.
+        let launchedMemory = RioFollowUpMemory()
+        launchedMemory.noteLaunch(startedNewProcess: true, now: now.addingTimeInterval(-3))
+        launchedMemory.record(.openApp(name: "Google Chrome"), now: now.addingTimeInterval(-3))
+        launchedMemory.setEnvironmentProvider { RioFollowUpEnvironment(frontApp: "Claude") }
+        let launched = launchedMemory.snapshot(now: now)!
+        ETest.eq(parse("close it", launched), .quitApp(name: "Google Chrome"))
+        // The launch note describes only the next open: a later switch to a running app is not "launched".
+        launchedMemory.record(.switchToApp(name: "Google Chrome"), now: now.addingTimeInterval(-2))
+        ETest.eq(parse("close it", launchedMemory.snapshot(now: now)!), .answer(RioFollowUpRewriter.whichOne))
+        // Unknown Mac with a fresh app: ask rather than guess.
+        ETest.eq(parse("close it", context([.openApp(name: "Spotify")])), .answer(RioFollowUpRewriter.whichOne))
         // A tab or window action since: "close it" is about the window, not the app.
         let afterTab = context([.openApp(name: "Google Chrome"), .browser(.newTab)], front: "Google Chrome", age: 3)
         ETest.eq(parse("close this", afterTab), .pressKeys(cmdW))
@@ -118,7 +134,8 @@ enum RioContextMemoryTests {
         ETest.eq(parse("quit it", context([.openApp(name: "Spotify")])), nil)
         // A named window move counts as app-level.
         let moved = context([.window(WindowCommand(appName: "Notes", placement: .leftHalf))], front: "Notes", age: 3)
-        ETest.eq(parse("close it", moved), .quitApp(name: "Notes"))
+        ETest.eq(parse("close it", moved), .pressKeys(cmdW))
+        ETest.eq(parse("quit it", moved), .quitApp(name: "Notes"))
     }
 
     private static func followUpSameForUsesTheParser() {
@@ -438,7 +455,8 @@ enum RioContextMemoryTests {
         ETest.eq(parser.parse("what did I say on Monday"), .actions([.searchHistory(query: "monday")]))
         ETest.eq(parser.parse("close that"), .unknown("close that"), "no context, still unknown")
         memory.record(.openApp(name: "Spotify"), now: Date())
-        ETest.eq(parser.parse("close that"), .actions([.quitApp(name: "Spotify")]))
+        ETest.eq(parser.parse("close that"), .actions([.pressKeys(cmdW)]))
+        ETest.eq(parser.parse("quit that"), .actions([.quitApp(name: "Spotify")]))
         ETest.eq(parser.parse("open it again"), .actions([.openApp(name: "Spotify")]))
         ETest.eq(parser.parse("open Spotify"), .actions([.openApp(name: "Spotify")]), "real app names still win")
     }

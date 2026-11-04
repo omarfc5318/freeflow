@@ -19,6 +19,8 @@ struct RioFollowUpContext: Equatable {
     var lastApp: String?
     /// When `lastAction` ran.
     var lastActionAt: Date?
+    /// The last action started the app's process (it wasn't running before Rio opened it).
+    var lastActionLaunchedApp = false
     /// The Mac as it is now; nil when unknown (then "close it" never quits anything).
     var environment: RioFollowUpEnvironment?
     /// Set after a command Rio couldn't work out (no brain, or it failed): "send that to Ali"
@@ -47,6 +49,10 @@ final class RioFollowUpMemory: @unchecked Sendable {
     private let lock = NSLock()
     private var context = RioFollowUpContext()
     private var recordedAt: Date?
+    /// When the executor last started a new app process (see `noteLaunch`).
+    private var pendingLaunchAt: Date?
+    /// A launch note older than this when `record()` runs belongs to some other command.
+    static let launchNoteLifetime: TimeInterval = 10
     private var environmentProvider: (@Sendable () -> RioFollowUpEnvironment)?
 
     init() {}
@@ -64,8 +70,26 @@ final class RioFollowUpMemory: @unchecked Sendable {
         context.lastAction = action
         context.lastActionAt = now
         context.isSendableSuppressed = false
+        context.lastActionLaunchedApp = Self.opensApp(action)
+            && pendingLaunchAt.map { abs(now.timeIntervalSince($0)) <= Self.launchNoteLifetime } == true
+        pendingLaunchAt = nil
         if let app = Self.appName(in: action) { context.lastApp = app }
         recordedAt = now
+    }
+
+    /// The executor's open or switch about to be recorded started a new process (nothing of that
+    /// app was running). `record()` consumes it, so it only ever describes the next action.
+    func noteLaunch(startedNewProcess: Bool, now: Date = Date()) {
+        lock.lock()
+        defer { lock.unlock() }
+        pendingLaunchAt = startedNewProcess ? now : nil
+    }
+
+    private static func opensApp(_ action: RioAction) -> Bool {
+        switch action {
+        case .openApp, .switchToApp: return true
+        default: return false
+        }
     }
 
     /// The command that just ran produced nothing Rio stands behind (an error line, a failed
@@ -96,6 +120,7 @@ final class RioFollowUpMemory: @unchecked Sendable {
         defer { lock.unlock() }
         context = RioFollowUpContext()
         recordedAt = nil
+        pendingLaunchAt = nil
     }
 
     private static func appName(in action: RioAction) -> String? {
@@ -206,30 +231,55 @@ enum RioFollowUpRewriter {
         switch verb {
         case "open", "launch", "start", "reopen", "bring up":
             return context.lastApp.map { .openApp(name: $0) }
-        case "close", "quit", "exit", "hide":
-            if let app = freshFrontApp(context, now: now) {
-                return verb == "hide" ? .hideApp(name: app) : .quitApp(name: app)
-            }
-            // "Close this" with nothing fresh to point at closes the front window or tab.
-            if verb == "close", ["it", "that", "this", "that one", "this one"].contains(pronoun) {
-                return .pressKeys(closeWindowCombo)
-            }
-            return nil
+        case "hide":
+            return freshFrontApp(context, now: now).map { .hideApp(name: $0) }
+        case "quit", "exit":
+            // An explicit quit names the app Rio just opened or moved, in front or not. An unknown
+            // Mac still fails closed.
+            guard context.environment?.frontApp != nil else { return nil }
+            return freshApp(context, now: now).map { .quitApp(name: $0) }
+        case "close":
+            return close(pronoun: pronoun, context, now: now)
         default:
             return context.lastApp.map { .switchToApp(name: $0) }
         }
     }
 
-    /// The app "close it" may quit: the last action put it in front a moment ago, and it still is.
-    private static func freshFrontApp(_ context: RioFollowUpContext, now: Date) -> String? {
+    private static let windowPronouns: Set<String> = ["it", "that", "this", "that one", "this one"]
+
+    /// "Close the app" quits the fresh app. "Close it" closes its window when it is in front; when
+    /// it isn't, it quits only an app Rio itself just launched, and otherwise asks (findings 25, 36).
+    private static func close(pronoun: String, _ context: RioFollowUpContext, now: Date) -> RioAction? {
+        guard let app = freshApp(context, now: now) else {
+            // Nothing fresh to point at: "close this" closes the front window or tab.
+            return windowPronouns.contains(pronoun) ? .pressKeys(closeWindowCombo) : nil
+        }
+        guard windowPronouns.contains(pronoun) else {
+            return context.environment?.frontApp == nil ? nil : .quitApp(name: app)
+        }
+        guard let front = context.environment?.frontApp else { return .answer(whichOne) }
+        if WindowAppNameResolver.bestMatchIndex(for: app, in: [front]) != nil {
+            return .pressKeys(closeWindowCombo)
+        }
+        return context.lastActionLaunchedApp ? .quitApp(name: app) : .answer(whichOne)
+    }
+
+    static let whichOne = "Which one should I close?"
+
+    /// The app the last action opened, switched to or moved a moment ago.
+    private static func freshApp(_ context: RioFollowUpContext, now: Date) -> String? {
         guard let app = context.lastApp, let last = context.lastAction, let at = context.lastActionAt,
-              now.timeIntervalSince(at) <= quitReferentLifetime,
-              let front = context.environment?.frontApp else { return nil }
+              now.timeIntervalSince(at) <= quitReferentLifetime else { return nil }
         switch last {
-        case .openApp, .switchToApp: break
-        case .window(let command) where command.appName != nil: break
+        case .openApp, .switchToApp: return app
+        case .window(let command) where command.appName != nil: return app
         default: return nil
         }
+    }
+
+    /// The app "hide it" may hide: fresh, and still in front.
+    private static func freshFrontApp(_ context: RioFollowUpContext, now: Date) -> String? {
+        guard let app = freshApp(context, now: now), let front = context.environment?.frontApp else { return nil }
         return WindowAppNameResolver.bestMatchIndex(for: app, in: [front]) != nil ? app : nil
     }
 

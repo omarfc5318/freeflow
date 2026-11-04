@@ -456,14 +456,14 @@ enum RioUnderstandingRoutingTests {
 
     @MainActor private static func testContextReachesResolver() async {
         let resolver = FakeResolver([.actions([.answer("first")]), .actions([.browser(.newTab)])])
-        let unknown = RioParseAnalysis(parse: .unknown("what's up"), isConfident: false, resolverText: "what's up")
+        let unknown = RioParseAnalysis(parse: .unknown("what's playing"), isConfident: false, resolverText: "what's playing")
         let coordinator = coordinator(unknown, FakeExecutor(), resolver, context: FakeContext())
-        _ = await coordinator.run("what's up")
-        _ = await coordinator.run("what's up")
+        _ = await coordinator.run("what's playing")
+        _ = await coordinator.run("what's playing")
         ETest.eq(resolver.requests.first?.context.frontApp, "Google Chrome")
         ETest.eq(resolver.requests.first?.context.frontWindowTitle, "Docs")
         ETest.eq(resolver.requests.first?.context.previousCommand, nil, "nothing ran before the first command")
-        ETest.eq(resolver.requests.last?.context.previousCommand, "what's up", "the second request knows the first")
+        ETest.eq(resolver.requests.last?.context.previousCommand, "what's playing", "the second request knows the first")
         ETest.eq(resolver.requests.last?.context.previousActions, ["answer"])
     }
 

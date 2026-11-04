@@ -59,7 +59,7 @@ enum RioHelpCatalogue {
             "remember my locker code is 4321", "what's my locker code", "note that I need to buy eggs", "forget my locker code",
         ]),
         RioHelpCategory(title: "Email and messages", symbol: "envelope", examples: [
-            "text mom I'm late", "reply saying sounds good", "draft an email to Sam about lunch",
+            "text mom I'm late", "reply saying sounds good", "draft an email to Sam saying hi",
             "email Sam saying I'm running late",
         ]),
         RioHelpCategory(title: "Maths, units and time", symbol: "function", examples: [

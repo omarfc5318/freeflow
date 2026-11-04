@@ -291,7 +291,7 @@ enum RioActionParserTests {
             ("chrome", unk("chrome")),
             ("hello there", unk("hello there")),
             ("send the report to Sarah", unk("send the report to Sarah")),
-            ("remind me to call mom", unk("remind me to call mom")),
+            ("remind me to call mom", .actions([.createReminder(title: "Call mom", due: nil)])),
             ("summarize the news", unk("summarize the news")),
         ]
     }
@@ -318,7 +318,7 @@ enum RioActionParserTests {
             guard case .actions(let list) = parser.parse(input) else { continue }
             for action in list {
                 switch action {
-                case .sendMessage, .createReminder, .selectionTask:
+                case .sendMessage, .selectionTask:
                     TestSupport.expect(false, "parser emitted a smart-only action for \"\(input)\"")
                 default: break
                 }

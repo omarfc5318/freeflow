@@ -224,7 +224,7 @@ enum RioConversationPolishTests {
             TestSupport.expect(RioQuestionShape.isGeneralQuestion(text), "\"\(text)\" is a general question")
         }
         for text in [
-            "what's up", "what's playing", "what's on my screen", "what is this", "how do I close this window",
+            "what's playing", "what's on my screen", "what is this", "how do I close this window",
             "what time is my meeting", "who sent me that email", "can you open another Chrome window",
             "open another Chrome window", "what does this button do", "where is my resume", "is Spotify playing",
             "how loud is the volume", "what's in this tab", "do the same for Safari", "make it bigger",

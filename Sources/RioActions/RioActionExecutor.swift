@@ -118,6 +118,8 @@ final class RioActionExecutor {
         guard let app = resolveInstalled(spoken) else {
             return .failed(message: "I couldn't find an app called \(spoken)")
         }
+        // "Close it" may quit only an app Rio itself started (RioFollowUp, finding 36).
+        let wasRunning = runningApplication(for: app) != nil
         let launch = LaunchState(bundleIdentifier: app.bundleIdentifier, url: app.url)
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false
@@ -142,6 +144,7 @@ final class RioActionExecutor {
             return .failed(message: "I couldn't open \(app.name): \(message)")
         }
         lastFocusedApp = app
+        RioFollowUpMemory.shared.noteLaunch(startedNewProcess: !wasRunning)
         // An unnamed window command right after this means this app's window (F29/F30).
         if let running = runningApplication(for: app) {
             RioRecentWindowTarget.shared.note(processIdentifier: running.processIdentifier, name: app.name)

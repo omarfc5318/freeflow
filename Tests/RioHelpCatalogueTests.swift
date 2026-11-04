@@ -75,7 +75,7 @@ enum RioHelpCatalogueTests {
         "text mom I'm late": .actions([.sendMessage(to: "mom", body: "I'm late")]),
         "reply saying sounds good": .actions([.replyInConversation(body: "sounds good")]),
         "email Sam saying I'm running late": .actions([.draftEmail(to: "Sam", subject: nil, body: "I'm running late")]),
-        "draft an email to Sam about lunch": .actions([.draftEmail(to: "Sam", subject: "Lunch", body: "")]),
+        "draft an email to Sam saying hi": .actions([.draftEmail(to: "Sam", subject: nil, body: "Hi")]),
         // Maths, units and time
         "what's 15% of 84": .actions([.calculate(expression: "what's 15% of 84")]),
         "5 miles in kilometers": .actions([.calculate(expression: "5 miles in kilometers")]),
@@ -89,7 +89,7 @@ enum RioHelpCatalogueTests {
         // Smart help
         "summarize this": .actions([.selectionTask(.summarize)]),
         "explain this": .actions([.selectionTask(.explain)]),
-        "remind me to call mom at 5": .brain("remind me to call mom at 5"),
+        "remind me to call mom at 5": .actions([RioReminderPhrases.parse("remind me to call mom at 5")!]),
         "read me the last message": .actions([.readAloud(.lastMessage)]),
         // Follow-ups and history (the sheet's story: "open Chrome" ran just before)
         "open it again": .actions([.openApp(name: "Google Chrome")]),

@@ -646,7 +646,7 @@ unaffected (the key itself proves it was the owner).
   blocked apps or privacy panes, `RioSmartContextPolicy`; running apps <= 30; installed names
   <= 150; the previous command for 15 min). Plans are up to 6 closed-set steps; `pressKeys` is
   allowed only through `RioSmartKeyPolicy`, an ALLOWLIST of navigation combos (security review:
-  Cmd-N/T/Shift-T/W/R/F, Cmd-1..9, Cmd-[ ], Cmd-= - 0, Ctrl-Tab, Ctrl-Shift-Tab, Cmd-`, Escape,
+  Cmd-N/T/Shift-T/W/R/F, Cmd-Shift-N/R/P, one Cmd-Tab press (round 2), Cmd-1..9, Cmd-[ ], Cmd-= - 0, Ctrl-Tab, Ctrl-Shift-Tab, Cmd-`, Escape,
   arrows, Page Up/Down, Home/End; nothing that types, submits, deletes, pastes or quits). The
   front window title is untrusted: sent only when the command is about "this/the window, tab or
   page", in a fenced UNTRUSTED block, at most 80 characters; typeText, stopListening and emptyTrash stay local-only. A failed step is
