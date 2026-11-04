@@ -369,7 +369,7 @@ enum RioFixCTests {
             ("ريو ايش تسوي", "Rio what can you do"),
             ("ريو ساعدني", "Rio help"),
             ("ريو ابحث عن البيتزا", "Rio search for البيتزا"),
-            ("ريو دور على مطاعم قريبة", "Rio search for مطاعم قريبه"),
+            ("ريو دور على مطاعم قريبة", "Rio search for مطاعم قريبة"),
             ("ريو ابحث في يوتيوب عن قطط", "Rio search youtube for قطط"),
             ("ريو افتح قوقل كروم وسفاري", "Rio open Chrome and Safari"),
         ]

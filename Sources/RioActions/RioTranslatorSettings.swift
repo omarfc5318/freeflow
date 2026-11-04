@@ -5,6 +5,9 @@ enum RioTranslatorSettings {
     static let otherLanguageKey = "rio_translator_other_language"
     /// Conversation mode re-listens to Arabic commands with Whisper (sends only that command's audio).
     static let arabicConversationKey = "rio_arabic_conversation_commands"
+    /// On unless turned off: without it, Arabic said after "Rio" hands-free reaches Rio as the
+    /// English recognizer's guess. The action key already sends its command audio to Whisper.
+    static let arabicConversationDefault = true
 
     /// "My other language": what English is translated into. Arabic unless changed.
     static var otherLanguage: RioTranslatorLanguage {
@@ -14,7 +17,7 @@ enum RioTranslatorSettings {
     }
 
     static var isArabicConversationEnabled: Bool {
-        UserDefaults.standard.object(forKey: arabicConversationKey) as? Bool ?? false
+        UserDefaults.standard.object(forKey: arabicConversationKey) as? Bool ?? arabicConversationDefault
     }
 
     /// The same transcription key, URL and model dictation uses (Groq Whisper by default), read
@@ -39,7 +42,7 @@ enum RioTranslatorSettings {
 /// Settings for the live translator and Arabic commands. The lead embeds this in the Settings window.
 struct RioTranslatorSettingsSection: View {
     @AppStorage(RioTranslatorSettings.otherLanguageKey) private var otherLanguage = RioTranslatorLanguage.arabic.name
-    @AppStorage(RioTranslatorSettings.arabicConversationKey) private var arabicConversation = false
+    @AppStorage(RioTranslatorSettings.arabicConversationKey) private var arabicConversation = RioTranslatorSettings.arabicConversationDefault
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -58,7 +61,7 @@ struct RioTranslatorSettingsSection: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Toggle("Understand Arabic commands in conversation mode (sends audio to your transcription provider)", isOn: $arabicConversation)
-            Text("Off by default. Arabic commands (\"ريو افتح كروم\") always work with the action key. If you turn this on, then in conversation mode, when Rio hears \"Rio\" but not a command he knows, the audio of that one command (about the last second and a half plus the command) is sent to your transcription provider to read it again. Everything else stays on this Mac, and plain English commands are never sent.")
+            Text("On by default, so Arabic commands (\"ريو افتح كروم\") work hands-free as they do with the action key. In conversation mode, when Rio hears \"Rio\" but not a command he knows, only the audio of that one command (about the last second and a half plus the command) is sent to your transcription provider to read it again. Everything else stays on this Mac, and plain English commands are never sent. Turn it off to keep conversation mode entirely on this Mac.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

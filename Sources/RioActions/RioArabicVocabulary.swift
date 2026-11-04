@@ -19,10 +19,10 @@ enum RioArabicVocabulary {
             ("زوم", "Zoom"), ("سلاك", "Slack"), ("ديسكورد", "Discord"), ("وورد", "Word"), ("ورد", "Word"),
             ("اكسل", "Excel"), ("بوربوينت", "PowerPoint"), ("اكس كود", "Xcode"),
             ("فيجوال ستوديو كود", "Visual Studio Code"), ("في اس كود", "Visual Studio Code"),
-            ("صور", "Photos"), ("خرائط", "Maps"), ("ساعه", "Clock"), ("اله حاسبه", "Calculator"), ("حاسبه", "Calculator"), ("كالكيوليتر", "Calculator"), ("كالكوليتر", "Calculator"),
+            ("صور", "Photos"), ("خرائط", "Maps"), ("ماب", "Maps"), ("مابس", "Maps"), ("ساعه", "Clock"), ("اله حاسبه", "Calculator"), ("حاسبه", "Calculator"), ("كالكيوليتر", "Calculator"), ("كالكوليتر", "Calculator"),
             ("نوشن", "Notion"), ("فيغما", "Figma"), ("فيجما", "Figma"),
             ("يوتيوب", "YouTube"), ("جيميل", "Gmail"), ("نتفلكس", "Netflix"), ("انستقرام", "Instagram"),
-            ("انستجرام", "Instagram"), ("تويتر", "Twitter"), ("فيسبوك", "Facebook"), ("لينكدان", "LinkedIn"),
+            ("انستجرام", "Instagram"), ("انستا", "Instagram"), ("تويتر", "Twitter"), ("فيسبوك", "Facebook"), ("لينكدان", "LinkedIn"),
             ("لينكد ان", "LinkedIn"), ("تيك توك", "TikTok"), ("ريديت", "Reddit"), ("جوجل", "Google"),
             ("قوقل", "Google"), ("غوغل", "Google"), ("شات جي بي تي", "ChatGPT"),
         ]
@@ -60,12 +60,45 @@ enum RioArabicVocabulary {
         return table
     }()
 
+    /// Units 1-9 in every form people say them ("خمسه", "خمس"), and the tens 20-90.
+    private static let units: [String: Int] = durationNumbers.filter { (1...9).contains($0.value) }
+        .merging(["ثنين": 2, "اثنان": 2], uniquingKeysWith: { first, _ in first })
+    private static let tens: [String: Int] = [
+        "عشرين": 20, "ثلاثين": 30, "اربعين": 40, "خمسين": 50, "ستين": 60, "سبعين": 70, "ثمانين": 80, "تسعين": 90,
+    ]
+
+    /// The number spoken at `words[index]`, reading Arabic's "units and tens" order: "خمسه
+    /// وعشرين" (or "خمسه و عشرين") is 25, not 5. `next` is the index after the number. Nil when
+    /// no number starts there.
+    static func number(in words: [String], at index: Int) -> (value: Int, next: Int)? {
+        guard index < words.count else { return nil }
+        let word = words[index]
+        if let unit = units[word] {
+            if index + 1 < words.count, words[index + 1].hasPrefix("و"), let ten = tens[String(words[index + 1].dropFirst())] {
+                return (unit + ten, index + 2)
+            }
+            if index + 2 < words.count, words[index + 1] == "و", let ten = tens[words[index + 2]] {
+                return (unit + ten, index + 3)
+            }
+            return (unit, index + 1)
+        }
+        if let value = numbers[word] ?? durationNumbers[word], word != "ربع" { return (value, index + 1) }
+        return nil
+    }
+
     /// "To the max": volume or brightness 100.
     static let maximumWords: Set<String> = ["اخير", "اخر", "اخره", "ماكس", "اقصي", "كامل", "اعلي", "كله"]
 
-    /// Greeting words that may come before "ريو".
-    static let greetings: Set<String> = ["يا", "هلا", "هاي", "هي", "اهلا", "مرحبا", "اوكي", "اوك", "طيب", "هيه", "هلو"]
-    static let wakeWords: Set<String> = ["ريو", "ريوو", "ريوه", "يارايو", "ريو،", "rio"]
+    /// Greeting words that may come before "ريو" (or "Rio"), in the matching form (lowercased).
+    static let greetings: Set<String> = [
+        "يا", "هلا", "هاي", "هي", "اهلا", "مرحبا", "اوكي", "اوك", "طيب", "هيه", "هلو",
+        "hey", "hi", "hello", "yo", "yoo", "ok", "okay",
+    ]
+    /// The name in Arabic script and the Latin spellings speech-to-text uses (`TeddyCommand.names`).
+    static let wakeWords: Set<String> = TeddyCommand.names.union(["ريو", "ريوو", "ريوه", "رايو", "يارايو", "يريو"])
+
+    static func isGreeting(_ word: String) -> Bool { greetings.contains(word.lowercased()) }
+    static func isWakeWord(_ word: String) -> Bool { wakeWords.contains(word.lowercased()) }
 
     /// Words dropped wherever they appear: politeness, "I want", "now", "a bit".
     static let fillers: Set<String> = [

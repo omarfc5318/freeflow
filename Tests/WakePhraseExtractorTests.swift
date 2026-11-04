@@ -16,6 +16,78 @@ enum WakePhraseExtractorTests {
         testPunctuationAndCase()
         testRepeatedName()
         testNotANameInsideAWord()
+        testPlaceNames()
+        testLooseNames()
+        testPausesBeforeName()
+        testBareName()
+        testTiming()
+    }
+
+    private static func testPlaceNames() {
+        check("Rio de Janeiro is beautiful this time of year", nil)
+        check("Rio Grande valley weather", nil)
+        check("rio tinto shares are up", nil)
+        check("Rio do this for me", "do this for me")
+        check("Rio, define grande", "define grande")
+    }
+
+    private static func testLooseNames() {
+        check("Ria open chrome", "open chrome")
+        check("Ria what's the weather", "what's the weather")
+        check("Rhea open chrome", "open chrome")
+        check("Rios open chrome", "open chrome")
+        check("Rio's open Chrome", "open Chrome")
+        check("Ria, open warp.", "open warp.")
+        check("hey Ria open notes", "open notes")
+        // Not before a command word, or not at the start: someone's name, or the place.
+        check("Ria is my sister", nil)
+        check("Rio's beaches", nil)
+        check("I called Ria open the door", nil)
+        check("Rhea", nil)
+    }
+
+    private static func testPausesBeforeName() {
+        typealias W = WakePhraseExtractor.TimedWord
+        let paused = [W(text: "oh", start: 0.2, duration: 0.2), W(text: "my", start: 0.4, duration: 0.2),
+                      W(text: "god", start: 0.6, duration: 0.3), W(text: "Rio", start: 1.8, duration: 0.3),
+                      W(text: "help", start: 2.2, duration: 0.3)]
+        TestSupport.expectEqual(WakePhraseExtractor.command(in: paused), "help")
+        // No pause: still someone talking about Rio.
+        let told = [W(text: "I", start: 0.1, duration: 0.1), W(text: "told", start: 0.2, duration: 0.2),
+                    W(text: "Rio", start: 0.45, duration: 0.2), W(text: "to", start: 0.7, duration: 0.1),
+                    W(text: "open", start: 0.8, duration: 0.2), W(text: "Chrome", start: 1.0, duration: 0.3)]
+        TestSupport.expectEqual(WakePhraseExtractor.command(in: told), nil)
+        // Without timing (all zero) nothing new is accepted.
+        let untimed = ["dude", "Rio", "quit", "Stickies"].map { W(text: $0, start: 0, duration: 0) }
+        TestSupport.expectEqual(WakePhraseExtractor.command(in: untimed), nil)
+        // A pause inside the command is kept as a space.
+        let long = [W(text: "Rio", start: 0.1, duration: 0.3), W(text: "text", start: 0.5, duration: 0.2),
+                    W(text: "mom", start: 0.7, duration: 0.2), W(text: "that", start: 0.9, duration: 0.2),
+                    W(text: "I'm", start: 2.4, duration: 0.2), W(text: "late", start: 2.6, duration: 0.2)]
+        TestSupport.expectEqual(WakePhraseExtractor.command(in: long), "text mom that I'm late")
+    }
+
+    private static func testBareName() {
+        TestSupport.expect(WakePhraseExtractor.isBareName("Rio"), "bare Rio")
+        TestSupport.expect(WakePhraseExtractor.isBareName("hey Rio"), "hey Rio")
+        TestSupport.expect(WakePhraseExtractor.isBareName("Rio Rio"), "Rio Rio")
+        TestSupport.expect(!WakePhraseExtractor.isBareName("Rio open"), "Rio open")
+        TestSupport.expect(!WakePhraseExtractor.isBareName("I like Rio"), "mid sentence")
+        TestSupport.expect(!WakePhraseExtractor.isBareName(""), "empty")
+    }
+
+    private static func testTiming() {
+        TestSupport.expectEqual(WakeListenTiming.silenceToEnd(pendingCommand: nil), WakeListenTiming.silenceWithoutCommand)
+        TestSupport.expectEqual(WakeListenTiming.silenceToEnd(pendingCommand: "open Chrome"), WakeListenTiming.silenceAfterCommand)
+        TestSupport.expectEqual(
+            WakeListenTiming.silenceToEnd(pendingCommand: "text my mom that"), WakeListenTiming.silenceAfterUnfinishedCommand
+        )
+        TestSupport.expect(WakeListenTiming.silenceAfterCommand > WakeListenTiming.silenceWithoutCommand, "longer once a command started")
+        let delays = (1...8).map { WakeListenTiming.emptyFinalDelay(consecutive: $0) }
+        TestSupport.expectEqual(delays[0], 0.25)
+        TestSupport.expectEqual(delays[1], 0.5)
+        TestSupport.expect(delays.allSatisfy { $0 <= 0.5 }, "never deaf for more than half a second")
+        TestSupport.expectEqual(WakeListenTiming.emptyFinalDelay(consecutive: 0), 0.25)
     }
 
     private static func testBasic() {
@@ -95,7 +167,7 @@ enum WakePhraseExtractorTests {
     private static func testNotANameInsideAWord() {
         check("Mario open Chrome", nil)
         check("Riot open Chrome", nil)
-        check("Rio's open Chrome", nil)
+        check("Rio's beaches are nice", nil)
         check("Oregano and Brio", nil)
     }
 }

@@ -18,26 +18,39 @@ enum RioArabicText {
     }
 
     /// Spelling Whisper varies on, made uniform for matching: no diacritics or tatweel, alef and
-    /// ya and ta marbuta folded (أإآ -> ا, ى -> ي, ة -> ه), Arabic digits as 0-9, Arabic
-    /// punctuation as spaces, whitespace collapsed. Latin text is left as it is.
+    /// ya and ta marbuta folded (أإآ -> ا, ى -> ي, ة -> ه), Arabic digits as 0-9, the Arabic
+    /// percent sign as "%", Arabic punctuation as spaces, whitespace collapsed. Latin text is left
+    /// as it is.
     static func normalize(_ text: String) -> String {
+        clean(text, folding: true).joined(separator: " ")
+    }
+
+    /// The transcript's words as the speaker said them, at the same positions as the words of
+    /// `normalize` (same splitting, letters not folded). Search queries and labels come from these,
+    /// so "مطاعم قريبة" is searched as said, not as the matching form "مطاعم قريبه".
+    static func displayWords(_ text: String) -> [String] {
+        clean(text, folding: false)
+    }
+
+    private static func clean(_ text: String, folding: Bool) -> [String] {
         var out = String.UnicodeScalarView()
         for scalar in text.unicodeScalars {
             switch scalar.value {
             case 0x064B...0x065F, 0x0670, 0x0640, 0x200C, 0x200D, 0x200E, 0x200F, 0x061C:
                 continue
-            case 0x0623, 0x0625, 0x0622, 0x0671: out.append("\u{0627}")
-            case 0x0649, 0x0626: out.append("\u{064A}")
-            case 0x0629: out.append("\u{0647}")
-            case 0x0624: out.append("\u{0648}")
+            case 0x0623, 0x0625, 0x0622, 0x0671: out.append(folding ? "\u{0627}" : scalar)
+            case 0x0649, 0x0626: out.append(folding ? "\u{064A}" : scalar)
+            case 0x0629: out.append(folding ? "\u{0647}" : scalar)
+            case 0x0624: out.append(folding ? "\u{0648}" : scalar)
             case 0x0660...0x0669: out.append(Unicode.Scalar(0x30 + scalar.value - 0x0660)!)
             case 0x06F0...0x06F9: out.append(Unicode.Scalar(0x30 + scalar.value - 0x06F0)!)
+            case 0x066A: out.append("%")
             case 0x060C, 0x061B, 0x061F, 0x00AB, 0x00BB, 0x002C, 0x002E, 0x0021, 0x003F, 0x003A, 0x003B, 0x0022:
                 out.append(" ")
             default: out.append(scalar)
             }
         }
-        return String(out).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        return String(out).split(whereSeparator: { $0.isWhitespace }).map(String.init)
     }
 
     static func isArabicScript(_ scalar: Unicode.Scalar) -> Bool {
@@ -59,5 +72,45 @@ enum RioArabicText {
             if predicate(scalar) { matching += 1 }
         }
         return letters == 0 ? 0 : Double(matching) / Double(letters)
+    }
+}
+
+// MARK: - The command's frame: the name, and English command words around Arabic content
+
+extension RioArabicText {
+    /// English verbs whose object is content to type, send or search. When an English command
+    /// starts with one of these, any Arabic after it is that content and must stay Arabic.
+    static let englishContentVerbs: Set<String> = [
+        "type", "write", "text", "message", "reply", "tell", "send", "search", "google", "dictate",
+    ]
+
+    /// The transcript without a leading greeting and name, in either script ("ريو stop",
+    /// "Hey Rio افتح كروم", "يا ريو ..."). Unchanged when it doesn't start with the name.
+    static func withoutLeadingName(_ text: String) -> String {
+        let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        var index = 0
+        while index < words.count, RioArabicVocabulary.isGreeting(matchingForm(words[index])) { index += 1 }
+        guard index < words.count, RioArabicVocabulary.isWakeWord(matchingForm(words[index])) else { return text }
+        return words[(index + 1)...].joined(separator: " ")
+    }
+
+    /// True when the command is framed in English with a content verb before any Arabic:
+    /// "Rio type مرحبا", "Rio text Ahmed وين انت", "open Chrome and search for مطاعم في الدوحة".
+    static func hasEnglishContentFrame(_ text: String) -> Bool {
+        let words = withoutLeadingName(text).split(whereSeparator: \.isWhitespace).map(String.init)
+        var latin: [String] = []
+        for word in words {
+            if word.unicodeScalars.contains(where: { isArabicScript($0) }) { break }
+            latin.append(matchingForm(word))
+        }
+        guard latin.count < words.count else { return false } // no Arabic content at all
+        if latin.contains(where: englishContentVerbs.contains) { return true }
+        return zip(latin, latin.dropFirst()).contains { $0 == "look" && $1 == "up" }
+    }
+
+    /// A word lowercased, without punctuation at either end, in the folded Arabic spelling.
+    static func matchingForm(_ word: String) -> String {
+        normalize(word).lowercased()
+            .trimmingCharacters(in: CharacterSet.letters.inverted.subtracting(.decimalDigits))
     }
 }
