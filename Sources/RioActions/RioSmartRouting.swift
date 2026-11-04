@@ -30,11 +30,22 @@ struct RioSmartContext: Equatable {
     var previousCommand: String?
     /// What that command did, as short step descriptions (`RioSmartPlanText`).
     var previousActions: [String] = []
+    /// Rio's own state the model needs to read a short command ("Rio is recording a macro", so
+    /// "I'm done" means stop recording). Fixed Rio strings, never user content.
+    var activity: [String] = []
+}
+
+/// Fixed lines for `RioSmartContext.activity`.
+enum RioSmartActivity {
+    static let recordingMacro = "Rio is recording a macro (stop, I'm done or stop recording ends it)"
 }
 
 enum RioSmartContextLimits {
     static let maxRunningApps = 30
     static let maxInstalledApps = 150
+    /// Installed apps sent with one command: only names the command could mean.
+    static let maxRelevantInstalledApps = 12
+    static let maxActivityLines = 3
     static let maxNameCharacters = 60
     /// The window title is untrusted page text, so it is kept short.
     static let maxTitleCharacters = 80
@@ -175,6 +186,17 @@ enum RioSmartPlanText {
         case .answer: text = "answer"
         case .runTask: text = "runTask"
         case .describeScreen: text = "describeScreen"
+        case .recordMacro: text = "recordMacro (now recording)"
+        case .stopRecordingMacro: text = "stopRecordingMacro"
+        case .scheduleCommand: text = "scheduleCommand"
+        case .addTrigger: text = "addTrigger"
+        case .claudeCode(let command):
+            switch command {
+            case .send: text = "claudeCode send"
+            case .approve: text = "claudeCode approve"
+            case .deny: text = "claudeCode deny"
+            case .status: text = "claudeCode status"
+            }
         default: text = RioActionText.working(for: action)
         }
         return RioSmartContextText.line(text, max: RioSmartContextLimits.maxStepCharacters)
@@ -266,6 +288,32 @@ enum RioSmartContextPolicy {
             || RioText.matches(#"\b(?:in|on)\s+here\b"#, command)
     }
 
+    /// Command words too common to pick out an app ("open", "window").
+    private static let commonWords: Set<String> = [
+        "open", "close", "quit", "launch", "start", "switch", "show", "hide", "please", "with", "that", "this",
+        "what", "where", "when", "make", "then", "tell", "from", "into", "have", "there", "your", "just", "like",
+        "want", "need", "could", "would", "should", "about", "again", "window", "windows", "screen", "full",
+    ]
+
+    /// The installed apps a command could mean, at most `maxRelevantInstalledApps`: a name that
+    /// appears in the command with its spaces dropped ("text edit" is TextEdit), or one that
+    /// contains a word of the command ("chrome" is Google Chrome). Everything else stays on the Mac.
+    static func relevantApps(_ names: [String], command: String) -> [String] {
+        let lowered = command.lowercased()
+        let compactCommand = lowered.filter { $0.isLetter || $0.isNumber }
+        let words = lowered.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+            .filter { $0.count >= 4 && !commonWords.contains($0) }
+        var result: [String] = []
+        for name in RioSmartContextText.names(names, limit: 1_000) {
+            let app = name.lowercased().filter { $0.isLetter || $0.isNumber }
+            guard app.count >= 3 else { continue }
+            guard compactCommand.contains(app) || words.contains(where: { app.contains($0) }) else { continue }
+            result.append(name)
+            if result.count == RioSmartContextLimits.maxRelevantInstalledApps { break }
+        }
+        return result
+    }
+
     /// Installed app names for the prompt: apps in the Applications folders before system
     /// utilities, alphabetical, at most `maxInstalledApps`.
     static func installedNames(_ apps: [InstalledApp]) -> [String] {
@@ -301,6 +349,16 @@ enum RioQuestionShape {
         "timer", "reminder", "reminders", "note", "notes", "chrome", "safari", "spotify", "slack", "zoom", "warp",
         "finder", "claude", "notion", "canvas",
     ]
+    /// Messages and the owner's school day: always about the owner, never the world.
+    private static let personal: Set<String> = [
+        "reply", "replied", "texted", "messaged", "emailed", "dm", "dms", "voicemail", "inbox", "class", "classes",
+        "homework", "assignment", "assignments", "due", "schedule", "agenda",
+    ]
+    /// What people said: about the owner's messages when a name is in the question ("what did Ali
+    /// say"); "who said ..." with no name stays a world question.
+    private static let speech: Set<String> = [
+        "say", "said", "says", "saying", "tell", "told", "ask", "asked", "wrote", "write", "send", "sent", "want", "wants", "mean", "meant",
+    ]
     private static let minimumWords = 3
 
     static func isGeneralQuestion(_ text: String) -> Bool {
@@ -310,6 +368,17 @@ enum RioQuestionShape {
         guard words.count >= minimumWords || words.first == "define", let first = words.first, leads.contains(first) else {
             return false
         }
-        return !words.contains(where: local.contains)
+        if words.contains(where: { local.contains($0) || personal.contains($0) }) { return false }
+        return !(words.contains(where: speech.contains) && namesSomeone(text))
+    }
+
+    /// A capitalised word after the first ("Ali", "Ali's"), other than "I".
+    private static func namesSomeone(_ text: String) -> Bool {
+        let words = text.split(whereSeparator: { !$0.isLetter && $0 != "'" && $0 != "\u{2019}" }).dropFirst()
+        return words.contains { word in
+            guard let first = word.first, first.isUppercase else { return false }
+            let bare = word.split(whereSeparator: { $0 == "'" || $0 == "\u{2019}" }).first.map(String.init) ?? String(word)
+            return bare != "I"
+        }
     }
 }

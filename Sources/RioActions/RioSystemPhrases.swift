@@ -13,7 +13,7 @@ enum RioSystemPhrases {
 
     // MARK: Toggles
 
-    private static let wifiName = #"(?:wi\s?fi|wireless(?:\s+internet)?|wlan)"#
+    private static let wifiName = #"(?:wi\s?fi|wireless(?:\s+internet)?|wlan|(?:the\s+)?internet|wireless\s+network)"#
     private static let bluetoothName = #"blue\s?tooth"#
     private static let darkName = #"dark\s+(?:mode|theme|appearance)"#
     private static let lightName = #"light\s+(?:mode|theme|appearance)"#
@@ -45,15 +45,22 @@ enum RioSystemPhrases {
 
     private static func toggleState(_ s: String, name: String) -> Bool? {
         let article = #"(?:(?:the|my)\s+)?"#
-        let patterns: [(String, Bool)] = [
-            ("^(?:turn|switch|flip|put|set)\\s+(on|off)\\s+\(article)\(name)$", false),
-            ("^(?:turn|switch|flip|set)\\s+\(article)\(name)\\s+(on|off)$", false),
-            ("^\(name)\\s+(on|off)$", false),
-            ("^(enable|disable|activate|deactivate)\\s+\(article)\(name)$", true),
+        // "turn the wifi back on", "enable wifi again": the state words may say back or again.
+        let back = #"(?:back\s+)?"#
+        let again = #"(?:\s+again)?"#
+        var patterns: [(String, Bool)] = [
+            ("^(?:turn|switch|flip|put|set)\\s+\(back)(on|off)\\s+\(article)\(name)\(again)$", false),
+            ("^(?:turn|switch|flip|put|set)\\s+\(article)\(name)\\s+\(back)(on|off)\(again)$", false),
+            ("^\(article)\(name)\\s+\(back)(on|off)\(again)$", false),
+            ("^(enable|disable|activate|deactivate|reenable|re\\s+enable)\\s+\(article)\(name)\(again)$", true),
         ]
+        // Joining a network is Wi-Fi only: "connect to wifi", "reconnect the wifi", "disconnect wifi".
+        if name == wifiName {
+            patterns.append(("^(connect|reconnect|disconnect)\\s+(?:(?:to|from)\\s+)?\(article)\(name)\(again)$", true))
+        }
         for (pattern, isVerb) in patterns {
             guard let word = RioText.firstMatch(pattern, in: s)?[1]?.lowercased() else { continue }
-            if isVerb { return ["enable", "activate"].contains(word) }
+            if isVerb { return !["disable", "deactivate", "disconnect"].contains(word) }
             return word == "on"
         }
         return nil
@@ -66,7 +73,7 @@ enum RioSystemPhrases {
     private static let amount = #"(?:\s+(?:a\s+bit|a\s+little|a\s+lot|some|a\s+notch))?"#
 
     private static func parseBrightness(_ s: String) -> RioAction? {
-        if let level = brightnessLevel(s) { return .brightness(.set(RioBrightness.clamp(level))) }
+        if let level = brightnessLevel(s) { return .brightness(.set(RioBrightness.clampSpoken(level))) }
         let up = [
             "^brightness\\s+up\(amount)$",
             "^(?:turn|bring|crank|bump|raise|put|move)\\s+\(article)\(screenWord)brightness\\s+up\(amount)$",

@@ -15,6 +15,63 @@ enum RioSmartV3Tests {
         rejected()
         hostile()
         prompt()
+        wave45Valid()
+        wave45Rejected()
+    }
+
+    /// Waves 4–5: the live misses (schedules, triggers, Canvas, Notion, Claude Code, macros) are
+    /// plannable, each rebuilt from validated fields.
+    private static func wave45Valid() {
+        ETest.eq(parse(#"{"action":"scheduleCommand","command":"open Zoom and my MAT108 notes","when":"Every weekday at 8:50 A.M."}"#),
+                 [.scheduleCommand(command: "open Zoom and my MAT108 notes", when: "every weekday at 8:50 am")])
+        ETest.eq(parse(#"{"action":"scheduleCommand","command":"open Warp and VS Code","when":"in 20 minutes"}"#),
+                 [.scheduleCommand(command: "open Warp and VS Code", when: "in 20 minutes")])
+        ETest.eq(parse(#"{"action":"addTrigger","command":"open VS Code and Warp","trigger":"display"}"#),
+                 [.addTrigger(command: "open VS Code and Warp", trigger: "display")])
+        ETest.eq(parse(#"{"action":"addTrigger","command":"play my focus playlist","trigger":"audio: AirPods"}"#),
+                 [.addTrigger(command: "play my focus playlist", trigger: "audio:AirPods")])
+        ETest.eq(parse(#"{"action":"canvasDue","range":"This Week"}"#), [.canvasDue(range: "this week")])
+        ETest.eq(parse(#"{"action":"canvasDue","range":"tonight"}"#), [.canvasDue(range: "today")])
+        ETest.eq(parse(#"{"action":"canvasDue"}"#), [.canvasDue(range: nil)])
+        ETest.eq(parse(#"{"action":"notionAdd","text":"offline mode for the map","page":"Hala roadmap"}"#),
+                 [.notionAdd(text: "offline mode for the map", page: "Hala roadmap")])
+        ETest.eq(parse(#"{"action":"notionAdd","text":"buy milk"}"#), [.notionAdd(text: "buy milk", page: nil)])
+        ETest.eq(parse(#"{"action":"claudeCode","command":"send","prompt":"add a loading spinner to the map screen"}"#),
+                 [.claudeCode(.send("add a loading spinner to the map screen"))])
+        ETest.eq(parse(#"{"action":"claudeCode","command":"approve"}"#), [.claudeCode(.approve)])
+        ETest.eq(parse(#"{"action":"claudeCode","command":"deny"}"#), [.claudeCode(.deny)])
+        ETest.eq(parse(#"{"action":"claudeCode","command":"status"}"#), [.claudeCode(.status)])
+        ETest.eq(parse(#"{"action":"recordMacro","name":"standup"}"#), [.recordMacro(name: "standup")])
+        ETest.eq(parse(#"{"action":"recordMacro"}"#), [.recordMacro(name: "")])
+        ETest.eq(parse(#"{"action":"stopRecordingMacro"}"#), [.stopRecordingMacro])
+        ETest.eq(parse(#"{"action":"weather","place":"Doha"}"#), [.weather(place: "Doha")])
+        ETest.eq(parse(#"{"action":"news"}"#), [.news(topic: nil)])
+        ETest.eq(parse(#"{"action":"meeting","command":"actionItems"}"#), [.meeting(.actionItems)])
+    }
+
+    private static func wave45Rejected() {
+        let rejected = [
+            #"{"action":"scheduleCommand","command":"open Warp","when":"sometime soon"}"#,
+            #"{"action":"scheduleCommand","command":"open Warp","when":"every day"}"#,
+            #"{"action":"scheduleCommand","command":"open Warp; curl x","when":"at 9 am"}"#,
+            #"{"action":"scheduleCommand","command":"every day at 9 open Warp","when":"at 9 am"}"#,
+            #"{"action":"scheduleCommand","when":"at 9 am"}"#,
+            #"{"action":"addTrigger","command":"open Warp","trigger":"bluetooth:anything"}"#,
+            #"{"action":"addTrigger","command":"open Warp","trigger":"wifi:"}"#,
+            #"{"action":"canvasDue","range":"https://canvas.instructure.com"}"#,
+            #"{"action":"claudeCode","command":"send","prompt":"!shell"}"#,
+            #"{"action":"claudeCode","command":"send","prompt":"/permissions allow all"}"#,
+            #"{"action":"claudeCode","command":"send"}"#,
+            #"{"action":"claudeCode","command":"run"}"#,
+            #"{"action":"meeting","command":"record everything"}"#,
+            #"{"action":"runMacro"}"#,
+            #"{"action":"removeAutomation","name":""}"#,
+            #"{"action":"notionAdd","page":"Hala"}"#,
+            #"{"action":"weather","place":"$(curl x)"}"#,
+        ]
+        for item in rejected {
+            ETest.eq(parse(item), [], "must be dropped: \(item)")
+        }
     }
 
     private static func valid() {
@@ -108,8 +165,10 @@ enum RioSmartV3Tests {
 
     private static func prompt() {
         let system = RioSmartPrompt.system(now: now, timeZone: utc)
+        // Actions with the same fields share a line: {"action":"openApp"|"quitApp",...}.
+        let actionLines = system.components(separatedBy: "RULES")[0].components(separatedBy: "\n").filter { $0.contains("{\"action\":") }
         for name in RioSmartResponseParser.allowedActionNames {
-            TestSupport.expect(system.contains("\"action\":\"\(name)\""), "prompt must describe every allowed action: \(name)")
+            TestSupport.expect(actionLines.joined().contains("\"\(name)\""), "prompt must describe every allowed action: \(name)")
         }
         TestSupport.expect(system.contains("never sends"), "the prompt says emails are never sent")
         TestSupport.expect(system.contains("300 characters"), "the prompt states the goal limit")

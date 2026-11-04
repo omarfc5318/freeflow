@@ -225,13 +225,37 @@ enum RioClickMatcher {
         if normalized == label { return 100 }
         let textCompact = textWords.joined()
         if textCompact == compact { return 95 }
-        if normalized.hasPrefix(label + " ") || (compact.count >= 3 && textCompact.hasPrefix(compact)) { return 80 }
+        // A short query must line up with whole words of the control: "down" is not "Download" and
+        // "up" is not "Update" (a prefix match can press a real button).
+        let isShort = compact.count < minLooseCharacters
+        if normalized.hasPrefix(label + " ")
+            || (compact.count >= 3 && textCompact.hasPrefix(compact) && (!isShort || alignsWithWords(compact, textWords, prefixOnly: true))) {
+            return 80
+        }
         if queryWords.allSatisfy({ word in textWords.contains(word) }) { return 65 }
-        if compact.count >= 3, textCompact.contains(compact) { return 50 }
+        if compact.count >= 3, textCompact.contains(compact), !isShort || alignsWithWords(compact, textWords, prefixOnly: false) { return 50 }
         let distance = editDistance(compact, textCompact)
         let limit = compact.count >= 9 ? 2 : (compact.count >= 5 ? 1 : 0)
         if limit > 0, distance <= limit { return 35 }
         return 0
+    }
+
+    /// Queries shorter than this only match on whole words of the control's text.
+    static let minLooseCharacters = 6
+
+    /// Whether `compact` is a run of whole consecutive words of the text ("signin" in "Sign in
+    /// with Google"), starting at the first word when `prefixOnly`.
+    private static func alignsWithWords(_ compact: String, _ words: [String], prefixOnly: Bool) -> Bool {
+        let starts = prefixOnly ? [0] : Array(words.indices)
+        for start in starts where start < words.count {
+            var joined = ""
+            for word in words[start...] {
+                joined += word
+                if joined == compact { return true }
+                if joined.count >= compact.count { break }
+            }
+        }
+        return false
     }
 
     private static func editDistance(_ a: String, _ b: String) -> Int {

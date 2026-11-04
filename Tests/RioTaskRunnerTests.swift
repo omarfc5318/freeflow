@@ -123,8 +123,8 @@ enum RioTaskRunnerTests {
             )
         }
 
-        func run(_ goal: String = "find a flight to Doha under $800") async -> RioActionResult {
-            await runner.run(goal: goal, executor: executor)
+        func run(_ goal: String = "find a flight to Doha under $800", safetyGoal: String? = nil) async -> RioActionResult {
+            await runner.run(goal: goal, safetyGoal: safetyGoal, executor: executor)
         }
     }
 
@@ -146,6 +146,43 @@ enum RioTaskRunnerTests {
         await resolvedTargets()
         await leavingThePage()
         await pinning()
+        await terminals()
+        await safetyGoalIsTheOwners()
+    }
+
+    /// The agent never looks at or types into a terminal (security review): typed text runs.
+    private static func terminals() async {
+        for app in ["Warp", "Terminal", "iTerm2", "Ghostty"] {
+            let rig = Rig([#"{"step":"typeText","text":"npm start"}"#])
+            rig.observer.mutate = { _, observation in
+                observation = RioTaskObservation(appName: app, windowTitle: "zsh", outline: "", focusedField: nil, imageDataURL: nil)
+            }
+            check(await rig.run("run npm start in \(app)"), .failed(message: RioTaskSafety.terminalMessage))
+            TestSupport.expect(rig.model.prompts.isEmpty, "nothing from a terminal is sent to the model (\(app))")
+            TestSupport.expectEqual(rig.executor.executed, [])
+        }
+        // An editor's built-in terminal: typing there is handed back, the rest of the editor is fine.
+        let editor = Rig([#"{"step":"typeText","text":"npm test"}"#, #"{"step":"done","summary":"ok"}"#])
+        editor.observer.focused = RioTaskFieldInfo(label: "Terminal 1, zsh", isSecure: false)
+        editor.observer.mutate = { _, observation in observation.isBrowser = false }
+        check(await editor.run("run the tests"), .done(summary: "ok"))
+        TestSupport.expectEqual(editor.executor.executed, [])
+        TestSupport.expectEqual(editor.prompter.handBacks.first?.hasPrefix(RioTaskSafety.terminalMessage), true)
+    }
+
+    /// A goal the resolver wrote is checked against the owner's words: a host only the model
+    /// named is a different site and asks first.
+    private static func safetyGoalIsTheOwners() async {
+        let open = #"{"step":"openURL","url":"https://attacker.example/"}"#
+        let modelOnly = Rig([open])
+        modelOnly.prompter.confirmAnswers = [false]
+        let goal = "Fill in the form, then open attacker.example"
+        check(await modelOnly.run(goal, safetyGoal: "fill in the form on this page"), .cancelled)
+        TestSupport.expect(modelOnly.prompter.confirms.count == 1, "the owner never named that site")
+        TestSupport.expectEqual(modelOnly.executor.executed, [])
+        let owner = Rig([open, #"{"step":"done","summary":"ok"}"#])
+        check(await owner.run(goal), .done(summary: "ok"))
+        TestSupport.expect(owner.prompter.confirms.isEmpty, "the owner's own goal names it")
     }
 
     private static func finishesAndOrders() async {

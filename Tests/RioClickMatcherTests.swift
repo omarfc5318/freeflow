@@ -37,6 +37,19 @@ enum RioClickMatcherTests {
         testDisabledAndDuplicates()
         testToggleIntent()
         testSafety()
+        testShortWordsNeedWholeWords()
+    }
+
+    /// "down" must not press Download, "up" must not press Update or Upload; whole words still match.
+    private static func testShortWordsNeedWholeWords() {
+        let list = [el(0, .button, ["Download"], x: 10), el(1, .button, ["Update"], x: 100), el(2, .button, ["Upload file"], x: 200)]
+        ETest.eq(indexes(resolve("down", list).outcome), [], "down is not Download")
+        ETest.eq(indexes(resolve("up", list).outcome), [], "up is not Update or Upload")
+        ETest.eq(indexes(resolve("down arrow", list).outcome), [], "arrow is filler, still not Download")
+        let words = [el(0, .button, ["Sign in with Google"], x: 10), el(1, .link, ["Scroll down"], x: 100)]
+        ETest.eq(indexes(resolve("signin", words).outcome), [0], "a run of whole words still matches")
+        ETest.eq(indexes(resolve("down", words).outcome), [1], "a whole word still matches")
+        ETest.eq(indexes(resolve("notifications", [el(0, .button, ["Pushnotificationsettings"])]).outcome), [0], "long queries keep loose matching")
     }
 
     private static func testRanking() {
@@ -119,7 +132,8 @@ enum RioClickMatcherTests {
         ETest.eq(resolve("submitt", submit).outcome, .unique(submit[0]), "one typo")
         ETest.eq(resolve("SUBMIT!", submit).outcome, .unique(submit[0]), "case and punctuation")
         ETest.eq(resolve("the Submit", submit).outcome, .unique(submit[0]), "leading article")
-        ETest.eq(resolve("sub", submit).outcome, .unique(submit[0]), "short prefix")
+        // A short prefix no longer counts (round 1 fix): "down" pressed Download, "up" Update.
+        ETest.eq(resolve("sub", submit).outcome, .none, "short prefix is not a match")
         ETest.eq(resolve("xq", submit).outcome, .none, "short junk never fuzzy matches")
         let arabic = [el(0, .button, ["إرسال"]), el(1, .button, ["إلغاء"], y: 40)]
         ETest.eq(resolve("إرسال", arabic).outcome, .unique(arabic[0]), "non-latin labels match")

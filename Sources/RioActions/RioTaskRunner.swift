@@ -104,9 +104,13 @@ final class RioTaskRunner {
 
     private static let navigationGraceObservations = 3
 
-    func run(goal: String, executor: RioActionExecuting) async -> RioActionResult {
+    /// `safetyGoal` is the owner's own words when the smart resolver wrote `goal` (security review):
+    /// the "you named this site" and "you gave these details" exemptions only count what the owner
+    /// said, never what a model wrote after reading a page. Nil means `goal` is the owner's words.
+    func run(goal: String, safetyGoal: String? = nil, executor: RioActionExecuting) async -> RioActionResult {
         reporter.begin(goal: goal)
         defer { reporter.finish() }
+        let checkedGoal = safetyGoal ?? goal
         var state = RunState(start: clock())
         while true {
             if let stop = stopResult(state) { return stop }
@@ -134,7 +138,7 @@ final class RioTaskRunner {
                 state.note = "Your last reply was not valid (\(Self.describe(error))). Reply with exactly one valid JSON step."
             case .success(let step):
                 state.invalidReplies = 0
-                if let result = await perform(step, observation: observation, goal: goal, executor: executor, state: &state) {
+                if let result = await perform(step, observation: observation, goal: checkedGoal, executor: executor, state: &state) {
                     return result
                 }
             }
@@ -148,6 +152,10 @@ final class RioTaskRunner {
     private func guardObservation(_ observation: RioTaskObservation, state: inout RunState) -> RioActionResult? {
         if observation.isRestricted {
             return .failed(message: "I won't look at that window, so I stopped.")
+        }
+        // Terminals run whatever is typed: the agent never looks at or types into one.
+        if RioTaskSafety.isTerminal(appName: observation.appName) {
+            return .failed(message: RioTaskSafety.terminalMessage)
         }
         if let pid = observation.processID {
             // The agent's own `openURL` can bring up the default browser, a different app: that is
@@ -232,7 +240,8 @@ final class RioTaskRunner {
         if isLoop(description, action: action, state: &state) {
             return .failed(message: "I seem to be going in circles, so I stopped.")
         }
-        if let reason = RioTaskSafety.handBackReason(for: action, focused: observation.focusedField) {
+        if let reason = RioTaskSafety.terminalHandBackReason(for: action, focused: observation.focusedField)
+            ?? RioTaskSafety.handBackReason(for: action, focused: observation.focusedField) {
             guard await handBack("\(reason) Press Continue when you're done.", state: &state) else { return .cancelled }
             state.history.append(RioTaskHistoryEntry(step: state.steps, text: narration, outcome: "the user did this themselves"))
             return nil

@@ -81,6 +81,30 @@ enum RioVisionRequestTests {
         ETest.eq(RioVisionMessages.text(for: .badResponse), RioVisionMessages.unreachable, "garbage")
         ETest.eq(RioVisionMessages.text(for: .noVisionModel("openai/gpt-oss-20b")).contains("openai/gpt-oss-20b"), true, "names the model")
         ETest.eq(RioVisionMessages.text(for: .emptyAnswer), RioVisionMessages.unreachable, "empty answer")
+        testFailureReasons()
+    }
+
+    /// "Looked at your screen (didn't work)" said nothing: each failure has its own line, and a
+    /// short fixed reason the history row may keep. A text-only model fails before any capture.
+    private static func testFailureReasons() {
+        let messages = [
+            RioVisionMessages.needsScreenRecording, RioVisionMessages.needsKey, RioVisionMessages.offline,
+            RioVisionMessages.disabled, RioVisionMessages.noWindow, RioVisionMessages.sensitive,
+            RioVisionMessages.captureFailed, RioVisionMessages.busy, RioVisionMessages.rejectedKey,
+            RioVisionMessages.cannotSee, RioVisionMessages.unreachable,
+        ]
+        ETest.eq(Set(messages).count, messages.count, "every failure says something different")
+        for message in messages {
+            TestSupport.expect(RioVisionMessages.historyReason(for: message) != nil, "history reason for: \(message)")
+        }
+        ETest.eq(RioVisionMessages.historyReason(for: RioVisionMessages.needsScreenRecording), "needs Screen Recording permission")
+        ETest.eq(RioVisionMessages.historyReason(for: RioVisionMessages.text(for: .noVisionModel("openai/gpt-oss-20b"))), "the model can't read images")
+        ETest.eq(RioVisionMessages.historyReason(for: "The screen says your bank balance is 4,000"), nil, "never the answer itself")
+        ETest.eq(RioVisionMessages.preflightFailure(config: nil), RioVisionMessages.needsKey)
+        ETest.eq(RioVisionMessages.preflightFailure(config: config(key: "")), RioVisionMessages.needsKey)
+        ETest.eq(RioVisionMessages.preflightFailure(config: config(model: "openai/gpt-oss-20b")),
+                 RioVisionMessages.text(for: .noVisionModel("openai/gpt-oss-20b")), "a text-only model fails before capture")
+        ETest.eq(RioVisionMessages.preflightFailure(config: config()), nil)
     }
 
     private static func testRequestShape() async {

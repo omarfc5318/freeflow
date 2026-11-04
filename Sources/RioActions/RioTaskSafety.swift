@@ -186,6 +186,38 @@ enum RioTaskSafety {
         return false
     }
 
+    // MARK: Terminals
+
+    private static let terminalAppNames: Set<String> = [
+        "terminal", "iterm", "iterm2", "warp", "ghostty", "kitty", "alacritty", "wezterm", "hyper", "tabby", "black box",
+    ]
+    static let terminalMessage =
+        "I don't type into terminals. For Claude Code, say \"tell Claude to\" and what you want; otherwise type the command yourself."
+
+    /// A terminal app, by bundle ID (`RioImprovePolicy`'s list) or by its name as Accessibility
+    /// reports it. Terminals run whatever is typed, so the task agent never works in one.
+    static func isTerminal(appName: String?, bundleID: String? = nil) -> Bool {
+        if RioImprovePolicy.refusesReplacement(bundleIdentifier: bundleID) { return true }
+        guard let name = appName?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !name.isEmpty else { return false }
+        return terminalAppNames.contains(name)
+    }
+
+    /// An editor's built-in terminal (VS Code, Cursor): its input reports itself as a terminal.
+    /// Typing, Return or Space there, or filling a field called a terminal, is handed back.
+    static func terminalHandBackReason(for action: RioAction, focused: RioTaskFieldInfo?) -> String? {
+        func isTerminalLabel(_ label: String?) -> Bool { label.map { RioText.matches(#"(?i)\bterminal\b"#, $0) } ?? false }
+        switch action {
+        case .fillField(let label, _):
+            return isTerminalLabel(label) ? terminalMessage : nil
+        case .typeText:
+            return isTerminalLabel(focused?.label) ? terminalMessage : nil
+        case .pressKeys(let combo) where combo.key == "return" || combo.key == "space":
+            return isTerminalLabel(focused?.label) ? terminalMessage : nil
+        default:
+            return nil
+        }
+    }
+
     // MARK: Sensitive fields and values
 
     private static let sensitiveLabelPattern =

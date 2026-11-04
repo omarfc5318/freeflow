@@ -131,8 +131,14 @@ enum RioNetworkSetup {
 
 enum RioBrightness {
     static let step = 10
+    /// The lowest brightness Rio sets on request: a hands-free user who says "brightness to 0"
+    /// must still be able to see the screen.
+    static let minimumSpoken = 5
 
     static func clamp(_ percent: Int) -> Int { min(100, max(0, percent)) }
+
+    /// A brightness the owner asked for, never below `minimumSpoken`.
+    static func clampSpoken(_ percent: Int) -> Int { min(100, max(minimumSpoken, percent)) }
 
     static func percent(fromScalar scalar: Float) -> Int { clamp(Int((scalar * 100).rounded())) }
 
@@ -142,8 +148,9 @@ enum RioBrightness {
     static func target(after change: VolumeChange, fromPercent current: Int) -> Int? {
         switch change {
         case .up: return clamp(current + step)
-        case .down: return clamp(current - step)
-        case .set(let level): return clamp(level)
+        // Down stops at the floor (or where it already is, when it was set lower by hand).
+        case .down: return max(min(clamp(current), minimumSpoken), current - step)
+        case .set(let level): return clampSpoken(level)
         case .mute, .unmute: return nil
         }
     }
