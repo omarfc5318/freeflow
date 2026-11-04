@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     /// The duplicate-copy check runs before AppState is built, so a second copy never touches
@@ -10,6 +11,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return AppState()
     }()
     var setupWindow: NSWindow?
+    private var styleProfileSubscription: AnyCancellable?
     private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -25,6 +27,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         RioCalendarService.onEventCreated = { RioUndoJournal.shared.noteCreated(.calendarEvent(identifier: $0)) }
         // Clipboard history (memory only, concealed/password copies skipped) starts with the app.
         RioClipboardHistory.shared.start()
+        // Scheduled commands, triggers and macros run as `.automation` (builder P).
+        RioAutomationCenter.shared.start(run: { [appState] text in appState.runRioCommandText(text, source: .automation) })
+        // History search and the writing-style profile read the owner's own dictations (builder N).
+        RioContextMemoryActionHandler.shared.historyProvider = { [appState] in appState.pipelineHistory }
+        RioContextMemoryActionHandler.shared.refreshStyleProfile(from: appState.pipelineHistory)
+        styleProfileSubscription = appState.$pipelineHistory
+            .dropFirst()
+            .debounce(for: .seconds(5), scheduler: DispatchQueue.main)
+            .sink { history in RioContextMemoryActionHandler.shared.refreshStyleProfile(from: history) }
         RioCompanionHub.shared.attach(appState)
         if start.showLoopNotice { RioCompanionHub.shared.announceCrashLoopStopped() }
         if recoveredFromCrash { appState.rioRecoveredFromCrash = true }

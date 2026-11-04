@@ -29,7 +29,7 @@ enum RioHistoryPolicy {
     /// Memory and clipboard commands carry the private content in what was said.
     private static func redactsTranscript(_ action: RioAction) -> Bool {
         switch action {
-        case .remember, .recall, .forget, .clipboard, .addNote: return true
+        case .remember, .recall, .forget, .clipboard, .addNote, .searchHistory, .notionAdd: return true
         default: return false
         }
     }
@@ -57,6 +57,15 @@ enum RioHistoryPolicy {
         case .selectionTask: return "Worked on your selection"
         case .answer: return "Answered a question"
         case .addNote: return "Added a note"
+        case .searchHistory: return "Searched your dictations"
+        case .editLastDictation: return "Rewrote your last dictation"
+        case .writeForMe: return "Wrote something for you"
+        case .smartPaste: return "Pasted transformed text"
+        case .findThing: return "Looked for a file"
+        case .copyTextFromScreen: return "Copied text from the screen"
+        case .meeting: return "Used the meeting copilot"
+        case .claudeCode: return "Talked to Claude Code"
+        case .notionAdd: return "Added to Notion"
         default: return nil
         }
     }

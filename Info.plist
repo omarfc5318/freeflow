@@ -34,6 +34,10 @@
 	<string>Rio Dictate reads your calendar when you ask what's next or to join a meeting, and adds events when you ask. Nothing leaves your Mac.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Rio Dictate looks up the person you name (for example "text Ali") in your Contacts on this Mac to find their number. Contacts are never uploaded or stored.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Rio Dictate reads the Wi-Fi network name only for Wi-Fi triggers you set up, like "when I join home Wi-Fi". Your location is never stored or sent anywhere.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Rio Dictate reads the Wi-Fi network name only for Wi-Fi triggers you set up, like "when I join home Wi-Fi". Your location is never stored or sent anywhere.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>FreeFlow needs microphone access to transcribe your speech.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>

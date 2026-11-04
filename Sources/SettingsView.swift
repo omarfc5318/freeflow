@@ -627,8 +627,21 @@ struct GeneralSettingsView: View {
                 }
                 SettingsCard("Live Translator", icon: "character.bubble") {
                     RioTranslatorSettingsSection()
-                    Divider()
+                }
+                SettingsCard("Multi-step Tasks", icon: "list.number") {
                     RioTaskSettingsSection()
+                }
+                SettingsCard("Automations & Macros", icon: "clock.arrow.2.circlepath") {
+                    RioAutomationSettingsSection()
+                }
+                SettingsCard("Finding Things", icon: "magnifyingglass") {
+                    RioFindSettingsSection()
+                }
+                SettingsCard("Context & Writing Style", icon: "text.quote") {
+                    RioContextMemorySettingsSection()
+                }
+                SettingsCard("Meetings & Claude Code", icon: "person.3.sequence") {
+                    RioMeetingSettingsSection()
                 }
                 SettingsCard("Edit Mode", icon: "pencil") {
                     commandModeSection

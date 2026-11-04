@@ -71,6 +71,10 @@ final class RioConfirmationCenter: RioConfirming, RioConversationConfirming {
     }
 
     private func content(for action: RioAction) -> RioConfirmationContent? {
+        // Waves 4–5: these build their own confirmation (the full tidy-up plan; the exact Claude
+        // Code permission prompt being approved).
+        if case .organizeDownloads = action { return RioDownloadsOrganizer.shared.confirmationContent() }
+        if case .claudeCode(.approve) = action { return RioClaudeCodeSession.shared.confirmationContent() }
         var recipient: String?
         if case .sendMessage(let to, _) = action { recipient = RioContactsLookup.resolvedName(spoken: to) }
         let appName = RioMessagingApps.info(for: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)?.name
