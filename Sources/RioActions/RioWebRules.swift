@@ -10,7 +10,7 @@ enum RioWebHostRules {
     /// a name ending in an alphabetic top-level domain.
     static func isLocalHost(_ host: String) -> Bool {
         let host = host.lowercased()
-        if host == "localhost" || host.hasSuffix(".local") || host.hasSuffix(".localhost") || host.hasSuffix(".internal") { return true }
+        if host == "localhost" || localSuffixes.contains(where: { host.hasSuffix("." + $0) }) { return true }
         if host.contains(":") || host.contains("[") { return true }
         // Best effort: public wildcard-DNS services that resolve to any IP written in the name
         // (127.0.0.1.nip.io). A real DNS check would still race; these are the well-known ones.
@@ -26,6 +26,11 @@ enum RioWebHostRules {
         default: return false
         }
     }
+
+    /// Names only a home or office network resolves (none is a public top-level domain).
+    private static let localSuffixes = [
+        "local", "localhost", "internal", "home.arpa", "lan", "home", "corp", "intranet", "private",
+    ]
 
     private static let wildcardDNSSuffixes = [
         "nip.io", "sslip.io", "xip.io", "localtest.me", "lvh.me", "vcap.me", "traefik.me",

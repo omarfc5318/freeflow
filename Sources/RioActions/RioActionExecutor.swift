@@ -308,6 +308,16 @@ private final class LaunchState {
     }
 }
 
+// MARK: Front app
+
+extension RioActionExecutor: RioFrontAppReporting {
+    /// The app in front now, for conversation mode's terminal check (name and bundle ID only).
+    func frontmostApp() -> RioFrontApp {
+        let app = NSWorkspace.shared.frontmostApplication
+        return RioFrontApp(name: app?.localizedName, bundleID: app?.bundleIdentifier)
+    }
+}
+
 // MARK: Focus settling
 
 extension RioActionExecutor: RioFocusSettling {

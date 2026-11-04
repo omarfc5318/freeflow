@@ -113,6 +113,10 @@ extension RioAction {
         case .meeting, .readAloud, .describeScreen, .copyTextFromScreen, .searchHistory, .recall, .selectionTask,
              .findThing, .claudeCode(.status):
             return true
+        // "Say that back to me" with no translation repeats Rio's own last line, which may have been
+        // a screen description, the clipboard, a message or a meeting recap.
+        case .speakLastTranslation:
+            return true
         case .clipboard(let command):
             switch command {
             case .readCurrent, .showHistory: return true
@@ -123,15 +127,28 @@ extension RioAction {
         }
     }
 
-    /// Starting the translator sends the room's audio to a provider, so it is always confirmed
-    /// when conversation mode asked for it, trusted or not.
-    /// An `openURL` to this Mac or the local network (localhost, IP literals, .local).
+    /// An `openURL` to this Mac or the local network (localhost, IP literals, .local, .lan). A
+    /// file URL, or a web URL with no host, counts as local; mailto:, tel:, sms: and other app
+    /// links have no host by design and go through the normal rules.
     var opensLocalAddress: Bool {
         guard case .openURL(let url) = self else { return false }
-        guard let host = url.host, !host.isEmpty else { return true }
+        guard let host = url.host, !host.isEmpty else {
+            let scheme = url.scheme?.lowercased()
+            return scheme == nil || scheme == "file" || scheme == "http" || scheme == "https"
+        }
         return RioWebHostRules.isLocalHost(host)
     }
 
+    /// A quit or hide aimed at Rio himself ("quit Rio", "quit Rio Dictate").
+    var targetsRioItself: Bool {
+        switch self {
+        case .quitApp(let name), .hideApp(let name): return RioSelfApp.isRio(name)
+        default: return false
+        }
+    }
+
+    /// Starting the translator sends the room's audio to a provider, so it is always confirmed
+    /// when conversation mode asked for it, trusted or not.
     var conversationAlwaysNeedsConfirmation: Bool {
         if opensLocalAddress { return true }
         switch self {
@@ -150,6 +167,36 @@ extension RioAction {
             return false
         }
     }
+}
+
+/// Rio's own app, by the names it is spoken or listed by.
+enum RioSelfApp {
+    static let refusalMessage = "Say \"stop listening\" to turn me off"
+
+    static func isRio(_ name: String) -> Bool {
+        let words = name.lowercased().replacingOccurrences(of: ".app", with: "")
+            .split(whereSeparator: { $0.isWhitespace || $0 == "-" || $0 == "_" }).map(String.init)
+        guard let first = words.first else { return false }
+        if TeddyCommand.names.contains(first), words.count == 1 || words.dropFirst() == ["dictate"] || words.dropFirst() == ["app"] {
+            return true
+        }
+        let joined = words.joined(separator: " ")
+        if ["freeflow", "free flow", "riodictate"].contains(joined) { return true }
+        let own = [Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName"), Bundle.main.object(forInfoDictionaryKey: "CFBundleName")]
+            .compactMap { ($0 as? String)?.lowercased() }
+        return own.contains(joined)
+    }
+}
+
+/// The app in front right now, for the conversation-mode terminal check.
+struct RioFrontApp: Equatable {
+    let name: String?
+    let bundleID: String?
+}
+
+/// An executor that can say which app is in front (the live one reads NSWorkspace).
+@MainActor protocol RioFrontAppReporting: AnyObject {
+    func frontmostApp() -> RioFrontApp
 }
 
 /// A confirmer that can also ask about an action that came from conversation mode (the panel
@@ -301,6 +348,9 @@ enum RioActionTranscript {
             #"^(?:(?:uh|uhm|um|er|erm|oh|ah|ok|okay|no|oops|actually|sorry)\s+)*(?:never\s?mind|forget\s+(?:it|about\s+it)|no\s+worries)(?:\s+(?:then|rio))?$"#,
             cleaned
         )
+            // An interruption: "wait", "wait wait wait", "wait stop", "no not that".
+            || RioText.matches(#"^(?:wait[\s,]+)*wait(?:[\s,]+stop)?(?:\s+rio)?$"#, cleaned)
+            || RioText.matches(#"^no[\s,]+not\s+that(?:\s+one)?(?:\s+rio)?$"#, cleaned)
     }
 }
 
@@ -373,16 +423,24 @@ final class RioActionCoordinator {
         if RioFollowUpRewriter.isRepeatRequest(simplified), let last = lastRun,
            now().timeIntervalSince(last.at) <= RioFollowUpMemory.lifetime {
             guard last.isRepeatable else { return .failed(RioActionText.cantRepeatMessage) }
+            // Never "again" of "again": that recursed forever with nothing to repeat (finding 89).
+            guard !RioFollowUpRewriter.isRepeatRequest(RioText.simplify(last.command)) else { return .unknown }
             return await run(last.command, source: source, progress: progress)
         }
+        let followUpContext = followUps.snapshot(now: now())
         // "Do the same for Slack" after "open Chrome" is parsed as "open Slack" would be.
-        let text = RioFollowUpRewriter.commandText(simplified, context: followUps.snapshot(now: now())) ?? stripped
+        let text = RioFollowUpRewriter.commandText(simplified, context: followUpContext) ?? stripped
         // A bare "stop" or "be quiet" must not cancel the owner's countdown (RioStopPlan).
         let previousStop = RioStopRequest.current
         RioStopRequest.current = RioTimerPhrases.stopKind(RioText.simplify(text))
         defer { RioStopRequest.current = previousStop }
         isUnresolvedRun = false
         defer { rememberCommand(text) }
+        // "Do the same for Slack" after a text: Rio only texts over iMessage, and the message body
+        // never goes to the brain. The text stays "that" for a later "send that to …".
+        if let reply = RioFollowUpRewriter.messagingAppReply(simplified, context: followUpContext) {
+            return await executeLocal([.answer(reply)], source: source, recordsFollowUps: false, progress: progress)
+        }
 
         let analysis = parser.analyze(text)
         switch analysis.parse {
@@ -445,6 +503,8 @@ final class RioActionCoordinator {
     }
 
     private func rememberCommand(_ command: String) {
+        // "Again" is never itself the command to repeat.
+        guard !RioFollowUpRewriter.isRepeatRequest(RioText.simplify(command)) else { return }
         guard !lastActions.isEmpty || isUnresolvedRun || lastUnrecognized != nil else { return }
         lastRun = (command, RioFollowUpRewriter.isRepeatable(lastActions), now())
         guard !lastActions.isEmpty, !isUnresolvedRun else { return }
@@ -532,9 +592,14 @@ final class RioActionCoordinator {
         progress: @MainActor (String) -> Void
     ) async -> StepsResult {
         var summaries: [String] = []
+        // "Type sounds good and press enter" from conversation mode is approved once, as a pair.
+        var approvedSubmitIndex: Int?
         for (index, action) in actions.enumerated() {
             progress(RioActionText.working(for: action))
             var riskyPlannedStep = planned && RioSmartRouting.plannedStepNeedsConfirmation(action)
+            // A prompt the brain wrote (its input includes an untrusted window title) is shown before
+            // it goes to Claude Code as the owner's instruction, whatever the source.
+            if planned, case .claudeCode(.send) = action { riskyPlannedStep = true }
             var action = action
             if planned, !riskyPlannedStep, RioSmartRouting.isClickOrFill(action) {
                 if let resolver = plannedTargetResolver {
@@ -549,20 +614,30 @@ final class RioActionCoordinator {
                     riskyPlannedStep = true
                 }
             }
+            // Rio never quits himself from the room, a phone or an automation.
+            if action.targetsRioItself, source != .actionKey {
+                return .stopped(.failed(RioSelfApp.refusalMessage))
+            }
             if source.refuses(action) || (riskyPlannedStep && source == .phone) {
                 return .stopped(.failed("I won't do that from your phone. Do it on your Mac."))
             }
-            if riskyPlannedStep || needsConfirmation(action, source: source) {
+            let isApprovedSubmit = approvedSubmitIndex == index
+            let submitsTyping = source == .conversation && Self.typesThenSubmits(actions, at: index)
+            let asks = riskyPlannedStep || action.targetsRioItself || submitsTyping
+                || conversationTerminalInput(action, in: actions, at: index, source: source)
+                || needsConfirmation(action, source: source)
+            if asks, !isApprovedSubmit {
                 // No confirmer means no way to ask, so never run it.
                 guard let confirmer else { return .stopped(.cancelled) }
                 let confirmed: Bool
-                if source == .conversation, !action.requiresConfirmation,
+                if source == .conversation || action.targetsRioItself, !action.requiresConfirmation,
                    let conversational = confirmer as? RioConversationConfirming {
                     confirmed = await conversational.confirmConversationAction(action)
                 } else {
                     confirmed = await confirmer.confirm(action)
                 }
                 guard confirmed else { return .stopped(.cancelled) }
+                if submitsTyping { approvedSubmitIndex = index + 1 }
             }
             // "Switch to Chrome, then press command N": the keys must land in Chrome.
             if index > 0, RioSmartRouting.focusesApp(actions[index - 1]), RioSmartRouting.actsOnFrontApp(action),
@@ -584,6 +659,38 @@ final class RioActionCoordinator {
             }
         }
         return .finished(summaries: summaries)
+    }
+
+    // MARK: Terminals and submits
+
+    /// Typing or a key press heard by conversation mode while a terminal is the target: a terminal
+    /// runs what it gets, and "press enter" / "press 1" there can approve Claude Code. Always asked,
+    /// with the exact text or keys shown, trusted or not (findings 27, 83, 22).
+    private func conversationTerminalInput(
+        _ action: RioAction, in actions: [RioAction], at index: Int, source: RioCommandSource
+    ) -> Bool {
+        guard source == .conversation else { return false }
+        switch action {
+        case .typeText, .pressKeys: break
+        default: return false
+        }
+        // The app this command brought forward is the target at this step.
+        for previous in actions[..<index].reversed() {
+            switch previous {
+            case .openApp(let name), .switchToApp(let name): return RioTaskSafety.isTerminal(appName: name)
+            default: continue
+            }
+        }
+        guard let reporter = executor as? RioFrontAppReporting else { return false }
+        let front = reporter.frontmostApp()
+        return RioTaskSafety.isTerminal(appName: front.name, bundleID: front.bundleID)
+    }
+
+    /// Typing immediately followed by Return submits it, like sending a message.
+    private static func typesThenSubmits(_ actions: [RioAction], at index: Int) -> Bool {
+        guard case .typeText = actions[index], index + 1 < actions.count,
+              case .pressKeys(let combo) = actions[index + 1] else { return false }
+        return combo.key == "return"
     }
 
     /// An empty summary is a step that chose to say nothing ("be quiet" with Rio already quiet).

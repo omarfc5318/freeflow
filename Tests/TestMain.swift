@@ -31,6 +31,7 @@ struct FreeFlowTests {
         FixLastShortcutTests.run()
         RioActionKeyTests.run()
         await RioActionCoordinatorTests.run()
+        await RioCoordinatorSafetyFollowupTests.run()
         FeatureCoreTests.run()
         TranscriptionRequestCoreTests.run()
         HandsFreeUndoContextTests.run()

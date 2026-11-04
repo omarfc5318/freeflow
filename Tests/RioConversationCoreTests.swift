@@ -267,8 +267,22 @@ enum RioConversationCoreTests {
             TestSupport.expectEqual(RioConversationCommands.quickReply(text, isConfirmationShowing: true), nil)
         }
         // Stop words and real commands are not answered here.
-        for text in ["Rio cancel", "Rio no no no", "Rio open chrome", "Rio thank you for the help with the email"] {
+        for text in ["Rio cancel", "Rio no no no", "Rio open chrome", "Rio thank you for the help with the email",
+                     "Rio hi, open Chrome", "Rio good morning, what's on my calendar", "Rio hear me out", "ريو هلا افتح كروم"] {
             TestSupport.expectEqual(RioConversationCommands.quickReply(text, isConfirmationShowing: false), nil)
+        }
+        // Greetings and presence checks: answered locally, no model call (findings 58, 76).
+        let greetings: [(String, String)] = [
+            ("Rio hi", "Hey"), ("Rio, hello!", "Hey"), ("Rio good morning", "Good morning"), ("Rio, are you there?", "I'm here"),
+            ("Rio can you hear me", "I'm here"), ("hear me", "I'm here"), ("Rio what's your name", "I'm Rio"),
+            ("Thank you, Rio.", RioConversationCommands.welcomeLine), ("thank you Rio", RioConversationCommands.welcomeLine),
+            ("ريو هلا", "هلا والله"), ("ريو هلا والله", "هلا والله"), ("ريو السلام عليكم", "وعليكم السلام"),
+            ("ريو السلام عليكم ورحمة الله وبركاته", "وعليكم السلام"), ("ريو صباح الخير", "صباح النور"),
+            ("ريو كيفك", "بخير، الحمد لله"), ("ريو وش اسمك", "أنا ريو"), ("يا ريو مساء الخير", "مساء النور"),
+        ]
+        for (text, reply) in greetings {
+            TestSupport.expectEqual(RioConversationCommands.quickReply(text, isConfirmationShowing: false), reply)
+            TestSupport.expectEqual(RioConversationCommands.quickReply(text, isConfirmationShowing: true), reply)
         }
     }
 
