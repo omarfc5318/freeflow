@@ -70,7 +70,7 @@ enum RioClickAX {
     private static func walk(_ app: NSRunningApplication, _ appElement: AXUIElement) -> RioClickSnapshot? {
         guard let window = frontWindow(appElement) else { return nil }
         var state = WalkState(deadline: Date().addingTimeInterval(walkSeconds))
-        visit(window, depth: 0, state: &state)
+        visit(window, depth: 0, inWebArea: false, state: &state)
         return RioClickSnapshot(
             app: app,
             windowTitle: RioAX.string(window, kAXTitleAttribute as String),
@@ -90,23 +90,29 @@ enum RioClickAX {
         kAXRoleAttribute as CFString, kAXSubroleAttribute as CFString, kAXTitleAttribute as CFString,
         kAXDescriptionAttribute as CFString, kAXValueAttribute as CFString, kAXEnabledAttribute as CFString,
         kAXPositionAttribute as CFString, kAXSizeAttribute as CFString, kAXHelpAttribute as CFString,
-        "AXPlaceholderValue" as CFString,
+        "AXPlaceholderValue" as CFString, "AXIdentifier" as CFString,
     ]
 
     private static let pressableByAction: Set<String> = ["AXImage", "AXGroup", "AXStaticText", "AXCell", "AXUnknown", "AXList"]
 
-    private static func visit(_ element: AXUIElement, depth: Int, state: inout WalkState) {
+    private static func visit(_ element: AXUIElement, depth: Int, inWebArea: Bool, state: inout WalkState) {
         guard state.nodes < maxNodes, depth <= maxDepth, Date() < state.deadline else { return }
         state.nodes += 1
         // A hung app must not hold the walk: every element gets a short reply budget.
         AXUIElementSetMessagingTimeout(element, 0.4)
         let attrs = attributes(of: element)
-        if let candidate = makeElement(element, attrs, index: state.elements.count) {
+        // Everything under an AXWebArea is page content; everything else in a browser window is chrome.
+        let insideWeb = inWebArea || (attrs[0] as? String) == "AXWebArea"
+        if var candidate = makeElement(element, attrs, index: state.elements.count) {
+            candidate.isInWebArea = insideWeb
+            if !insideWeb, candidate.kind == .textField {
+                candidate.isAddressField = RioBrowserChrome.isAddressField(identifier: attrs[10] as? String, texts: candidate.texts)
+            }
             state.elements.append(candidate)
             state.handles.append(element)
         }
         for child in RioAX.children(element) {
-            visit(child, depth: depth + 1, state: &state)
+            visit(child, depth: depth + 1, inWebArea: insideWeb, state: &state)
         }
     }
 

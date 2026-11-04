@@ -19,6 +19,11 @@ struct RioClickElement: Equatable {
     let isEnabled: Bool
     /// For checkboxes, radios and switches: the current state when known.
     let isChecked: Bool?
+    /// The element sits under an AXWebArea, so it is part of a web page and not browser chrome.
+    /// Apps without a web area report false; callers that care only look at browser windows.
+    var isInWebArea = true
+    /// A browser's address (and search) field. Only ever true outside a web area.
+    var isAddressField = false
 }
 
 enum RioToggleIntent: Equatable {
@@ -37,6 +42,9 @@ struct RioClickResolution: Equatable {
     let outcome: RioClickOutcome
     /// Set by "check", "uncheck", "tick", "untick".
     let toggle: RioToggleIntent?
+    /// True when the best match is the label itself (exact, or the same letters). False for a
+    /// prefix, all-words, substring or typo match: the control pressed may not be the one meant.
+    var isExact = false
 }
 
 enum RioClickMatcher {
@@ -47,12 +55,14 @@ enum RioClickMatcher {
 
     static func resolve(label: String, ordinal: Int?, in elements: [RioClickElement]) -> RioClickResolution {
         let plain = rank(Query(label), ordinal: ordinal, elements)
-        guard let (verb, rest) = splitToggleVerb(label) else { return RioClickResolution(outcome: plain.outcome, toggle: nil) }
+        guard let (verb, rest) = splitToggleVerb(label) else {
+            return RioClickResolution(outcome: plain.outcome, toggle: nil, isExact: plain.isExact)
+        }
         // A real "Check out" button beats reading "check" as a verb.
-        if plain.isStrong { return RioClickResolution(outcome: plain.outcome, toggle: nil) }
+        if plain.isStrong { return RioClickResolution(outcome: plain.outcome, toggle: nil, isExact: plain.isExact) }
         let toggled = rank(Query(rest), ordinal: ordinal, elements)
-        guard toggled.outcome != .none else { return RioClickResolution(outcome: plain.outcome, toggle: nil) }
-        return RioClickResolution(outcome: toggled.outcome, toggle: verb)
+        guard toggled.outcome != .none else { return RioClickResolution(outcome: plain.outcome, toggle: nil, isExact: plain.isExact) }
+        return RioClickResolution(outcome: toggled.outcome, toggle: verb, isExact: toggled.isExact)
     }
 
     /// Whether a press is needed to reach the wanted state ("check" on a ticked box does nothing).
@@ -71,15 +81,30 @@ enum RioClickMatcher {
     /// Words that name a kind of control but add nothing to the text match.
     private static let fillerNouns: Set<String> = ["icon", "item", "option", "box", "bar", "input", "area", "arrow"]
     private static let articles: Set<String> = ["the", "a", "an", "this", "that", "my"]
+    /// Colours are a soft ranking hint ("the blue button"), never a reason to find nothing.
+    private static let colourWords: Set<String> = [
+        "blue", "red", "green", "yellow", "orange", "purple", "pink", "gray", "grey", "black", "white",
+    ]
+    private static let hintBonus = 3
 
     private struct Query {
         let words: [String]
         let compact: String
         let kinds: Set<RioClickKind>
+        /// Leading colour words, kept apart from the text match.
+        let hints: [String]
+        /// The words with the colours put back, so an element really called "Blue Cross" still
+        /// matches in full.
+        let fullWords: [String]
 
         init(_ label: String) {
             var tokens = normalize(label).split(separator: " ").map(String.init)
             while let first = tokens.first, articles.contains(first) { tokens.removeFirst() }
+            var hints: [String] = []
+            while tokens.count > 1, let first = tokens.first, colourWords.contains(first) {
+                hints.append(first)
+                tokens.removeFirst()
+            }
             var kinds = Set<RioClickKind>()
             // Role nouns are only dropped from the end ("Send button"), and only when something is left,
             // unless the whole label is the role ("link").
@@ -98,6 +123,8 @@ enum RioClickMatcher {
             self.words = tokens
             self.compact = tokens.joined()
             self.kinds = kinds
+            self.hints = hints
+            self.fullWords = tokens.isEmpty ? [] : hints + tokens
         }
 
         var isRoleOnly: Bool { words.isEmpty && !kinds.isEmpty }
@@ -127,11 +154,14 @@ enum RioClickMatcher {
     private struct Ranked {
         let outcome: RioClickOutcome
         let isStrong: Bool
+        var isExact = false
     }
 
     private struct Scored {
         let element: RioClickElement
         let score: Int
+        /// The text match alone, before the role and colour bonuses.
+        let base: Int
     }
 
     private static let strongScore = 95
@@ -141,45 +171,65 @@ enum RioClickMatcher {
         let live = dedupe(elements.filter { $0.isEnabled })
         var scored: [Scored] = []
         for element in live {
+            let hinted = matchesHint(query, element) ? hintBonus : 0
             if query.isRoleOnly {
-                if query.kinds.contains(element.kind) { scored.append(Scored(element: element, score: 100)) }
+                if query.kinds.contains(element.kind) { scored.append(Scored(element: element, score: 100 + hinted, base: 100)) }
                 continue
             }
-            guard var best = element.texts.map({ score(query, text: $0) }).max(), best > 0 else { continue }
-            if query.kinds.contains(element.kind) { best += 5 }
-            scored.append(Scored(element: element, score: best))
+            guard let base = element.texts.map({ bestScore(query, text: $0) }).max(), base > 0 else { continue }
+            let bonus = (query.kinds.contains(element.kind) ? 5 : 0) + hinted
+            scored.append(Scored(element: element, score: base + bonus, base: base))
         }
         guard let top = scored.map(\.score).max() else { return Ranked(outcome: .none, isStrong: false) }
         let strong = top >= strongScore
-        let tier = scored.filter { $0.score == top }.map(\.element)
+        let topScored = scored.filter { $0.score == top }
+        let tier = topScored.map(\.element)
         let ordered = readingOrder(tier)
+        let exact = (topScored.map(\.base).min() ?? 0) >= strongScore
 
         if let ordinal {
             // "The second Reply": rank among everything that matched as well as the best one did.
             let position = ordinal < 0 ? ordered.count + ordinal : ordinal - 1
             guard position >= 0, position < ordered.count else {
-                return Ranked(outcome: .ordinalOutOfRange(available: ordered.count), isStrong: strong)
+                return Ranked(outcome: .ordinalOutOfRange(available: ordered.count), isStrong: strong, isExact: exact)
             }
-            return Ranked(outcome: .unique(ordered[position]), isStrong: strong)
+            return Ranked(outcome: .unique(ordered[position]), isStrong: strong, isExact: exact)
         }
-        if ordered.count == 1 { return Ranked(outcome: .unique(ordered[0]), isStrong: strong) }
-        return Ranked(outcome: .ambiguous(Array(ordered.prefix(maxChoices))), isStrong: strong)
+        if ordered.count == 1 { return Ranked(outcome: .unique(ordered[0]), isStrong: strong, isExact: exact) }
+        return Ranked(outcome: .ambiguous(Array(ordered.prefix(maxChoices))), isStrong: strong, isExact: exact)
+    }
+
+    /// The text score, trying the words without the colours and (when there are colours) the full
+    /// label, so a control really named "Blue Cross" still matches in full.
+    private static func bestScore(_ query: Query, text: String) -> Int {
+        let plain = score(words: query.words, text: text)
+        guard !query.hints.isEmpty else { return plain }
+        return max(plain, score(words: query.fullWords, text: text))
+    }
+
+    private static func matchesHint(_ query: Query, _ element: RioClickElement) -> Bool {
+        guard !query.hints.isEmpty else { return false }
+        return element.texts.contains { text in
+            let words = normalize(text).split(separator: " ").map(String.init)
+            return query.hints.contains { words.contains($0) }
+        }
     }
 
     /// Exact 100, same letters 95, prefix 80, every word present 65, substring 50, one typo 35.
-    private static func score(_ query: Query, text: String) -> Int {
+    private static func score(words queryWords: [String], text: String) -> Int {
         let normalized = normalize(text)
-        guard !normalized.isEmpty, !query.words.isEmpty else { return 0 }
+        guard !normalized.isEmpty, !queryWords.isEmpty else { return 0 }
         let textWords = normalized.split(separator: " ").map(String.init)
-        let label = query.words.joined(separator: " ")
+        let label = queryWords.joined(separator: " ")
+        let compact = queryWords.joined()
         if normalized == label { return 100 }
         let textCompact = textWords.joined()
-        if textCompact == query.compact { return 95 }
-        if normalized.hasPrefix(label + " ") || (query.compact.count >= 3 && textCompact.hasPrefix(query.compact)) { return 80 }
-        if query.words.allSatisfy({ word in textWords.contains(word) }) { return 65 }
-        if query.compact.count >= 3, textCompact.contains(query.compact) { return 50 }
-        let distance = editDistance(query.compact, textCompact)
-        let limit = query.compact.count >= 9 ? 2 : (query.compact.count >= 5 ? 1 : 0)
+        if textCompact == compact { return 95 }
+        if normalized.hasPrefix(label + " ") || (compact.count >= 3 && textCompact.hasPrefix(compact)) { return 80 }
+        if queryWords.allSatisfy({ word in textWords.contains(word) }) { return 65 }
+        if compact.count >= 3, textCompact.contains(compact) { return 50 }
+        let distance = editDistance(compact, textCompact)
+        let limit = compact.count >= 9 ? 2 : (compact.count >= 5 ? 1 : 0)
         if limit > 0, distance <= limit { return 35 }
         return 0
     }

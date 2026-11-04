@@ -20,6 +20,12 @@ struct RioTaskLimits: Equatable {
 
 @MainActor protocol RioTaskObserving: AnyObject {
     func observe() async -> RioTaskObservation
+    /// The frontmost process right now, for the last-moment "still the same app?" check.
+    func currentProcessID() -> Int32?
+}
+
+extension RioTaskObserving {
+    func currentProcessID() -> Int32? { nil }
 }
 
 @MainActor protocol RioTaskModelling: AnyObject {
@@ -44,6 +50,7 @@ struct RioTaskLimits: Equatable {
 @MainActor
 final class RioTaskRunner {
     private let observer: RioTaskObserving
+    private let resolver: RioTaskTargetResolving
     private let model: RioTaskModelling
     private let prompter: RioTaskUserPrompting
     private let reporter: RioTaskReporting
@@ -53,6 +60,7 @@ final class RioTaskRunner {
 
     init(
         observer: RioTaskObserving,
+        resolver: RioTaskTargetResolving,
         model: RioTaskModelling,
         prompter: RioTaskUserPrompting,
         reporter: RioTaskReporting,
@@ -63,6 +71,7 @@ final class RioTaskRunner {
         }
     ) {
         self.observer = observer
+        self.resolver = resolver
         self.model = model
         self.prompter = prompter
         self.reporter = reporter
@@ -82,7 +91,18 @@ final class RioTaskRunner {
         var lastStepKey: String?
         var repeats = 0
         var note: String?
+        /// The app the task started in (security: pinned, the task aborts if it changes).
+        var pinnedPID: Int32?
+        /// The site the task is on, as `RioWebHostRules.originKey`.
+        var pageOrigin: String?
+        var pageURL: URL?
+        /// After the agent's own `openURL`: the site it asked for, and how many observations
+        /// may still show the old page while it loads.
+        var pendingNavigation: URL?
+        var pendingObservations = 0
     }
+
+    private static let navigationGraceObservations = 3
 
     func run(goal: String, executor: RioActionExecuting) async -> RioActionResult {
         reporter.begin(goal: goal)
@@ -91,6 +111,7 @@ final class RioTaskRunner {
         while true {
             if let stop = stopResult(state) { return stop }
             let observation = await observer.observe()
+            if let abort = guardObservation(observation, state: &state) { return abort }
             let user = RioTaskPrompt.user(
                 goal: goal, stepNumber: state.steps + 1, maxSteps: limits.maxSteps,
                 history: state.history, observation: observation, note: state.note
@@ -118,6 +139,41 @@ final class RioTaskRunner {
                 }
             }
         }
+    }
+
+    // MARK: Pinning (app and site)
+
+    /// Aborts when the window is one Rio must not read, the app changed, or the page moved to
+    /// another site by anything but the agent's own `openURL`. Nil to carry on.
+    private func guardObservation(_ observation: RioTaskObservation, state: inout RunState) -> RioActionResult? {
+        if observation.isRestricted {
+            return .failed(message: "I won't look at that window, so I stopped.")
+        }
+        if let pid = observation.processID {
+            // The agent's own `openURL` can bring up the default browser, a different app: that is
+            // accepted only when the page now showing is the one it asked for.
+            let opened = state.pendingNavigation.flatMap(RioWebHostRules.originKey).map { $0 == observation.pageURL.flatMap(RioWebHostRules.originKey) } ?? false
+            if let pinned = state.pinnedPID, pinned != pid, !opened {
+                return .failed(message: "You switched to a different app, so I stopped.")
+            }
+            state.pinnedPID = pid
+        }
+        guard let url = observation.pageURL, let key = RioWebHostRules.originKey(url) else { return nil }
+        defer { state.pageURL = url }
+        guard let known = state.pageOrigin else { state.pageOrigin = key; return nil }
+        if key == known {
+            if state.pendingNavigation != nil {
+                state.pendingObservations -= 1
+                if state.pendingObservations <= 0 { state.pendingNavigation = nil }
+            }
+            return nil
+        }
+        if let requested = state.pendingNavigation, RioWebHostRules.originKey(requested) == key {
+            state.pageOrigin = key
+            state.pendingNavigation = nil
+            return nil
+        }
+        return .failed(message: "The page moved to a different site, so I stopped. The page is where I left it.")
     }
 
     // MARK: Stop conditions
@@ -181,13 +237,30 @@ final class RioTaskRunner {
             state.history.append(RioTaskHistoryEntry(step: state.steps, text: narration, outcome: "the user did this themselves"))
             return nil
         }
+        if let pinned = state.pinnedPID, let now = observer.currentProcessID(), now != pinned {
+            return .failed(message: "You switched to a different app, so I stopped.")
+        }
+        // Resolve the control the label really means before judging the step (security H2).
+        let resolution = await resolver.resolveTarget(for: action)
+        if let reason = RioTaskSafety.chromeHandBackReason(for: action, observation: observation, target: resolution) {
+            guard await handBack("\(reason) Press Continue when you're done.", state: &state) else { return .cancelled }
+            state.history.append(RioTaskHistoryEntry(step: state.steps, text: narration, outcome: "the user did this themselves"))
+            return nil
+        }
         let target: String?
         if case .click(let label, _) = action { target = label } else { target = observation.focusedField?.label }
         if case .confirm(let reason) = RioTaskSafety.risk(
-            of: action, targetLabel: target, narration: narration, modelFlagged: flagged, goal: goal
+            of: action, targetLabel: target, narration: narration, modelFlagged: flagged, goal: goal,
+            resolution: resolution, currentPage: state.pageURL,
+            focusInWebArea: observation.focusedInWebArea, focusIsAddressField: observation.focusedIsAddressField
         ) {
             let detail = context(observation) + description
             guard await confirm(title: reason, detail: detail, state: &state) else { return .cancelled }
+        }
+        if case .openURL(let url) = action {
+            // The agent's own navigation: the next observations may show the new site.
+            state.pendingNavigation = url
+            state.pendingObservations = Self.navigationGraceObservations
         }
         return await execute(action, narration: narration, executor: executor, state: &state)
     }

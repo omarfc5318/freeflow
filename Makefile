@@ -45,8 +45,11 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioEmailDraft.swift \
 	Sources/RioActions/RioNotesScript.swift \
 	Sources/RioActions/RioTaskPhrases.swift \
+	Sources/RioActions/RioWebRules.swift \
+	Sources/RioActions/RioTaskTarget.swift \
 	Sources/RioActions/RioTaskStep.swift \
 	Sources/RioActions/RioTaskSafety.swift \
+	Sources/RioActions/RioTaskObservationPolicy.swift \
 	Sources/RioActions/RioTaskPrompt.swift \
 	Sources/RioActions/RioTaskRunner.swift \
 	Sources/RioActions/RioTaskProgress.swift \

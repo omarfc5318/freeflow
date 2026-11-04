@@ -188,7 +188,8 @@ enum RioSmartResponseParser {
         guard let string = text(value, max: 2_048), !string.contains(where: { $0.isWhitespace }),
               let url = URL(string: string), let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https", url.user == nil, url.password == nil,
-              let host = url.host, host.contains("."), !host.hasPrefix("."), !host.hasSuffix(".") else { return nil }
+              let host = url.host, host.contains("."), !host.hasPrefix("."), !host.hasSuffix("."),
+              !RioWebHostRules.isLocalHost(host) else { return nil }
         return url
     }
 

@@ -30,6 +30,8 @@ final class RioTaskObserver: RioTaskObserving {
     ]
     private static let fieldRoles: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox", "AXSecureTextField"]
 
+    func currentProcessID() -> Int32? { RioAX.frontmostApp()?.processIdentifier }
+
     func observe() async -> RioTaskObservation {
         guard let app = RioAX.frontmostApp() else {
             return RioTaskObservation(appName: nil, windowTitle: nil, outline: "(no window to look at)", focusedField: nil, imageDataURL: nil)
@@ -37,12 +39,53 @@ final class RioTaskObserver: RioTaskObserving {
         let appElement = RioAX.appElement(app)
         let window = RioAX.element(appElement, kAXFocusedWindowAttribute as String)
         let title = window.flatMap { RioAX.string($0, kAXTitleAttribute as String) }
-        let outline = window.map { Self.outline(of: $0) } ?? "(no window to look at)"
-        let image = RioTaskSettings.sendsScreenshots ? Self.screenshot(of: app.processIdentifier) : nil
-        return RioTaskObservation(
-            appName: app.localizedName, windowTitle: title, outline: outline,
-            focusedField: Self.focusedField(of: appElement), imageDataURL: image
+        let decision = RioTaskObservationPolicy.decide(
+            bundleID: app.bundleIdentifier, windowTitle: title,
+            screenUnderstandingEnabled: RioScreenSettings.isEnabled, screenshotsEnabled: RioTaskSettings.sendsScreenshots
         )
+        // A window Rio must not read: collect and send nothing at all.
+        guard decision != .blocked else {
+            return RioTaskObservation(
+                appName: nil, windowTitle: nil, outline: "(a private window, so nothing was read)",
+                focusedField: nil, imageDataURL: nil, processID: app.processIdentifier, isRestricted: true
+            )
+        }
+        let read = window.map { Self.outline(of: $0) } ?? Outline(text: "(no window to look at)", pageURL: nil)
+        let image = decision == .outlineAndScreenshot ? Self.screenshot(of: app.processIdentifier) : nil
+        let focus = Self.focusFacts(of: appElement)
+        return RioTaskObservation(
+            appName: app.localizedName, windowTitle: title, outline: read.text,
+            focusedField: Self.focusedField(of: appElement), imageDataURL: image,
+            pageURL: read.pageURL, focusedInWebArea: focus.inWebArea, focusedIsAddressField: focus.isAddressField,
+            processID: app.processIdentifier
+        )
+    }
+
+    // MARK: Browser chrome facts
+
+    private static let webAreaRole = "AXWebArea"
+    private static let maxAncestors = 40
+
+    /// Whether the focused element is inside a page (it or an ancestor is an AXWebArea) and whether
+    /// it is a browser address field. Nothing focused counts as not in a page.
+    private static func focusFacts(of appElement: AXUIElement) -> (inWebArea: Bool, isAddressField: Bool) {
+        guard let focused = RioAX.element(appElement, kAXFocusedUIElementAttribute as String) else { return (false, false) }
+        var node: AXUIElement? = focused
+        var depth = 0
+        while let current = node, depth < maxAncestors {
+            if RioAX.role(current) == webAreaRole { return (true, false) }
+            node = RioAX.element(current, kAXParentAttribute as String)
+            depth += 1
+        }
+        let texts = [kAXTitleAttribute, kAXDescriptionAttribute, kAXPlaceholderValueAttribute, kAXHelpAttribute]
+            .compactMap { RioAX.string(focused, $0 as String) }
+        return (false, RioBrowserChrome.isAddressField(identifier: RioAX.string(focused, "AXIdentifier"), texts: texts))
+    }
+
+    private static func pageURL(of webArea: AXUIElement) -> URL? {
+        guard let value = RioAX.value(webArea, kAXURLAttribute as String) else { return nil }
+        if let url = value as? URL { return url }
+        return (value as? String).flatMap(URL.init(string:))
     }
 
     // MARK: Focused field
@@ -66,23 +109,32 @@ final class RioTaskObserver: RioTaskObserving {
         return nil
     }
 
-    private static func outline(of window: AXUIElement) -> String {
+    private struct Outline {
+        let text: String
+        let pageURL: URL?
+    }
+
+    private static func outline(of window: AXUIElement) -> Outline {
         let deadline = Date().addingTimeInterval(timeBudget)
         var lines: [String] = []
-        var queue: [(AXUIElement, Int)] = [(window, 0)]
+        var pageURL: URL?
+        var queue: [(element: AXUIElement, depth: Int, inWeb: Bool)] = [(window, 0, false)]
         var index = 0
         var visited = 0
         while index < queue.count, visited < maxElements, lines.count < maxLines, Date() < deadline {
-            let (element, depth) = queue[index]
+            let (element, depth, inWeb) = queue[index]
             index += 1
             visited += 1
-            if let line = line(for: element) { lines.append(line) }
-            if depth < maxDepth { queue.append(contentsOf: RioAX.children(element).map { ($0, depth + 1) }) }
+            let isWebArea = RioAX.role(element) == webAreaRole
+            if isWebArea, pageURL == nil { pageURL = Self.pageURL(of: element) }
+            let insideWeb = inWeb || isWebArea
+            if let line = line(for: element, inWebArea: insideWeb) { lines.append(line) }
+            if depth < maxDepth { queue.append(contentsOf: RioAX.children(element).map { ($0, depth + 1, insideWeb) }) }
         }
-        return lines.isEmpty ? "(nothing readable in this window)" : lines.joined(separator: "\n")
+        return Outline(text: lines.isEmpty ? "(nothing readable in this window)" : lines.joined(separator: "\n"), pageURL: pageURL)
     }
 
-    private static func line(for element: AXUIElement) -> String? {
+    private static func line(for element: AXUIElement, inWebArea: Bool) -> String? {
         guard let role = RioAX.role(element), let name = roleNames[role] else { return nil }
         if role == "AXStaticText" {
             guard let text = RioAX.string(element, kAXValueAttribute as String)?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -93,8 +145,13 @@ final class RioTaskObserver: RioTaskObserving {
         if fieldRoles.contains(role) {
             let secure = RioAX.string(element, kAXSubroleAttribute as String) == "AXSecureTextField"
             if secure || RioTaskSafety.isSensitiveLabel(label) { return "[\(name)] \(label ?? "unlabelled") (private, do not type)" }
-            let value = RioAX.string(element, kAXValueAttribute as String).map { String($0.prefix(40)) } ?? ""
-            let suffix = value.isEmpty ? "" : " value=\"\(value)\""
+            let texts = [label].compactMap { $0 }
+            let isAddress = !inWebArea && RioBrowserChrome.isAddressField(identifier: RioAX.string(element, "AXIdentifier"), texts: texts)
+            if isAddress { return "[\(name)] \(label ?? "address bar") (browser toolbar, not the page: do not type)" }
+            let value = RioTaskObservationPolicy.fieldValue(
+                label: label, isSecure: false, isAddressField: false, value: RioAX.string(element, kAXValueAttribute as String)
+            )
+            let suffix = value.map { " value=\"\($0)\"" } ?? ""
             return "[\(name)] \(label ?? "unlabelled")\(suffix)"
         }
         guard let label else { return nil }
