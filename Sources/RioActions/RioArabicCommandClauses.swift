@@ -184,3 +184,112 @@ enum RioArabicClauses {
         return nil
     }
 }
+
+// MARK: - Whole-sentence commands: timers, search, help, time left
+
+extension RioArabicClauses {
+    private static let searchVerbs: Set<String> = ["ابحث", "ابحثي", "دور", "دوري", "فتش", "فتشي", "سيرش"]
+    private static let searchGlue: Set<String> = ["عن", "على", "علي", "في"]
+    private static let questionWords: Set<String> = ["ماذا", "شو", "ايش", "وش", "شنو", "ما", "مذا", "شنهو"]
+    private static let abilityWords: Set<String> = ["تفعل", "تسوي", "تعمل", "تستطيع", "يمكنك", "تسويه", "تقدر", "تعرف"]
+    private static let remainingWords: Set<String> = ["بقي", "باقي", "متبقي", "المتبقي", "باقيه", "يبقي", "تبقي"]
+    private static let timerWords: Set<String> = ["موقت", "تايمر", "عداد", "تايمير"]
+    private static let cancelVerbs: Set<String> = ["الغي", "الغ", "الغاء", "وقف", "اوقف", "وقفي", "طفي", "اطفي", "امسح", "سكر", "اسكر"]
+
+    /// The English command for a whole Arabic sentence, or nil to let the clause table try.
+    static func whole(_ tokens: [String]) -> String? {
+        guard let first = tokens.first else { return nil }
+        let words = tokens.map(RioArabicVocabulary.stripArticle)
+        if let search = search(tokens) { return search }
+        if words.contains(where: { timerWords.contains($0) }) {
+            if let status = timeLeft(first, words) { return status }
+            return timer(first, words)
+        }
+        if let status = timeLeft(first, words) { return status }
+        if words == ["مساعده"] || words == ["ساعدني"] || words == ["اوامر"] || words == ["اشرح"] { return "help" }
+        if words.contains(where: { questionWords.contains($0) }), words.contains(where: { abilityWords.contains($0) }) {
+            return "what can you do"
+        }
+        if words.first == "ايش", words.contains("اوامر") || words.contains("الاوامر") { return "what can you do" }
+        if words == ["كم", "ساعه"] { return "what time is it" }
+        return nil
+    }
+
+    // MARK: Search
+
+    private static func search(_ tokens: [String]) -> String? {
+        guard let first = tokens.first, searchVerbs.contains(first) else { return nil }
+        var rest = Array(tokens.dropFirst())
+        while let head = rest.first, searchGlue.contains(head) { rest.removeFirst() }
+        // "ابحث في يوتيوب عن قطط"
+        if rest.count >= 2, let site = RioArabicVocabulary.apps[RioArabicVocabulary.key(for: rest[0])], site == "YouTube" {
+            var query = Array(rest.dropFirst())
+            while let head = query.first, searchGlue.contains(head) { query.removeFirst() }
+            return query.isEmpty ? nil : "search youtube for \(query.joined(separator: " "))"
+        }
+        guard !rest.isEmpty else { return nil }
+        return "search for \(rest.joined(separator: " "))"
+    }
+
+    // MARK: Time left
+
+    private static func timeLeft(_ first: String, _ words: [String]) -> String? {
+        guard words.contains(where: { remainingWords.contains($0) }),
+              !words.contains(where: { ["بطاريه", "شحن", "تحميل", "بيانات", "مساحه"].contains($0) }) else { return nil }
+        if first == "كم" || words.contains("كم") || words.contains("وقت") { return "how much time is left" }
+        return nil
+    }
+
+    // MARK: Timers
+
+    private static func timer(_ first: String, _ words: [String]) -> String? {
+        if cancelVerbs.contains(first) || cancelVerbs.contains(RioArabicVocabulary.stripArticle(first)) {
+            return "cancel the timer"
+        }
+        guard let seconds = duration(words), (1...RioTimerDuration.maxSeconds).contains(seconds) else { return nil }
+        return "set a timer for \(RioTimerDuration.spoken(seconds))"
+    }
+
+    private static let unitSeconds: [String: Int] = [
+        "ثانيه": 1, "ثواني": 1, "ثوان": 1, "ثانيتين": 2, "ثانيتان": 2,
+        "دقيقه": 60, "دقايق": 60, "دقائق": 60, "دقيقتين": 120, "دقيقتان": 120,
+        "ساعه": 3600, "ساعات": 3600, "ساعتين": 7200, "ساعتان": 7200,
+    ]
+
+    /// "خمس دقائق", "ساعتين", "نص ساعة", "ربع ساعة", "5 دقائق وثلاثين ثانية".
+    private static func duration(_ words: [String]) -> Int? {
+        var total = 0
+        var found = false
+        var index = 0
+        while index < words.count {
+            let word = words[index].hasPrefix("و") && words[index].count > 3 && unitSeconds[words[index]] == nil
+                && RioArabicVocabulary.durationNumbers[words[index]] == nil
+                ? String(words[index].dropFirst()) : words[index]
+            if let unit = unitSeconds[word], ["ثانيتين", "ثانيتان", "دقيقتين", "دقيقتان", "ساعتين", "ساعتان"].contains(word) {
+                total += unit
+                found = true
+            } else if let value = quantity(word) {
+                let unitIndex = index + 1
+                if unitIndex < words.count, let unit = unitSeconds[words[unitIndex]] {
+                    total += Int((value * Double(unit)).rounded())
+                    found = true
+                    index = unitIndex
+                }
+            }
+            index += 1
+        }
+        return found ? total : nil
+    }
+
+    /// A count, or a fraction word ("نص"/"ربع" are half and a quarter of the unit that follows).
+    private static func quantity(_ word: String) -> Double? {
+        if let value = Int(word) { return Double(value) }
+        switch word {
+        case "نص", "نصف": return 0.5
+        case "ربع": return 0.25
+        default: break
+        }
+        if let value = RioArabicVocabulary.durationNumbers[word], word != "ربع" { return Double(value) }
+        return nil
+    }
+}

@@ -85,7 +85,9 @@ import Foundation
         case .reversible(let inverse):
             let result = await run(inverse, window: window, executor: executor)
             if case .done = result { return .done(summary: RioUndoPlan.undoneSummary(for: inverse)) }
-            // The inverse didn't work; keep it so the user can try again.
+            // The inverse didn't work. Keep it so the user can try again, unless its target is
+            // gone (a timer that already finished): then it would only ever fail.
+            guard inverse.isRetryableAfterFailure else { return result }
             stack.push(record)
             if let window { windowSnapshots[record.id] = window }
             return result
@@ -102,6 +104,10 @@ import Foundation
                 return last
             }
             return last
+        case .cancelCountdown:
+            guard timers.countdown != nil else { return .failed(message: "That timer already finished") }
+            timers.cancel()
+            return .done(summary: "")
         case .restoreWindow:
             guard let window else { return .failed(message: RioUndoPlan.cantUndoMessage) }
             return WindowController().restore(window)

@@ -62,27 +62,38 @@ struct RioCalendarEventInfo: Equatable {
     /// Someone else's invite that the owner hasn't accepted (pending/unknown RSVP). Shown in the
     /// agenda, but never auto-joined: calendar spam often carries a meeting link.
     var isUnacceptedInvite: Bool = false
+    /// False for subscribed and read-only (imported) calendars: anyone can publish an event
+    /// with a meeting link there, so it is never one of the owner's meetings for joining.
+    var isOwnerCalendar: Bool = true
 }
 
 enum RioMeetingPick: Equatable {
     case join(RioCalendarEventInfo, URL)
     /// The next real event has no meeting link.
     case noLink(RioCalendarEventInfo)
+    /// The next meeting with a link starts too far ahead to open yet; Rio says when it is.
+    case later(RioCalendarEventInfo)
     case none
 }
 
 enum RioMeetingPicker {
-    /// "Join my next meeting": a meeting in progress, otherwise the next one starting within 24
-    /// hours that has a join link. All-day, finished and declined events are skipped.
+    /// How far ahead "join my meeting" will open a link: a meeting now or starting within this.
+    static let joinWindow: TimeInterval = 15 * 60
+
+    /// "Join my next meeting": a meeting in progress or starting within 15 minutes, on one of the
+    /// owner's own calendars. A later one is reported (`.later`), never opened. All-day, finished,
+    /// declined, unaccepted and subscribed-calendar events are skipped.
     static func pick(events: [RioCalendarEventInfo], now: Date) -> RioMeetingPick {
         let horizon = now.addingTimeInterval(24 * 3600)
         let candidates = events
-            .filter { !$0.isAllDay && !$0.isDeclined && !$0.isUnacceptedInvite && $0.end > now && $0.start < horizon }
+            .filter {
+                !$0.isAllDay && !$0.isDeclined && !$0.isUnacceptedInvite && $0.isOwnerCalendar
+                    && $0.end > now && $0.start < horizon
+            }
             .sorted { ($0.start, $0.identifier) < ($1.start, $1.identifier) }
         for event in candidates {
-            if let link = RioMeetingLinks.joinURL(url: event.url, location: event.location, notes: event.notes) {
-                return .join(event, link)
-            }
+            guard let link = RioMeetingLinks.joinURL(url: event.url, location: event.location, notes: event.notes) else { continue }
+            return event.start <= now.addingTimeInterval(joinWindow) ? .join(event, link) : .later(event)
         }
         if let first = candidates.first { return .noLink(first) }
         return .none

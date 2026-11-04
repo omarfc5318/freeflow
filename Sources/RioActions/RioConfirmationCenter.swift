@@ -74,7 +74,22 @@ final class RioConfirmationCenter: RioConfirming, RioConversationConfirming {
         var recipient: String?
         if case .sendMessage(let to, _) = action { recipient = RioContactsLookup.resolvedName(spoken: to) }
         let appName = RioMessagingApps.info(for: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)?.name
-        return RioConfirmationContent.make(for: action, appName: appName, resolvedRecipient: recipient)
+        var title: String?
+        if case .replyInConversation = action { title = Self.frontWindowTitle() }
+        return RioConfirmationContent.make(for: action, appName: appName, resolvedRecipient: recipient, conversationTitle: title)
+    }
+
+    /// The front window's title (the conversation a reply would land in), read through
+    /// Accessibility. Shown in the question only; never stored or logged.
+    private static func frontWindowTitle() -> String? {
+        guard AXIsProcessTrusted(), let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        let element = AXUIElementCreateApplication(app.processIdentifier)
+        var window: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXFocusedWindowAttribute as CFString, &window) == .success,
+              let window, CFGetTypeID(window) == AXUIElementGetTypeID() else { return nil }
+        var title: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window as! AXUIElement, kAXTitleAttribute as CFString, &title) == .success else { return nil }
+        return title as? String
     }
 
     private func finish(_ result: Bool) {

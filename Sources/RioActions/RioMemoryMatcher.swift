@@ -18,17 +18,33 @@ enum RioMemoryMatcher {
         }
     }
 
-    /// 0 for no match, up to 1 for every word of the question found in the fact.
-    static func score(query: [String], fact: [String]) -> Double {
+    /// Words that describe the kind of thing, not which one ("number" in "mom's phone number").
+    private static let attributeWords: Set<String> = [
+        "number", "code", "password", "pin", "phone", "address", "name", "email", "mail", "birthday", "id", "info", "detail",
+    ]
+
+    /// 0 for no match, up to 1 for every word of the question found in the fact. With
+    /// `requireEveryWord` (forget) a single unmatched word means no match, so "forget my mom's
+    /// phone number" can never take out dad's. Recall always needs every subject noun (every word
+    /// that isn't a generic attribute like "number" or "code") to match.
+    static func score(query: [String], fact: [String], requireEveryWord: Bool = false) -> Double {
         guard !query.isEmpty else { return 0 }
         var total = 0.0
         var strong = false
+        var unmatchedSubject = false
+        var unmatchedAny = false
         for word in query {
             var best = 0.0
             for candidate in fact { best = max(best, similarity(word, candidate)) }
             if best >= 0.85 { strong = true }
+            if best < 0.85 {
+                unmatchedAny = true
+                if !attributeWords.contains(word) { unmatchedSubject = true }
+            }
             total += best
         }
+        if requireEveryWord, unmatchedAny { return 0 }
+        if unmatchedSubject { return 0 }
         let score = total / Double(query.count)
         return strong && score >= 0.6 ? score : 0
     }
@@ -44,9 +60,11 @@ enum RioMemoryMatcher {
     }
 
     /// Indexes of the facts that match best, ties kept, in storage order.
-    static func best(query: String, facts: [String], limit: Int) -> [Int] {
+    static func best(query: String, facts: [String], limit: Int, requireEveryWord: Bool = false) -> [Int] {
         let wanted = tokens(query)
-        let scored = facts.enumerated().map { ($0.offset, score(query: wanted, fact: tokens($0.element))) }.filter { $0.1 > 0 }
+        let scored = facts.enumerated()
+            .map { ($0.offset, score(query: wanted, fact: tokens($0.element), requireEveryWord: requireEveryWord)) }
+            .filter { $0.1 > 0 }
         guard let top = scored.map(\.1).max() else { return [] }
         return Array(scored.filter { $0.1 >= top - 0.01 }.map(\.0).prefix(limit))
     }

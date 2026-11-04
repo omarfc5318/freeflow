@@ -23,7 +23,9 @@ extension RioSystemPhrases {
             (#"^zoom\s+in$"#, shortcut("equal")),
             (#"^zoom\s+out$"#, shortcut("minus")),
             (#"^(?:reset|actual)\s+zoom$|^actual\s+size$"#, shortcut("0")),
-            (#"^(?:open\s+|show\s+)?mission\s+control$"#, shortcut("up", command: false, control: true)),
+            (#"^(?:open\s+|show\s+)?mission\s+control$|^show\s+(?:me\s+)?all\s+(?:my\s+|the\s+)?(?:windows|open\s+windows)$"#, shortcut("up", command: false, control: true)),
+            (#"^(?:exit|leave|quit|get\s+out\s+of|come\s+out\s+of)\s+(?:the\s+)?full\s?screen(?:\s+mode)?$"#, shortcut("f", control: true)),
+            (#"^(?:show|reveal|go\s+to)\s+(?:me\s+)?(?:the\s+|my\s+)?desktop$"#, shortcut("f11", command: false)),
             (#"^(?:open\s+|show\s+)?(?:the\s+)?emoji(?:\s+(?:picker|keyboard|panel))?$"#, shortcut("space", control: true)),
         ]
         return table.first { RioText.matches($0.0, s) }?.1
@@ -41,7 +43,7 @@ extension RioSystemPhrases {
             (#"^(?:reopen|restore|bring\s+back|undo\s+closing|undo\s+close)\s+(?:the\s+|my\s+)?(?:last\s+)?(?:closed\s+)?(?:last\s+)?tab$"#, .reopenTab),
             (#"^(?:(?:switch|go|jump|move)\s+to\s+(?:the\s+)?)?next\s+tab$"#, .nextTab),
             (#"^(?:(?:switch|go|jump|move)\s+to\s+(?:the\s+)?)?(?:previous|prior)\s+tab$"#, .previousTab),
-            (#"^(?:go\s+back\s+(?:a|one|1)\s+page|(?:navigate|browser|page)\s+back|back\s+a\s+page|go\s+to\s+(?:the\s+)?previous\s+page|go\s+back\s+(?:in|on)\s+(?:the\s+)?(?:browser|history))$"#, .back),
+            (#"^(?:go\s+back(?:\s+(?:a|one|1)\s+page)?|(?:navigate|browser|page)\s+back|back\s+a\s+page|go\s+to\s+(?:the\s+)?previous\s+page|go\s+back\s+(?:in|on)\s+(?:the\s+)?(?:browser|history))$"#, .back),
             (#"^(?:go\s+forward(?:\s+(?:a|one|1)\s+page)?|(?:navigate|browser|page)\s+forward|forward\s+a\s+page)$"#, .forward),
             (#"^(?:refresh|reload)(?:\s+(?:the|this|my|current))?(?:\s+(?:page|tab|browser|site|website))?$"#, .reload),
             ("^(?:scroll\\s+down|page\\s+down)\(scrollTail)$", .scrollDown),

@@ -74,6 +74,10 @@ enum RioCalendarPhrases {
         guard let groups = RioText.firstMatch(#"^(add|schedule|book|create|put|set\s+up)\s+(.+)$"#, in: text),
               let verb = groups[1]?.lowercased(), var object = groups[2] else { return nil }
         guard !RioText.matches(blockedWords, object) else { return nil }
+        // "book a table at Nobu Friday at 8" is a task for the web, not a calendar entry.
+        if verb == "book", RioText.matches(#"^(?:me\s+|us\s+)?(?:an?\s+|the\s+)?(?:table|tables|reservation|room|flight|flights|ticket|tickets|hotel|ride|cab|uber|taxi|seat|seats|spot|stay|trip|car|rental|court|slot)\b"#, object) {
+            return nil
+        }
 
         let calendarMention = #"\s+(?:to|on|in|onto|into)\s+(?:my|the)\s+\#(cal)\b"#
         let mentionsCalendar = RioText.matches(calendarMention, " " + object)

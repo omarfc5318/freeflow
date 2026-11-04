@@ -28,11 +28,19 @@ enum RioSystemPhrases {
         }
         if RioText.matches("^\(darkName)$", s) { return .systemToggle(.darkMode, isOn: true) }
         if RioText.matches("^\(lightName)$", s) { return .systemToggle(.darkMode, isOn: false) }
+        if RioText.matches("^toggle\\s+(?:the\\s+|my\\s+)?(?:\(darkName)|\(lightName))$", s) {
+            return .systemToggle(.darkMode, isOn: !darkModeProbe())
+        }
         if let groups = RioText.firstMatch(#"^(?:(?:switch|go|change|flip)\s+to|use|go)\s+(dark|light)\s+(?:mode|theme|appearance)$"#, in: s),
            let which = groups[1]?.lowercased() {
             return .systemToggle(.darkMode, isOn: which == "dark")
         }
         return nil
+    }
+
+    /// Whether the Mac is in dark mode right now, for "toggle dark mode". Replaced in tests.
+    nonisolated(unsafe) static var darkModeProbe: () -> Bool = {
+        UserDefaults.standard.string(forKey: "AppleInterfaceStyle")?.lowercased() == "dark"
     }
 
     private static func toggleState(_ s: String, name: String) -> Bool? {

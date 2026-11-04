@@ -44,6 +44,9 @@ final class RioMemoryStore: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: [RioMemoryFact] = []
     private(set) var lastSaveFailed = false
+    /// Set when a damaged memory file was found at launch and set aside (its new name), so the
+    /// next write can't wipe the only copy.
+    private(set) var recoveredCorruptFile: URL?
 
     static let shared = RioMemoryStore(directory: defaultDirectory())
 
@@ -95,7 +98,7 @@ final class RioMemoryStore: @unchecked Sendable {
 
     func forget(_ query: String) -> RioMemoryForget {
         lock.lock(); defer { lock.unlock() }
-        let matches = RioMemoryMatcher.best(query: query, facts: stored.map(\.text), limit: Self.recallLimit)
+        let matches = RioMemoryMatcher.best(query: query, facts: stored.map(\.text), limit: Self.recallLimit, requireEveryWord: true)
         guard let first = matches.first else { return .notFound }
         guard matches.count == 1 else { return .ambiguous(matches.map { stored[$0].text }) }
         let removed = stored.remove(at: first).text
@@ -121,8 +124,15 @@ final class RioMemoryStore: @unchecked Sendable {
         guard let data = try? Data(contentsOf: fileURL) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        // A damaged file loads as empty; the next change writes a fresh one.
-        return (try? decoder.decode(FileContents.self, from: data))?.facts ?? []
+        if let contents = try? decoder.decode(FileContents.self, from: data) { return contents.facts }
+        // A damaged file is renamed, not overwritten: the next change writes a fresh file and the
+        // old one stays on disk to be recovered by hand.
+        let stamp = ISO8601DateFormatter().string(from: now()).replacingOccurrences(of: ":", with: "-")
+        let aside = directory.appendingPathComponent("memory.corrupt-\(stamp).json")
+        if (try? FileManager.default.moveItem(at: fileURL, to: aside)) != nil {
+            recoveredCorruptFile = aside
+        }
+        return []
     }
 
     private func save() {

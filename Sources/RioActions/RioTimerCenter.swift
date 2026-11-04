@@ -38,6 +38,12 @@ private let rioTimerNotificationID = "rio.timer"
 
     init(clock: @escaping () -> Date = Date.init) {
         self.clock = clock
+        // A timer lives in memory only, so a notification left over from before a relaunch is a
+        // ghost: clear it now, and again on quit.
+        removeNotification()
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.removeNotification() }
+        }
     }
 
     var now: Date { clock() }
@@ -188,11 +194,17 @@ private let rioTimerNotificationID = "rio.timer"
         guard canNotify else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }
-            let content = UNMutableNotificationContent()
-            content.title = "Rio"
-            content.body = timer.doneLine
-            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(max(1, timer.seconds)), repeats: false)
-            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: rioTimerNotificationID, content: content, trigger: trigger))
+            // The answer can arrive after the timer was cancelled or replaced: schedule only if
+            // this countdown is still the live one, and with the time that is really left.
+            Task { @MainActor [weak self] in
+                guard let self, self.countdown == timer else { return }
+                let left = max(1, timer.remaining(at: self.clock()).rounded(.up))
+                let content = UNMutableNotificationContent()
+                content.title = "Rio"
+                content.body = timer.doneLine
+                let trigger = UNTimeIntervalNotificationTrigger(timeInterval: left, repeats: false)
+                try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: rioTimerNotificationID, content: content, trigger: trigger))
+            }
         }
     }
 

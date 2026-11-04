@@ -103,3 +103,55 @@ enum RioMailRecipient {
         return RioContactChooser.choose(spoken: withoutTitle(trimmed), from: emailOnly)
     }
 }
+
+/// "email Sam saying I'm running late", "draft an email to Sam about lunch", "compose an email".
+/// Local and offline: it only ever opens a compose window (never sends). Pure.
+enum RioEmailPhrases {
+    private static let maxBody = 1_500
+
+    static func parse(_ text: String) -> RioAction? {
+        let pattern = #"^(?:(?:please\s+)?(?:draft|write|compose|create|start|send)\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:e\s?-?\s?mail)|new\s+e\s?-?\s?mail|e\s?-?\s?mail)(?:\s+(.*))?$"#
+        guard let groups = RioText.firstMatch(pattern, in: text) else { return nil }
+        let isVerbForm = RioText.matches(#"^e\s?-?\s?mail\b"#, text)
+        let rest = RioText.collapseWhitespace(groups[1] ?? "")
+        if rest.isEmpty { return isVerbForm ? nil : .draftEmail(to: nil, subject: nil, body: "") }
+
+        var head = rest
+        var body = ""
+        let bodyMarker = #"\s+(?:saying|that\s+says|says|telling\s+(?:him|her|them)(?:\s+that)?|and\s+(?:tell|say)\s+(?:him|her|them)(?:\s+that)?|that)\s+"#
+        if let regex = try? NSRegularExpression(pattern: bodyMarker, options: [.caseInsensitive]),
+           let match = regex.firstMatch(in: " " + rest, range: NSRange(location: 0, length: (" " + rest).utf16.count)),
+           let range = Range(match.range, in: " " + rest) {
+            let padded = " " + rest
+            head = String(padded[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+            body = String(padded[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+        } else if RioText.matches(#"^(?:saying|that|says)\s+"#, rest) {
+            head = ""
+            body = RioText.replacing(#"^(?:saying|that|says)\s+"#, with: "", in: rest)
+        }
+        guard body.count <= maxBody else { return nil }
+
+        var recipient = head
+        var subject: String?
+        if let split = RioText.firstMatch(#"^(.*?)\s*\b(?:subject|titled|about|regarding)\s+(.+)$"#, in: head) {
+            recipient = split[1] ?? ""
+            subject = split[2]
+        }
+        recipient = RioText.replacing(#"^(?:to|for)\s+"#, with: "", in: recipient).trimmingCharacters(in: CharacterSet(charactersIn: " ,"))
+        let to = recipient.isEmpty || RioText.matches(#"^(?:me|myself)$"#, recipient) ? nil : spokenAddress(recipient)
+        let cleanSubject = subject.map(RioText.collapseWhitespace).flatMap { $0.isEmpty ? nil : capitalised($0) }
+        return .draftEmail(to: to, subject: cleanSubject, body: capitalised(body))
+    }
+
+    /// "john at example dot com" -> "john@example.com"; a name stays a name.
+    static func spokenAddress(_ spoken: String) -> String {
+        guard let groups = RioText.firstMatch(#"^([a-z0-9._-]+)\s+at\s+([a-z0-9 -]+?)\s+dot\s+([a-z]{2,24}(?:\s+dot\s+[a-z]{2,24})*)$"#, in: spoken),
+              let user = groups[1], let domain = groups[2], let tld = groups[3] else { return spoken }
+        let host = (domain + " dot " + tld).replacingOccurrences(of: " dot ", with: ".").replacingOccurrences(of: " ", with: "")
+        return "\(user)@\(host)".lowercased()
+    }
+
+    private static func capitalised(_ text: String) -> String {
+        text.prefix(1).uppercased() + text.dropFirst()
+    }
+}

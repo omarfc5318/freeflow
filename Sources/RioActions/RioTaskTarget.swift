@@ -54,7 +54,11 @@ enum RioTaskTargetMapper {
             return action
         }
         switch action {
-        case .click(_, let ordinal): return .click(label: text, ordinal: ordinal)
+        case .click(_, let ordinal?):
+            // The ordinal counts within the original label's matches; keep the step as checked.
+            _ = ordinal
+            return action
+        case .click(_, nil): return .click(label: text, ordinal: nil)
         case .fillField(_, let value): return .fillField(label: text, text: value)
         default: return action
         }

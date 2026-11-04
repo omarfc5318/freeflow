@@ -20,6 +20,19 @@ enum RioTaskPhrases {
         return .runTask(goal: goal)
     }
 
+    /// The two task phrasings the clause splitter would otherwise destroy: a trailing "for me"
+    /// ("do the laundry booking for me") is stripped as polite filler, and "go on Kayak and look
+    /// for flights" is cut at "and". Checked on the whole sentence, before it is split.
+    static func wholeUtterance(_ body: String) -> RioAction? {
+        let text = RioText.collapseWhitespace(RioText.simplify(body))
+        guard let rest = RioText.firstMatch(politePrefix + "(.+)$", in: text)?[1] else { return nil }
+        let lower = rest.lowercased()
+        guard RioText.matches(#"^do\s+.+\s+for\s+me$"#, lower)
+                || RioText.matches(#"^go\s+on\s+\S+(?:\s+\S+)?\s+and\s+(?:look|search|find|check|compare|book|buy|order)\b.+"#, lower),
+              let goal = goal(from: rest), goal.count <= maxGoalCharacters else { return nil }
+        return .runTask(goal: goal)
+    }
+
     private static func goal(from body: String) -> String? {
         let lower = body.lowercased()
         // "do this for me find …" / "do this for me order paper towels".

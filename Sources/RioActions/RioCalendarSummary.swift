@@ -110,6 +110,22 @@ enum RioCalendarSummary {
         return "Next up: \(name(upcoming)) \(when(upcoming.start, now: now, calendar: calendar))."
     }
 
+    // MARK: Past times
+
+    /// Asked instead of silently adding an event that already happened. Nil when the time is
+    /// still ahead (a minute of slack covers speaking time).
+    static func pastEventMessage(start: Date, now: Date, calendar: Calendar) -> String? {
+        guard start < now.addingTimeInterval(-60) else { return nil }
+        return "That time has already passed (\(dayAndTime(start, now: now, calendar: calendar))). Tell me a time that's still ahead."
+    }
+
+    // MARK: Meeting not yet joinable
+
+    /// "Call with Ali starts at 3 PM, so I didn't open it yet. Ask me again closer to the time."
+    static func startsLater(_ event: RioCalendarEventInfo, now: Date, calendar: Calendar) -> String {
+        "\(name(event)) starts \(when(event.start, now: now, calendar: calendar)), so I didn't open it yet. Ask me again closer to the time."
+    }
+
     // MARK: Created event
 
     static func created(title: String, start: Date, durationMinutes: Int?, now: Date, calendar: Calendar) -> String {

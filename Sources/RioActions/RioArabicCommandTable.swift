@@ -11,6 +11,9 @@ enum RioArabicCommandTable {
         var tokens = normalized.split(separator: " ").map(String.init)
         let wake = stripWake(&tokens)
         tokens = withoutFiller(tokens)
+        // Timers, search, help and "time left" read the whole sentence: the clause splitter would
+        // cut "خمس دقائق وثلاثين ثانية" or a search query at every "و".
+        if let whole = RioArabicClauses.whole(tokens) { return wake ? "Rio \(whole)" : whole }
         let clauses = splitClauses(tokens)
         if clauses.isEmpty { return wake ? "Rio" : nil }
 

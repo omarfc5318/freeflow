@@ -10,8 +10,8 @@ extension RioActionParser {
         if let level = volumeLevel(s) { return .volume(.set(RioVolume.clamp(level))) }
 
         let upPatterns = [
-            "^volume\\s+up\(tail)$",
-            "^(?:turn|crank|bump|pump|raise|put|move)\\s+(?:(?:the|my)\\s+)?(?:(?:volume|sound|music)\\s+|it\\s+)?up\(tail)$",
+            "^(?:volume|sound|music)\\s+up\(tail)$",
+            "^(?:turn|crank|bump|pump|raise|put|move)\\s+(?:(?:the|my)\\s+)?(?:(?:volume|sound|music)\\s+|it\\s+)?(?:way\\s+)?up\(tail)$",
             "^(?:turn|crank|bump|pump|raise)\\s+up\\s+(?:(?:the|my)\\s+)?(?:volume|sound|music)\(tail)$",
             "^(?:raise|increase|boost)\\s+(?:(?:the|my)\\s+)?(?:volume|sound)\(tail)$",
             "^(?:make\\s+(?:it|the\\s+music|the\\s+sound)\\s+)?(?:(?:a\\s+bit|a\\s+little|much)\\s+)?(?:louder|higher)$",
@@ -19,8 +19,8 @@ extension RioActionParser {
         if upPatterns.contains(where: { RioText.matches($0, s) }) { return .volume(.up) }
 
         let downPatterns = [
-            "^volume\\s+down\(tail)$",
-            "^(?:turn|bring|move|put)\\s+(?:(?:the|my)\\s+)?(?:(?:volume|sound|music)\\s+|it\\s+)?down\(tail)$",
+            "^(?:volume|sound|music)\\s+down\(tail)$",
+            "^(?:turn|bring|move|put)\\s+(?:(?:the|my)\\s+)?(?:(?:volume|sound|music)\\s+|it\\s+)?(?:way\\s+)?down\(tail)$",
             "^turn\\s+down\\s+(?:(?:the|my)\\s+)?(?:volume|sound|music)\(tail)$",
             "^(?:lower|decrease|reduce|drop)\\s+(?:(?:the|my)\\s+)?(?:volume|sound)\(tail)$",
             "^(?:make\\s+(?:it|the\\s+music|the\\s+sound)\\s+)?(?:(?:a\\s+bit|a\\s+little|much)\\s+)?(?:quieter|softer|lower)$",
@@ -66,7 +66,7 @@ extension RioActionParser {
         if RioText.matches(#"^(?:(?:play\s+)?(?:the\s+)?next(?:\s+(?:song|track|one))?|skip(?:\s+(?:this|the|that|it))?(?:\s+(?:song|track|one))?|skip\s+forward)$"#, s) {
             return .media(.next)
         }
-        if RioText.matches(#"^(?:(?:play\s+)?(?:the\s+)?(?:previous|last|prior)(?:\s+(?:song|track|one))?|go\s+back(?:\s+(?:a|one)\s+(?:song|track))?|back\s+one\s+song)$"#, s) {
+        if RioText.matches(#"^(?:(?:play\s+)?(?:the\s+)?(?:previous|prior)(?:\s+(?:song|track|one))?|(?:play\s+)?(?:the\s+)?last\s+(?:song|track)|go\s+back\s+(?:a|one)\s+(?:song|track)|back\s+one\s+song)$"#, s) {
             return .media(.previous)
         }
         return nil

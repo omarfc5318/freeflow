@@ -70,8 +70,15 @@ final class RioCalendarService {
             notes: event.notes,
             url: event.url,
             isDeclined: declinedByMe || event.status == .canceled,
-            isUnacceptedInvite: unacceptedInvite
+            isUnacceptedInvite: unacceptedInvite,
+            isOwnerCalendar: isOwnerCalendar(event.calendar)
         )
+    }
+
+    /// Subscribed and read-only (imported) calendars carry other people's events.
+    private static func isOwnerCalendar(_ calendar: EKCalendar?) -> Bool {
+        guard let calendar else { return false }
+        return calendar.type != .subscription && calendar.allowsContentModifications
     }
 
     /// Adds an event to the default calendar and returns its identifier.

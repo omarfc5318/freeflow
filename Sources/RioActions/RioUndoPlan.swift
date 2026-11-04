@@ -31,6 +31,18 @@ enum RioUndoInverse: Equatable {
     /// Put the window back with the saved snapshot (not expressible in the closed action set).
     case restoreWindow
     case deleteCreated(RioCreatedItem)
+    /// Cancel the countdown Rio started, and nothing else: never "stop", which would also stop a
+    /// running task. Goes straight to the timer centre, not through the executor.
+    case cancelCountdown
+
+    /// False when a failed inverse means its target is gone (the timer already finished), so
+    /// the record is dropped instead of answering "no timer" for the next 15 minutes.
+    var isRetryableAfterFailure: Bool {
+        switch self {
+        case .cancelCountdown: return false
+        default: return true
+        }
+    }
 }
 
 enum RioUndoPlan {
@@ -73,7 +85,7 @@ enum RioUndoPlan {
         case .window:
             return snapshot.hasWindowSnapshot ? .reversible(.restoreWindow) : .irreversible
         case .startTimer:
-            return .reversible(.actions([.cancelTimer]))
+            return .reversible(.cancelCountdown)
         case .cancelTimer:
             guard let remaining = snapshot.timerRemaining, remaining >= 1 else { return .ignore }
             return .reversible(.actions([.startTimer(seconds: remaining, label: snapshot.timerLabel)]))
@@ -144,6 +156,7 @@ enum RioUndoPlan {
     static func undoneSummary(for inverse: RioUndoInverse) -> String {
         switch inverse {
         case .restoreWindow: return "Undone: window put back"
+        case .cancelCountdown: return "Undone: timer cancelled"
         case .deleteCreated(.calendarEvent): return "Undone: removed the event"
         case .deleteCreated(.reminder): return "Undone: removed the reminder"
         case .actions(let actions):

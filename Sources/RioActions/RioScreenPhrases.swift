@@ -133,6 +133,11 @@ enum RioScreenPhrases {
         let lastWord = parts.label.split(separator: " ").last.map { String($0).lowercased() } ?? ""
         // "press return" and "hit enter" are keys, not clicks: those verbs need a role noun.
         if verb == "press" || verb == "hit", !roleNouns.contains(lastWord) { return nil }
+        // "press tab" is the Tab key; "press the second tab" or "press the Save button" is a click.
+        if verb == "press" || verb == "hit", parts.ordinal == nil, parts.label.split(separator: " ").count == 1,
+           RioKeyCombos.parse(s) != nil {
+            return nil
+        }
         if parts.label.isEmpty { return parts.ordinal == nil ? nil : .click(label: "", ordinal: parts.ordinal) }
         let withoutColours = parts.label.split(separator: " ").drop { colourHints.contains($0.lowercased()) }.joined(separator: " ")
         if pronounLabels.contains(withoutColours.lowercased()) { return nil }
@@ -202,7 +207,7 @@ enum RioScreenPhrases {
         if let groups = RioText.firstMatch(fill, in: text), let label = fieldLabel(groups[1]), let value = fieldText(groups[2]) {
             return .fillField(label: label, text: value)
         }
-        let into = #"^(?:(?:put|enter|insert|input|paste|type)\s+)(.+?)\s+(?:in|into|in to|inside)\s+(?:the|my)\s+(.+)$"#
+        let into = #"^(?:(?:put|enter|insert|input|paste|type|write)\s+)(.+?)\s+(?:in|into|in to|inside)\s+(?:the|my)\s+(.+)$"#
         if let groups = RioText.firstMatch(into, in: text), let value = fieldText(groups[1]), let label = fieldLabel(groups[2]) {
             return .fillField(label: label, text: value)
         }

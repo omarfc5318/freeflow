@@ -90,7 +90,7 @@ enum RioUndoPlanTests {
     }
 
     private static func testTimerInverses() {
-        TestSupport.expectEqual(disposition(.startTimer(seconds: 60, label: nil)), reversible(.cancelTimer))
+        TestSupport.expectEqual(disposition(.startTimer(seconds: 60, label: nil)), .reversible(.cancelCountdown))
         TestSupport.expectEqual(
             disposition(.cancelTimer, Snapshot(timerRemaining: 125, timerLabel: "pasta")),
             reversible(.startTimer(seconds: 125, label: "pasta"))

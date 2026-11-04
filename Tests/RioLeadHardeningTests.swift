@@ -50,6 +50,12 @@ enum RioLeadHardeningTests {
             .click(label: "search", ordinal: nil)
         )
         TestSupport.expectEqual(RioTaskTargetMapper.bind(.browser(.back), to: .notApplicable), .browser(.back))
+        // An ordinal ("the second link") was resolved against the original label; relabelling would
+        // make it count against a different list, so such steps stay exactly as checked.
+        TestSupport.expectEqual(
+            RioTaskTargetMapper.bind(.click(label: "link", ordinal: 2), to: .resolved(candidates: [checked], isExact: false)),
+            .click(label: "link", ordinal: 2)
+        )
     }
 
     /// Saying "amazon" doesn't make amazon.xyz or amazon-deals.shop the site you named.

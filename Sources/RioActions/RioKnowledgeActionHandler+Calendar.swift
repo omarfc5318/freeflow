@@ -34,6 +34,8 @@ extension RioKnowledgeActionHandler {
             guard NSWorkspace.shared.open(url) else { return .failed(message: "I couldn't open the meeting link") }
             let title = RioText.collapseWhitespace(event.title)
             return .done(summary: title.isEmpty ? "Joining your meeting" : "Joining \(title)")
+        case .later(let event):
+            return .failed(message: RioCalendarSummary.startsLater(event, now: now, calendar: Calendar.current))
         case .noLink(let event):
             let title = RioText.collapseWhitespace(event.title)
             return .failed(message: title.isEmpty ? "Your next event doesn't have a meeting link" : "\(title) doesn't have a meeting link")
@@ -43,6 +45,9 @@ extension RioKnowledgeActionHandler {
     }
 
     func createEvent(title: String, start: Date, durationMinutes: Int?) async -> RioActionResult {
+        if let past = RioCalendarSummary.pastEventMessage(start: start, now: Date(), calendar: Calendar.current) {
+            return .failed(message: past)
+        }
         guard await calendarService.ensureAccess() else { return .failed(message: Self.calendarAccessMessage) }
         do {
             _ = try calendarService.create(title: title, start: start, durationMinutes: durationMinutes)
