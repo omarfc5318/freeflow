@@ -43,8 +43,11 @@ import Foundation
     /// What he last said, so "say that again" works when there is no translation to repeat.
     private(set) var lastSpokenText: String?
 
-    func speak(_ text: String) {
-        guard let prepared = RioSpeechText.prepare(text), canSpeak(prepared) else { return }
+    /// False when he stayed silent (nothing to say, voice off, someone else on the microphone, or
+    /// Rio recording), so a caller can show the line instead.
+    @discardableResult
+    func speak(_ text: String) -> Bool {
+        guard let prepared = RioSpeechText.prepare(text), canSpeak(prepared) else { return false }
         lastSpokenText = prepared
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
         let utterance = RioUtterance(string: prepared, token: tracker.begin())
@@ -58,6 +61,7 @@ import Foundation
         maxDuration = RioSpeechWatchdog.maxDuration(characterCount: prepared.count)
         armWatchdog()
         synthesizer.speak(utterance)
+        return true
     }
 
     func stopSpeaking() {

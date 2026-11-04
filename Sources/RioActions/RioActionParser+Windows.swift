@@ -13,6 +13,12 @@ extension RioActionParser {
            let direction = groups[1]?.lowercased() {
             return ParsedClause(action: .window(WindowCommand(appName: nil, placement: Self.half(direction))), verb: "put")
         }
+        // "open notes on the right": open the app, then place it (finding 68). Installed apps only;
+        // anything else keeps its old reading.
+        if let groups = RioText.firstMatch(Self.openPlaced, in: s), let raw = groups[1], let direction = groups[2]?.lowercased(),
+           let clause = openAndPlace(raw, Self.half(direction), verb: "open", requireKnown: true) {
+            return clause
+        }
         let verbPattern = "^(\(Self.moveVerbs)|maximi[sz]e|make|full\\s?screen|go|cent(?:er|re)|minimi[sz]e|enlarge|expand)\\b"
         guard let verb = RioText.firstMatch(verbPattern, in: s)?[1]?.lowercased() else { return nil }
 
@@ -48,6 +54,9 @@ extension RioActionParser {
         }
         return nil
     }
+
+    private static let openVerb = #"(?:open(?:\s+up)?|launch|start(?:\s+up)?|fire\s+up|bring\s+up|pull\s+up)"#
+    private static let openPlaced = "^\(openVerb)\\s+(.+?)\\s+(?:on|to|at|in|into|onto)\\s+(?:the\\s+)?(left|right|top|bottom)(?:\\s+(?:half|side|part))?(?:\\s+of\\s+(?:the|my)\\s+(?:screen|display|monitor))?$"
 
     static func half(_ direction: String) -> WindowPlacement {
         switch direction {
@@ -87,20 +96,34 @@ extension RioActionParser {
                 parse: .actions([Self.sideBySide(left), Self.sideBySide(right, right: true)]), isConfident: true, resolverText: text
             )
         }
+        // "open Chrome and Safari side by side": open both, then tile them (finding 9).
+        let openRest = RioText.firstMatch("^\(Self.openVerb)\\s+(.+)$", in: text)?[1]
+        let layoutText = openRest ?? text
         let named = [
             #"^(?:(?:put|place|snap|tile|arrange|show|set\s+up)\s+)?(.+?)\s+and\s+(.+?)\s+(?:side\s+by\s+side|next\s+to\s+each\s+other)$"#,
             #"^(?:split\s+(?:the\s+)?(?:screen|view)|split\s+screen)(?:\s+(?:with|between))?\s+(.+?)\s+and\s+(.+)$"#,
-            #"^(?:put|place|snap|tile|arrange)\s+(.+?)\s+and\s+(.+?)\s+in\s+(?:a\s+)?split\s+screen$"#,
+            #"^(?:(?:put|place|snap|tile|arrange)\s+)?(.+?)\s+and\s+(.+?)\s+in\s+(?:a\s+)?split\s+(?:screen|view)$"#,
         ]
-        for pattern in named {
-            guard let groups = RioText.firstMatch(pattern, in: text), let first = groups[1], let second = groups[2],
+        for (index, pattern) in named.enumerated() {
+            // The bare "<a> and <b> in split screen" shape needs a verb, so it never claims a sentence.
+            if index == 2, openRest == nil, !RioText.matches(#"^(?:put|place|snap|tile|arrange)\s"#, layoutText) { continue }
+            guard let groups = RioText.firstMatch(pattern, in: layoutText), let first = groups[1], let second = groups[2],
                   let left = knownAppName(first), let right = knownAppName(second), left != right else { continue }
+            let opens: [RioAction] = openRest == nil ? [] : [.openApp(name: left), .openApp(name: right)]
             return RioParseAnalysis(
-                parse: .actions([Self.sideBySide(left), Self.sideBySide(right, right: true)]), isConfident: true, resolverText: text
+                parse: .actions(opens + [Self.sideBySide(left), Self.sideBySide(right, right: true)]), isConfident: true, resolverText: text
             )
+        }
+        // A layout Rio can't place (files, sites, unknown apps): the smart resolver gets the whole
+        // thing, never a file or app search with "side by side" in it.
+        if RioText.matches(Self.layoutRequestStart, text), RioText.matches(Self.layoutWords, text) {
+            return RioParseAnalysis(parse: .unknown(text), isConfident: false, resolverText: text)
         }
         return nil
     }
+
+    private static let layoutWords = #"\b(?:side\s+by\s+side|next\s+to\s+each\s+other|split\s+(?:screen|view))\b"#
+    private static let layoutRequestStart = #"^(?:open(?:\s+up)?|launch|start|fire\s+up|bring\s+up|pull\s+up|show(?:\s+me)?|put|place|snap|tile|arrange|set\s+up|split)\b"#
 
     private static func sideBySide(_ name: String, right: Bool = false) -> RioAction {
         .window(WindowCommand(appName: name, placement: right ? .rightHalf : .leftHalf))
@@ -114,9 +137,22 @@ extension RioActionParser {
 
     /// `rawApp` is the words between the verb and the placement; nil result means "not understood".
     private func windowClause(_ rawApp: String?, _ placement: WindowPlacement, verb: String) -> ParsedClause? {
+        // "…and open notes on the right" reuses "put": the open verb is not part of the app name.
+        if let rawApp, let rest = RioText.firstMatch("^\(Self.openVerb)\\s+(.+)$", in: rawApp)?[1] {
+            return openAndPlace(rest, placement, verb: verb, requireKnown: false)
+        }
         guard let name = windowAppName(rawApp) else { return nil }
         return ParsedClause(
             action: .window(WindowCommand(appName: name.spoken, placement: placement)), verb: verb, isConfident: name.isKnown
+        )
+    }
+
+    /// Opens the named app, then places its window there. Never the frontmost window ("open it").
+    private func openAndPlace(_ rawApp: String, _ placement: WindowPlacement, verb: String, requireKnown: Bool) -> ParsedClause? {
+        guard let name = windowAppName(rawApp), let app = name.spoken, !requireKnown || name.isKnown else { return nil }
+        return ParsedClause(
+            action: .openApp(name: app), verb: verb, isConfident: name.isKnown,
+            more: [.window(WindowCommand(appName: app, placement: placement))]
         )
     }
 
@@ -201,40 +237,78 @@ extension RioActionParser {
     /// "open Chrome in incognito": the mode is left to the smart resolver.
     private static let privateModeTail = #"\s+(?:in|with)\s+(?:an?\s+)?(?:incognito|private|privacy)(?:\s+(?:mode|window|tab|browsing))?$"#
 
+    /// "open github in safari": the browser named after a web target (finding 27).
+    private static let browserTail = #"\s+(?:in|on|with|using)\s+(?:the\s+|my\s+)?(google\s+chrome|chrome|safari|firefox|arc|brave|microsoft\s+edge|edge|opera)(?:\s+browser)?$"#
+
     /// open/launch/switch: an app wins over a website unless the app match is only a loose one.
     private func openLike(_ rawTarget: String, verb: String, requireKnown: Bool, asSwitch: Bool) -> ParsedClause? {
+        let browserSpoken = RioText.firstMatch(Self.browserTail, in: rawTarget)?[1]
+        let webRaw = browserSpoken == nil ? rawTarget : RioText.replacing(Self.browserTail, with: "", in: rawTarget)
         var target = cleanTarget(rawTarget)
         let wantsPrivateMode = RioText.matches(Self.privateModeTail, target)
         if wantsPrivateMode { target = cleanTarget(RioText.replacing(Self.privateModeTail, with: "", in: target)) }
         guard Self.isPlausibleTarget(target) else { return nil }
         let verbText = verb.lowercased()
         func make(_ name: String) -> RioAction { asSwitch ? .switchToApp(name: name) : .openApp(name: name) }
+        // A web target opens in the browser that was named, when it is installed: the browser
+        // first, then the link (the executor opens links in the browser it just brought forward).
+        let browser = browserSpoken.flatMap { AppNameMatcher.match(for: $0, in: installedApps)?.app.name }
+        func web(_ url: URL, isConfident: Bool = true) -> ParsedClause {
+            guard let browser, !wantsPrivateMode else { return ParsedClause(action: .openURL(url), verb: verbText, isConfident: isConfident) }
+            return ParsedClause(action: .openApp(name: browser), verb: verbText, isConfident: isConfident, more: [.openURL(url)])
+        }
+        let webTarget = browserSpoken == nil ? target : cleanTarget(webRaw)
 
-        if let url = RioWebURLs.localURL(fromSpoken: target) ?? RioWebURLs.domainURL(fromSpoken: target) {
-            return ParsedClause(action: .openURL(url), verb: verbText)
+        if let url = RioWebURLs.localURL(fromSpoken: webTarget) ?? RioWebURLs.domainURL(fromSpoken: webTarget) {
+            return web(url)
         }
         // "open chrome and canvas", "open canvas in safari": the owner's own Canvas site.
-        if RioText.compact(target) == "canvas", let canvas = RioCanvasConfig.configuredBase {
-            return ParsedClause(action: .openURL(canvas), verb: verbText)
+        let canvas = RioCanvasConfig.configuredBase
+        if RioText.compact(webTarget) == "canvas", let canvas {
+            return web(canvas)
         }
+        // "open the next js docs": a project's docs site, not a file search (finding 25).
+        if isDocsSiteRequest(raw: rawTarget, target: target) { return nil }
         if let file = documentTarget(raw: rawTarget, target: target) {
             return ParsedClause(action: .openFile(query: file), verb: verbText)
         }
         target = withoutArabicArticle(target)
-        let site = RioWebURLs.knownSite(compactName: RioText.compact(target))
+        let webName = browserSpoken == nil ? target : withoutArabicArticle(webTarget)
+        let site = RioWebURLs.knownSite(compactName: RioText.compact(webName))
         if let match = AppNameMatcher.match(for: target, in: installedApps) {
             if let site, !match.kind.isStrong {
-                return ParsedClause(action: .openURL(site), verb: verbText)
+                return web(site)
             }
             return ParsedClause(action: make(match.app.name), verb: verbText, isConfident: match.kind.isConfident && !wantsPrivateMode)
         }
-        if let site { return ParsedClause(action: .openURL(site), verb: verbText) }
+        if let site { return web(site) }
         if requireKnown { return nil }
+        // "open spotfy", "open pia za": a mishearing of a known site, matched the way installed
+        // apps are (one edit, split words joined). Only a guess, so the resolver goes first (15).
+        let extraSites = canvas.map { ["canvas": $0] } ?? [:]
+        if let fuzzy = RioWebURLs.fuzzySite(compactName: RioText.compact(webName), extra: extraSites) {
+            return web(fuzzy, isConfident: false)
+        }
         // Not installed, not a known site: only a name that clearly names an app ("Photoshop",
         // "the Photoshop app") gets "I couldn't find it". The rest goes to the smart resolver.
         // Either way it is a guess, so the smart resolver gets the first say.
         guard Self.looksLikeAppName(raw: rawTarget, target: target) else { return nil }
         return ParsedClause(action: make(target), verb: verbText, isConfident: false)
+    }
+
+    /// Words that make "<name> docs" the owner's own documents rather than a docs website.
+    private static let localDocQualifiers = #"\b(?:my|our|shared|team|class|course|lecture|homework|hw|meeting|project|work|school|tax|taxes|old|new|recent|latest|last|draft|signed|scanned|scan|printed|pdf|word)\b"#
+
+    /// "the next js docs", "the react docs": a software project's docs website, so the smart
+    /// resolver (which may open well-known official addresses) gets it, never Spotlight. "my docs
+    /// folder", "the doc about taxes", "the shared docs" and "report.docx" stay files.
+    private func isDocsSiteRequest(raw: String, target: String) -> Bool {
+        let words = target.lowercased().split(separator: " ").map(String.init)
+        guard words.count >= 2, let last = words.last, ["docs", "documentation"].contains(last) else { return false }
+        guard !RioText.matches(#"^\s*(?:my|our)\s"#, raw), !target.contains(".") else { return false }
+        guard RioWebURLs.knownSite(compactName: RioText.compact(target)) == nil,
+              AppNameMatcher.match(for: target, in: installedApps)?.kind.isStrong != true else { return false }
+        return !RioText.matches(Self.localDocQualifiers, words.dropLast().joined(separator: " "))
     }
 
     private static let documentWords = #"\b(?:notes|homework|hw|slides|pdf|syllabus|lecture|essay|resume|doc|docs|document|documents)\b"#

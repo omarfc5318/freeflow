@@ -1,3 +1,5 @@
+import AppKit
+import ApplicationServices
 import Foundation
 
 /// Runs builder I's actions: key presses, browser shortcuts, system toggles, brightness, battery
@@ -5,6 +7,9 @@ import Foundation
 /// `.emptyTrash` is only ever reached through the executor after the coordinator's confirmation.
 @MainActor final class RioSystemActionHandler: RioActionHandling {
     static let shared = RioSystemActionHandler()
+
+    /// The last tab Rio closed: blank or not, nothing else (`RioClosedTabNote`).
+    private var lastClosedTab: RioClosedTabNote?
 
     func handle(_ action: RioAction, executor: RioActionExecuting) async -> RioActionResult? {
         switch action {
@@ -36,6 +41,20 @@ import Foundation
 
     private func browser(_ command: BrowserCommand) async -> RioActionResult {
         guard RioKeyboard.isTrusted else { return .failed(message: "I need Accessibility access to do that") }
+        let front = NSWorkspace.shared.frontmostApplication
+        switch command {
+        case .closeTab:
+            lastClosedTab = RioClosedTabNote(
+                appID: front?.bundleIdentifier, wasBlank: RioBrowserKeys.isBlankTabTitle(Self.frontWindowTitle(of: front)),
+                at: ProcessInfo.processInfo.systemUptime
+            )
+        case .reopenTab:
+            return await reopenTab(front: front)
+        case .newTab:
+            lastClosedTab = nil
+        default:
+            break
+        }
         switch RioBrowserKeys.plan(for: command) {
         case .keys(let combo):
             return pressKeys(combo, summary: RioBrowserKeys.summary(for: command))
@@ -43,6 +62,51 @@ import Foundation
             await RioKeyboard.scroll(pixelsDown: pixelsDown)
             return .done(summary: RioBrowserKeys.summary(for: command))
         }
+    }
+
+    /// Shift-Cmd-T, unless the tab Rio just closed was blank: browsers don't keep those, so the
+    /// shortcut would restore an older closed window instead (finding 77).
+    private func reopenTab(front: NSRunningApplication?) async -> RioActionResult {
+        let plan = RioBrowserKeys.reopenPlan(
+            lastClosed: lastClosedTab, appID: front?.bundleIdentifier, now: ProcessInfo.processInfo.systemUptime
+        )
+        lastClosedTab = nil
+        if plan == .openBlank, case .keys(let combo) = RioBrowserKeys.plan(for: .newTab) {
+            return pressKeys(combo, summary: RioBrowserKeys.reopenedBlankSummary)
+        }
+        guard case .keys(let combo) = RioBrowserKeys.plan(for: .reopenTab) else { return .failed(message: "I couldn't press that key") }
+        let before = Self.windowCount(of: front)
+        let result = pressKeys(combo, summary: RioBrowserKeys.summary(for: .reopenTab))
+        guard case .done = result, before != nil else { return result }
+        try? await Task.sleep(nanoseconds: Self.reopenSettleNanoseconds)
+        return .done(summary: RioBrowserKeys.reopenSummary(windowsBefore: before, windowsAfter: Self.windowCount(of: front)))
+    }
+
+    private static let reopenSettleNanoseconds: UInt64 = 400_000_000
+    private static let axTimeout: Float = 0.25
+
+    /// The front window's title, read only to tell a blank tab apart and then dropped.
+    private static func frontWindowTitle(of app: NSRunningApplication?) -> String? {
+        guard let window = axValue(appElement(app), kAXFocusedWindowAttribute), CFGetTypeID(window) == AXUIElementGetTypeID() else { return nil }
+        return axValue(unsafeBitCast(window, to: AXUIElement.self), kAXTitleAttribute) as? String
+    }
+
+    private static func windowCount(of app: NSRunningApplication?) -> Int? {
+        (axValue(appElement(app), kAXWindowsAttribute) as? [AnyObject])?.count
+    }
+
+    private static func appElement(_ app: NSRunningApplication?) -> AXUIElement? {
+        guard let app else { return nil }
+        let element = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(element, axTimeout)
+        return element
+    }
+
+    private static func axValue(_ element: AXUIElement?, _ name: String) -> CFTypeRef? {
+        guard let element else { return nil }
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
+        return value
     }
 
     // MARK: System

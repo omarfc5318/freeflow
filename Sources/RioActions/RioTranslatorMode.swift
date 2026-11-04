@@ -137,11 +137,12 @@ import Foundation
     func speakLast() -> RioActionResult {
         guard let last = board.lastTranslation else {
             // No translation to repeat: "say that again" means his own last line. He says it here
-            // and the outcome stays silent (an empty summary), so nothing cuts it off, and the line
-            // itself (maybe a screen readout or a message) never becomes the result text.
+            // and the outcome stays silent (an empty summary), so nothing cuts it off. When he may
+            // not speak (someone else on the microphone, Rio recording), the line is the result
+            // text instead, so the action key never ends in silence (finding 94). It is a line he
+            // already said, and history keeps only a fixed label for this action.
             guard let line = RioVoice.shared.lastSpokenText else { return .failed(message: "I haven't translated anything yet") }
-            RioVoice.shared.speak(line)
-            return .done(summary: "")
+            return .done(summary: RioVoice.shared.speak(line) ? "" : line)
         }
         if RioVoice.shared.isRioRecordingProvider() { return .failed(message: "I'm listening right now, ask again in a second") }
         switch speaker.speak(last.text, in: last.language) {

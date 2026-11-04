@@ -20,4 +20,12 @@ enum CorrectionReturnKeyPolicy {
         guard let lastReadSeconds, lastReadSeconds <= liveReadBudget else { return false }
         return (lastLength ?? 0) <= liveReadMaxLength
     }
+
+    /// True when the Return key may settle `value` (finding 90). A live read is the field as it is
+    /// sent. The last polled value stands in only once it is known to have stopped changing: it
+    /// was already settled, or a later poll saw it unchanged. A value from the very poll that saw
+    /// a keystroke may be half-typed ("Gro" for "Groq"), so the settled state is left alone then.
+    static func settlesOnReturn(isLiveRead: Bool, isPendingSettled: Bool, pendingSeenUnchanged: Bool) -> Bool {
+        isLiveRead || isPendingSettled || pendingSeenUnchanged
+    }
 }

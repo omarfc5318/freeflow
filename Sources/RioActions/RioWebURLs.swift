@@ -95,6 +95,30 @@ enum RioWebURLs {
         knownSites[RioText.compact(spoken)] != nil
     }
 
+    /// Real names of something else, never a mishearing of a site: "canvas" (the school site, when
+    /// one is set up) is not Canva.
+    private static let fuzzyExclusions: Set<String> = ["canvas"]
+
+    /// A known site that `compactName` is one mishearing away from ("spotfy", "piaza" from "pia
+    /// za"), by the rule installed apps use (`AppNameMatcher.uniqueFuzzyID`). `extra` adds the
+    /// owner's own sites (Canvas). Nil for an exact name, an excluded word or an ambiguous one.
+    static func fuzzySite(compactName: String, extra: [String: URL] = [:]) -> URL? {
+        let key = compactName.lowercased()
+        guard knownSites[key] == nil, extra[key] == nil, !fuzzyExclusions.contains(key) else { return nil }
+        var urls: [String: URL] = [:]
+        var names: [(id: String, name: String)] = []
+        for (name, text) in knownSites {
+            guard let url = URL(string: text) else { continue }
+            urls[url.absoluteString] = url
+            names.append((url.absoluteString, name))
+        }
+        for (name, url) in extra {
+            urls[url.absoluteString] = url
+            names.append((url.absoluteString, name))
+        }
+        return AppNameMatcher.uniqueFuzzyID(key, among: names).flatMap { urls[$0] }
+    }
+
     // MARK: Spoken domains
 
     static let allowedTLDs: Set<String> = [

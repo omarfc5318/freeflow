@@ -68,7 +68,11 @@ enum MacControls {
     /// wrapped in `with timeout of 2 seconds` (`RioMediaPlan.stateScript`) so a hung player can't
     /// hold the main thread for the default two-minute Apple Event timeout. A paused player does
     /// not mean nothing plays: YouTube in a browser still has to be paused by "pause" or "stop".
-    static func playbackState() -> RioPlaybackState {
+    /// `command` picks the view (`RioPlaybackState.forCommand`): only "pause" (and a bare "stop",
+    /// which pauses) lets another app's sound count; "play" asks the players alone. The default
+    /// (players only) is what the undo snapshot for "play" needs: a call or a YouTube tab must not
+    /// record a paused Spotify as playing.
+    static func playbackState(for command: MediaCommand = .play) -> RioPlaybackState {
         var answers: [String?] = []
         for bundleIdentifier in RioMediaPlan.players {
             guard !NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).isEmpty,
@@ -76,7 +80,9 @@ enum MacControls {
                   let source = RioMediaPlan.stateScript(bundleIdentifier: bundleIdentifier) else { continue }
             answers.append(runScript(source)?.stringValue)
         }
-        return RioPlaybackState.combine(answers, otherAppPlaying: RioAudioOutputMonitor.isOtherAppPlaying())
+        // CoreAudio is read only when it can change the answer.
+        let otherAppPlaying = command == .pause && RioAudioOutputMonitor.isOtherAppPlaying()
+        return RioPlaybackState.forCommand(command, answers: answers, otherAppPlaying: otherAppPlaying)
     }
 
     /// True only when macOS already allows Rio to send Apple Events to the app. Asks nobody.

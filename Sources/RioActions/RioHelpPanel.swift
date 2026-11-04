@@ -13,6 +13,7 @@ private let rioEscapeKeyCode: UInt16 = 53
     private var panel: HelpPanel?
     private var autoCloseTimer: Timer?
     private var monitors: [Any] = []
+    private var resizeObserver: NSObjectProtocol?
     private let center = RioCompanionCenter.shared
 
     var isVisible: Bool { panel != nil }
@@ -41,20 +42,52 @@ private let rioEscapeKeyCode: UInt16 = 53
         let hosting = NSHostingView(rootView: RioHelpView(categories: RioHelpCatalogue.categories) { [weak self] in
             self?.close()
         })
+        // Rio sizes the panel himself: SwiftUI resizing it later kept the top edge where a first,
+        // too-tall measurement put it, 358 pt above the screen (finding 75).
+        hosting.sizingOptions = []
         panel.contentView = hosting
-        let size = hosting.fittingSize
-        panel.setFrame(frame(for: size), display: true)
+        panel.setFrame(frame(for: Self.measuredSize(of: hosting)), display: true)
         panel.orderFrontRegardless()
         self.panel = panel
         center.isHelpVisible = true
         installMonitors()
+        observeResizes(of: panel)
         restartAutoClose()
+        // Measure again once the grid has laid out at its real width, then place it for good.
+        DispatchQueue.main.async { [weak self, weak panel, weak hosting] in
+            MainActor.assumeIsolated {
+                guard let self, let panel, let hosting, panel === self.panel else { return }
+                panel.setFrame(self.frame(for: Self.measuredSize(of: hosting)), display: true)
+            }
+        }
+    }
+
+    /// The view's height at the panel's fixed width (never measured without a width).
+    private static func measuredSize(of hosting: NSView) -> CGSize {
+        hosting.setFrameSize(NSSize(width: panelWidth, height: max(hosting.frame.height, 10)))
+        hosting.layoutSubtreeIfNeeded()
+        return CGSize(width: panelWidth, height: hosting.fittingSize.height)
+    }
+
+    /// Whatever resizes the panel, it stays wholly on its screen.
+    private func observeResizes(of panel: NSPanel) {
+        resizeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification, object: panel, queue: .main
+        ) { [weak panel] _ in
+            MainActor.assumeIsolated {
+                guard let panel, let visible = Self.homeScreen()?.visibleFrame else { return }
+                let clamped = RioPanelPlacement.clamped(panel.frame, to: visible, margin: Self.margin)
+                if clamped != panel.frame { panel.setFrame(clamped, display: true) }
+            }
+        }
     }
 
     func close() {
         autoCloseTimer?.invalidate()
         autoCloseTimer = nil
         removeMonitors()
+        if let resizeObserver { NotificationCenter.default.removeObserver(resizeObserver) }
+        resizeObserver = nil
         panel?.orderOut(nil)
         panel = nil
         center.isHelpVisible = false
@@ -67,13 +100,15 @@ private let rioEscapeKeyCode: UInt16 = 53
 
     /// To the right of the bear in the bottom-left corner, kept on screen.
     private func frame(for size: CGSize) -> CGRect {
-        guard let screen = RioCompanionHub.homeScreen() ?? NSScreen.screens.first else { return CGRect(origin: .zero, size: size) }
-        let visible = screen.visibleFrame
+        guard let screen = Self.homeScreen() else { return CGRect(origin: .zero, size: size) }
         let bearClearance: CGFloat = 84
-        var origin = CGPoint(x: visible.minX + RioCompanionLayout.edgeInset + bearClearance, y: visible.minY + Self.margin)
-        origin.x = min(origin.x, visible.maxX - size.width - Self.margin)
-        origin.y = min(origin.y, visible.maxY - size.height - Self.margin)
-        return CGRect(origin: CGPoint(x: max(origin.x, visible.minX + Self.margin), y: max(origin.y, visible.minY)), size: size)
+        return RioPanelPlacement.frame(
+            size: size, visible: screen.visibleFrame, leftInset: RioCompanionLayout.edgeInset + bearClearance, margin: Self.margin
+        )
+    }
+
+    private static func homeScreen() -> NSScreen? {
+        RioCompanionHub.homeScreen() ?? NSScreen.screens.first
     }
 
     // MARK: Closing

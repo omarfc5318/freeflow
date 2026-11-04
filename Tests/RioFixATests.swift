@@ -360,12 +360,12 @@ enum RioFixATests {
             transcript: "what's on my screen", actions: [.describeScreen(question: nil)],
             outcomeText: RioVisionMessages.needsScreenRecording, didSucceed: false
         )
-        TestSupport.expectEqual(screen.outcome, "Looked at your screen (didn't work: needs Screen Recording permission)")
+        TestSupport.expectEqual(screen.outcome, RioHistoryPolicy.screenPermissionFailure)
         let screenOther = RioHistoryPolicy.entry(
             transcript: "what's on my screen", actions: [.describeScreen(question: nil)],
             outcomeText: "The screen says something private", didSucceed: false
         )
-        TestSupport.expectEqual(screenOther.outcome, "Looked at your screen (didn't work)")
+        TestSupport.expectEqual(screenOther.outcome, "Couldn't look at your screen")
         TestSupport.expectEqual(clip.transcript, RioHistoryPolicy.redactedTranscript)
         let plain = RioHistoryPolicy.entry(
             transcript: "open chrome", actions: [.openApp(name: "Google Chrome")],

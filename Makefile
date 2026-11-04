@@ -121,6 +121,8 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/MicUsageCore.swift \
 	Sources/RioActions/WindowAppNameResolver.swift \
 	Sources/RioActions/WindowGeometry.swift \
+	Sources/RioActions/RioBrowserChoice.swift \
+	Sources/RioActions/RioPanelPlacement.swift \
 	Sources/APIConfigurationDraft.swift \
 	Sources/WhisperHallucinationGuard.swift \
 	Sources/AudioCallbackSlots.swift \
