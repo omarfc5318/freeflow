@@ -568,6 +568,19 @@ unaffected (the key itself proves it was the owner).
 - Idle CPU measured 4–5% while asleep (machine was loaded): profile and cut it to near zero.
 - The Dock-click run is on branch feat/rio-dock-click (333edc5): merge it.
 
+- OWNER CHANGE (2026-11-03): replace the three-finger trackpad tap with a KEY CHORD: **left Fn +
+  left Control (keyCode 59) + left Option (keyCode 58) pressed together, then released** toggles
+  conversation mode (and stops the live translator while it's on). Fn + Control stays the action
+  key; Fn alone stays dictation; Right Option (61) stays tap-to-toggle dictation; right Control
+  (62) and right Option (61) must NOT form the chord. Detect it in ShortcutMatcher as a new event
+  (e.g. `.conversationChord`) that fires once per press of all three. If the Fn hold or Fn+Control
+  action session already started, cancel it silently: no paste, no action, audio discarded, the
+  bear doesn't show an error. Add regression tests for every key order and for the existing Fn,
+  Fn+Control, Right Option and Right Command behaviour. Remove ThreeFingerTapMonitor usage
+  (D's conversation mode and M's translator) and the trackpad setting; delete the
+  MultitouchSupport files (no private trackpad API anymore). Update Settings text, the help
+  catalogue, Info and docs.
+
 ## Wave 4 (after this build is tested and shipped)
 
 Owner picks: #32 text Rio from your iPhone (Messages from the owner's own handle only, risky
