@@ -28,15 +28,27 @@ enum RioSmartV3Actions {
         case "addNote":
             return RioSmartResponseParser.text(object["text"], max: RioNotesScripts.maxLength, multiline: true).map { RioAction.addNote(text: $0) }
         case "calculate":
-            // Only maths the local calculator can really answer gets through.
-            guard let expression = RioSmartResponseParser.text(object["expression"], max: maxQueryCharacters),
-                  RioCalculator.evaluate(expression, now: now, timeZone: timeZone) != nil else { return nil }
-            return .calculate(expression: expression)
+            // Only maths the local calculator can really answer runs as calculate. A conversion it
+            // can't do ("100 USD to QAR": currencies change, so there is no rate table) is looked
+            // up instead of dropped.
+            guard let expression = RioSmartResponseParser.text(object["expression"], max: maxQueryCharacters) else { return nil }
+            if RioCalculator.evaluate(expression, now: now, timeZone: timeZone) != nil { return .calculate(expression: expression) }
+            return isLookupWorthy(expression) ? .webSearch(query: expression) : nil
         case "startTranslation": return .startTranslation
         case "stopTranslation": return .stopTranslation
         case "speakLastTranslation": return .speakLastTranslation
         default: return RioSmartV45Actions.action(kind: kind, object: object, now: now, timeZone: timeZone)
         }
+    }
+
+    /// A calculation worth a web search when the calculator can't answer it: plain words with a
+    /// number in them ("100 USD to QAR", "50 euros to dollars"), or a rate question. Nothing
+    /// shell-like, and never a bare fragment like "2 +" or a command like "open Chrome".
+    static func isLookupWorthy(_ expression: String) -> Bool {
+        guard RioSmartResponseParser.name(expression, max: maxQueryCharacters) != nil else { return false }
+        let hasLetters = expression.contains(where: \.isLetter)
+        let hasDigit = expression.contains(where: \.isNumber)
+        return (hasLetters && hasDigit) || RioText.matches(#"\b(?:exchange\s+rate|rate\s+of|in\s+(?:dollars|euros|riyals?|dirhams?|pounds|rupees|yen))\b"#, expression)
     }
 
     // MARK: Fields
@@ -194,5 +206,113 @@ enum RioSmartV45Actions {
         case "status": return .claudeCode(.status)
         default: return nil
         }
+    }
+}
+
+/// Deterministic checks on a validated plan against the owner's own words, for mistakes a model
+/// makes that look right on the confirm panel. Pure.
+enum RioSmartPlanGuards {
+    static let micAnswer = "I can't control your mic, camera or screen sharing yet, so use the meeting's own button."
+    static let cutAnswer = "I did the first six things you asked. Say the rest again?"
+    static let clippedAnswer = "That was a long one, so I may have missed something in the middle."
+
+    static func otherAppAnswer(_ app: String) -> String {
+        "I can only send texts over iMessage, so I opened \(app)."
+    }
+
+    /// Chat apps Rio cannot send through (sendMessage is iMessage or SMS only), as spoken.
+    private static let chatApps: [(pattern: String, name: String)] = [
+        ("whats\\s?app", "WhatsApp"), ("slack", "Slack"), ("telegram", "Telegram"), ("discord", "Discord"),
+        ("(?:microsoft\\s+)?teams", "Microsoft Teams"), ("signal", "Signal"),
+    ]
+
+    static func apply(_ actions: [RioAction], command: String) -> [RioAction] {
+        var plan = messagingAppGuard(actions, command: command)
+        plan = micGuard(plan, command: command)
+        return plan
+    }
+
+    /// The command words, not the message: "text mom saying check WhatsApp" names no app.
+    private static func instructionPart(_ command: String) -> String {
+        let lowered = command.lowercased()
+        guard let range = lowered.range(of: #"\b(?:saying|that says|to say|and say|telling (?:him|her|them)|:)"#, options: .regularExpression) else {
+            return lowered
+        }
+        return String(lowered[..<range.lowerBound])
+    }
+
+    /// The chat app the owner asked to message through ("message Ali on WhatsApp", "slack Ahmed
+    /// ...", "send Ahmed a slack"), or nil. Teams and Signal count only after on/over/via/in/a.
+    static func namedChatApp(_ command: String) -> String? {
+        let words = instructionPart(command)
+        for app in chatApps {
+            let loose = app.name == "Microsoft Teams" || app.name == "Signal"
+            let pattern = loose
+                ? #"\b(?:on|over|via|through|in|using|a|an)\s+"# + app.pattern + #"\b"#
+                : #"\b"# + app.pattern + #"\b"#
+            if RioText.matches(pattern, words) { return app.name }
+        }
+        return nil
+    }
+
+    /// A sendMessage the owner meant for WhatsApp, Slack and the like would go out over iMessage
+    /// to whoever matches in Contacts: it becomes "switch to that app" plus a plain answer.
+    static func messagingAppGuard(_ actions: [RioAction], command: String) -> [RioAction] {
+        guard actions.contains(where: { if case .sendMessage = $0 { return true } else { return false } }),
+              let app = namedChatApp(command) else { return actions }
+        var result: [RioAction] = []
+        var answered = false
+        for action in actions {
+            guard case .sendMessage = action else {
+                result.append(action)
+                continue
+            }
+            guard !answered else { continue }
+            answered = true
+            let switches = result.contains { step in
+                switch step {
+                case .switchToApp(let name), .openApp(let name): return name.lowercased() == app.lowercased()
+                default: return false
+                }
+            }
+            if !switches { result.append(.switchToApp(name: app)) }
+            result.append(.answer(otherAppAnswer(app)))
+        }
+        return result
+    }
+
+    static func mentionsMicOrCamera(_ command: String) -> Bool {
+        RioText.matches(
+            #"\b(?:mic|mike|microphone|camera|webcam|my\s+video|screen\s?shar(?:e|ing)|share\s+(?:my|the)\s+screen|leave\s+the\s+(?:meeting|call)|(?:un)?mute\s+(?:me|myself))\b"#,
+            command
+        )
+    }
+
+    /// "mute my mic" planned as volume mute would mute the speakers while the owner thinks the
+    /// call can't hear them: any volume step for a mic or camera request becomes a plain answer,
+    /// unless the owner also asked about the volume or sound.
+    static func micGuard(_ actions: [RioAction], command: String) -> [RioAction] {
+        guard mentionsMicOrCamera(command),
+              !RioText.matches(#"\b(?:volume|sound|speakers?|audio|louder|quieter)\b"#, command),
+              actions.contains(where: { if case .volume = $0 { return true } else { return false } }) else { return actions }
+        var result: [RioAction] = []
+        var answered = false
+        for action in actions {
+            guard case .volume = action else {
+                result.append(action)
+                continue
+            }
+            if !answered { result.append(.answer(micAnswer)) }
+            answered = true
+        }
+        return result
+    }
+
+    /// Says when the plan or the command was cut, so nothing is dropped silently.
+    static func notices(planWasCut: Bool, commandWasClipped: Bool) -> [RioAction] {
+        var notes: [RioAction] = []
+        if planWasCut { notes.append(.answer(cutAnswer)) }
+        if commandWasClipped { notes.append(.answer(clippedAnswer)) }
+        return notes
     }
 }

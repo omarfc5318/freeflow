@@ -95,6 +95,7 @@ TEST_PRODUCTION_SOURCES = \
 	Sources/RioActions/RioSmartPrompt.swift \
 	Sources/RioActions/RioSmartResolver.swift \
 	Sources/RioActions/RioSmartRouting.swift \
+	Sources/RioActions/RioSpokenLanguage.swift \
 	Sources/RioActions/RioSmartLLMClient.swift \
 	Sources/RioActions/RioMessagingCore.swift \
 	Sources/RioActions/RioConfirmationContent.swift \

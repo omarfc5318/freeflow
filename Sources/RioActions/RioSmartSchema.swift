@@ -108,7 +108,13 @@ enum RioSmartResponseParser {
     ]
 
     static func actions(from content: String, now: Date, timeZone: TimeZone) -> [RioAction] {
-        guard let json = decode(content) else { return [] }
+        plan(from: content, now: now, timeZone: timeZone).actions
+    }
+
+    /// The validated plan, plus whether valid steps past `maxActions` were dropped (so Rio can
+    /// say he only did the first six).
+    static func plan(from content: String, now: Date, timeZone: TimeZone) -> (actions: [RioAction], wasCut: Bool) {
+        guard let json = decode(content) else { return ([], false) }
         let items: [Any]
         if let object = json as? [String: Any] {
             if let list = object["actions"] as? [Any] {
@@ -116,20 +122,20 @@ enum RioSmartResponseParser {
             } else if object["action"] != nil {
                 items = [object]
             } else {
-                return []
+                return ([], false)
             }
         } else if let list = json as? [Any] {
             items = list
         } else {
-            return []
+            return ([], false)
         }
         var actions: [RioAction] = []
         for item in items {
             guard let object = item as? [String: Any], let action = action(from: object, now: now, timeZone: timeZone) else { continue }
+            guard actions.count < maxActions else { return (actions, true) }
             actions.append(action)
-            if actions.count == maxActions { break }
         }
-        return actions
+        return (actions, false)
     }
 
     // MARK: Decoding

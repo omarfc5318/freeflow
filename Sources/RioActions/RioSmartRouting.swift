@@ -71,11 +71,18 @@ struct RioSmartRequest: Equatable {
     let command: String
     var context: RioSmartContext
     var attempt: RioSmartAttempt?
+    /// The language the owner spoke the command in (it reaches Rio translated to English), so a
+    /// spoken answer comes back in that language. Read from what the translator last recorded.
+    var spokenLanguage: RioSpokenLanguage
 
-    init(command: String, context: RioSmartContext, attempt: RioSmartAttempt? = nil) {
+    init(
+        command: String, context: RioSmartContext, attempt: RioSmartAttempt? = nil,
+        spokenLanguage: RioSpokenLanguage? = nil
+    ) {
         self.command = command
         self.context = context
         self.attempt = attempt
+        self.spokenLanguage = spokenLanguage ?? RioSpokenLanguageMemory.shared.language(forCommand: command, now: Date())
     }
 }
 
@@ -238,7 +245,10 @@ enum RioSmartContextText {
 /// navigation combos, nothing else. Nothing that types, submits, deletes, selects-all, pastes or
 /// quits: no Return, Space, Delete, Command-Q, Command-A, Command-V, and no letter or digit
 /// without Command. Anything else the model plans is dropped. The owner's own "press ..." goes
-/// through the local parser and keeps its existing rules.
+/// through the local parser and keeps its existing rules. Round 2 added four more navigation-only
+/// combos (they open or switch, never type, submit, delete, paste or quit): Command-Shift-N (new
+/// private window), Command-Shift-R (hard reload), Command-Shift-P (command palette) and one
+/// Command-Tab press (back to the previous app).
 enum RioSmartKeyPolicy {
     static let modifierNames: Set<String> = ["command", "shift", "option", "control"]
 
@@ -254,6 +264,8 @@ enum RioSmartKeyPolicy {
             combo("equal", command: true), combo("minus", command: true), combo("0", command: true),
             combo("tab", control: true), combo("tab", shift: true, control: true), combo("backtick", command: true),
             combo("escape"),
+            combo("n", command: true, shift: true), combo("r", command: true, shift: true),
+            combo("p", command: true, shift: true), combo("tab", command: true),
         ]
         list += (1...9).map { combo(String($0), command: true) }
         list += ["up", "down", "left", "right", "pageup", "pagedown", "home", "end"].map { combo($0) }
@@ -296,18 +308,27 @@ enum RioSmartContextPolicy {
     ]
 
     /// The installed apps a command could mean, at most `maxRelevantInstalledApps`: a name that
-    /// appears in the command with its spaces dropped ("text edit" is TextEdit), or one that
-    /// contains a word of the command ("chrome" is Google Chrome). Everything else stays on the Mac.
+    /// is whole words of the command with the spaces dropped ("text edit" is TextEdit), or one with a
+    /// whole word the command says ("chrome" is Google Chrome; "chromes" still is, a command word
+    /// that starts with a 4+ letter word of the name). Never a piece of a word: "whatsapp" is not
+    /// Apps, "free" is not Freeform. Everything else stays on the Mac.
     static func relevantApps(_ names: [String], command: String) -> [String] {
-        let lowered = command.lowercased()
-        let compactCommand = lowered.filter { $0.isLetter || $0.isNumber }
-        let words = lowered.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
-            .filter { $0.count >= 4 && !commonWords.contains($0) }
+        let allWords = command.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        // Runs of whole command words with the spaces dropped ("text edit" is "textedit").
+        var spans: Set<String> = []
+        for start in allWords.indices {
+            for end in start..<min(allWords.count, start + 4) { spans.insert(allWords[start...end].joined()) }
+        }
+        let words = allWords.filter { $0.count >= 4 && !commonWords.contains($0) }
         var result: [String] = []
         for name in RioSmartContextText.names(names, limit: 1_000) {
             let app = name.lowercased().filter { $0.isLetter || $0.isNumber }
             guard app.count >= 3 else { continue }
-            guard compactCommand.contains(app) || words.contains(where: { app.contains($0) }) else { continue }
+            let tokens = name.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+            let saysAWord = words.contains { word in
+                tokens.contains { token in token == word || (token.count >= 4 && word.hasPrefix(token)) }
+            }
+            guard spans.contains(app) || saysAWord else { continue }
             result.append(name)
             if result.count == RioSmartContextLimits.maxRelevantInstalledApps { break }
         }
@@ -335,9 +356,16 @@ enum RioQuestionShape {
     private static let leads: Set<String> = [
         "what", "whats", "who", "whos", "whose", "whom", "why", "when", "where", "which", "how", "hows",
         "is", "are", "was", "were", "does", "did", "define",
+        // Asks for an explanation or a worked answer, said as an order ("explain the pigeonhole
+        // principle", "solve x squared minus 5x plus 6 equals 0").
+        "explain", "solve", "integrate", "differentiate", "derive", "simplify", "convert", "calculate", "translate",
     ]
+    /// Leads that are a whole question in two words ("define entropy", "explain recursion").
+    private static let shortLeads: Set<String> = ["define", "explain", "solve", "integrate", "differentiate", "derive", "simplify"]
     /// Spoken lead-ins dropped before looking at the question.
     private static let lead = #"^(?:(?:answer\s+(?:this|that|me)(?:\s+question)?|quick\s+question|tell\s+me|do\s+you\s+know)[\s:,]+)+"#
+    /// Small talk with Rio himself ("how are you", "tell me a joke"): no Mac needed to answer.
+    private static let smallTalk = #"^(?:(?:hey|hi|so|rio|okay|ok)\s+)*(?:how\s+are\s+you(?:\s+doing)?|how\s+is\s+it\s+going|hows\s+it\s+going|who\s+are\s+you|what\s+are\s+you|whats\s+your\s+name|what\s+is\s+your\s+name|how\s+old\s+are\s+you|where\s+are\s+you\s+from|tell\s+me\s+(?:a|another)\s+(?:joke|riddle|fun\s+fact|story)|(?:say\s+)?(?:a|another)\s+joke)(?:\s+(?:today|tonight|rio|buddy|teddy|bear|man|then|please))*$"#
     /// Words that tie the question to this Mac, the owner or what just happened.
     private static let local: Set<String> = [
         "i", "im", "ive", "id", "me", "my", "mine", "myself", "we", "us", "our", "you", "your",
@@ -346,8 +374,16 @@ enum RioQuestionShape {
         "folder", "desktop", "downloads", "document", "clipboard", "selection", "selected", "cursor",
         "playing", "song", "music", "volume", "brightness", "battery", "wifi", "bluetooth", "mac", "laptop",
         "computer", "email", "emails", "message", "messages", "text", "texts", "calendar", "meeting", "meetings",
-        "timer", "reminder", "reminders", "note", "notes", "chrome", "safari", "spotify", "slack", "zoom", "warp",
+        "timer", "reminder", "reminders", "chrome", "safari", "spotify", "slack", "zoom", "warp",
         "finder", "claude", "notion", "canvas",
+        // Something on the screen ("what's the answer to question 3", "is this proof right").
+        "problem", "problems", "question", "questions", "exercise", "exercises", "proof", "pdf", "slide", "slides",
+        // The Mac's own state, which the model cannot know ("how much ram is free", "is docker running").
+        "ram", "memory", "storage", "disk", "cpu", "docker", "server", "servers", "port", "process", "processes",
+        "build", "terminal", "localhost", "muted", "charging", "plugged", "connected", "recording", "installed",
+        "saved", "synced", "downloaded",
+        // The owner's own facts ("what's the staging url").
+        "url", "password", "staging",
     ]
     /// Messages and the owner's school day: always about the owner, never the world.
     private static let personal: Set<String> = [
@@ -359,17 +395,61 @@ enum RioQuestionShape {
     private static let speech: Set<String> = [
         "say", "said", "says", "saying", "tell", "told", "ask", "asked", "wrote", "write", "send", "sent", "want", "wants", "mean", "meant",
     ]
+    /// A how-to about the world ("how do I reverse a linked list", "how do you say thank you in
+    /// Spanish"): its "I" or "you" is anyone, not the owner or Rio.
+    private static let howTo = #"^how\s+(?:do|can|should|would|could|does|did)\s+(?:i|you|we|one|people)\b|^how\s+to\b"#
+    private static let numberWords: Set<String> = [
+        "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+    ]
+    /// Times that are about the world, not the previous step ("who won the game last night").
+    private static let lastTimes: Set<String> = ["night", "week", "weekend", "month", "year", "season", "time", "game", "match"]
+    /// Words before "note" that make it the owner's note, not a convertible note.
+    private static let ownedNote: Set<String> = ["my", "the", "this", "that", "these", "those", "new", "apple", "rio", "last", "latest"]
     private static let minimumWords = 3
 
     static func isGeneralQuestion(_ text: String) -> Bool {
         let lowered = text.lowercased().replacingOccurrences(of: "'", with: "").replacingOccurrences(of: "\u{2019}", with: "")
-        let question = RioText.replacing(lead, with: "", in: lowered.trimmingCharacters(in: .whitespaces))
+        let trimmed = lowered.trimmingCharacters(in: .whitespaces)
+        let all = trimmed.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        if RioText.matches(smallTalk, all.joined(separator: " ")) { return true }
+        let question = RioText.replacing(lead, with: "", in: trimmed)
         let words = question.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
-        guard words.count >= minimumWords || words.first == "define", let first = words.first, leads.contains(first) else {
+        guard let first = words.first, leads.contains(first),
+              words.count >= minimumWords || (words.count >= 2 && shortLeads.contains(first)) else {
             return false
         }
-        if words.contains(where: { local.contains($0) || personal.contains($0) }) { return false }
+        if RioText.matches(smallTalk, words.joined(separator: " ")) { return true }
+        let isHowTo = RioText.matches(howTo, words.joined(separator: " "))
+        for (index, word) in words.enumerated() where isLocal(word, at: index, in: words, isHowTo: isHowTo) {
+            return false
+        }
+        if isHowTo { return true }
         return !(words.contains(where: speech.contains) && namesSomeone(text))
+    }
+
+    /// Whether `word` ties the question to the owner, with the uses that do not taken out:
+    /// a how-to's "I" or "you", "is it", "last night", "e to the i pi", "a convertible note".
+    private static func isLocal(_ word: String, at index: Int, in words: [String], isHowTo: Bool) -> Bool {
+        let before = index > 0 ? words[index - 1] : ""
+        let after = index + 1 < words.count ? words[index + 1] : ""
+        if personal.contains(word) { return true }
+        switch word {
+        case "i", "you", "we":
+            if isHowTo, index == 2 { return false }
+            if word == "you", before == "thank" { return false }
+            if word == "i", after == "pi" || after == "times" { return false }
+        case "it":
+            if ["is", "was", "will", "isnt", "wasnt"].contains(before) { return false }
+        case "last":
+            if lastTimes.contains(after) { return false }
+        case "note", "notes":
+            return ownedNote.contains(before) || after == "app"
+        case "number":
+            return Int(after) != nil || numberWords.contains(after)
+        default:
+            break
+        }
+        return local.contains(word)
     }
 
     /// A capitalised word after the first ("Ali", "Ali's"), other than "I".
