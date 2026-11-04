@@ -36,9 +36,31 @@ enum RioWritingPhrases {
     private static let styleWords =
         #"(?:(?:more|less|a\s+bit|a\s+little|much)\s+)*(?:formal|informal|casual|professional|polite|friendly|friendlier|warm|warmer|direct|concise|brief|short|shorter|longer|clear|clearer|simple|simpler|nicer|funnier|funny|natural|persuasive|confident|positive|apologetic|enthusiastic|detailed|wordy|polished|respectful|diplomatic|firm|firmer|softer|gentler|punchier)"#
 
+    /// "this paragraph", "the selection": a named selection is never the last dictation.
+    static let selectionNoun =
+        #"(?:(?:this|that|the|my)\s+(?:paragraph|sentence|text|email|message|section|passage|line|part|selection|selected\s+text|highlighted\s+text|draft|reply|post)|selection|the\s+selected\s+text|what\s+i\s+(?:selected|highlighted))\b"#
+
     private static func parseEditLast(_ s: String) -> RioAction? {
         let editVerbs = #"(?:rewrite|reword|rephrase|redo)"#
         let ref = "(?:\(thatRef)|\(lastRef))"
+        // "rewrite this paragraph to sound more confident" is about the selection: not ours.
+        if RioText.matches("^\(please)(?:\(editVerbs)|make|improve|polish|proofread|fix|clean\\s+up|shorten|simplify)\\s+(?:.+\\s+)?\(selectionNoun)", s) {
+            return nil
+        }
+        // "fix the grammar", "fix the spelling in that": the plan's #44 edits, no selection needed.
+        if let g = RioText.firstMatch("^\(please)fix\\s+(?:the\\s+|my\\s+)?(grammar|spelling|grammar\\s+and\\s+spelling|spelling\\s+and\\s+grammar|punctuation)(?:\\s+(?:in|of|on)\\s+\(thatRef))?$", in: s),
+           let what = clean(g[1]) {
+            return .editLastDictation(instruction: "fix the \(what)")
+        }
+        // "improve that", "rewrite it", "polish this", "clean that up", "rewrite that better".
+        if let g = RioText.firstMatch("^\(please)(improve|polish|proofread|rewrite|reword|rephrase|clean\\s+up|tidy\\s+up)\\s+\(thatRef)(?:\\s+up)?(?:\\s+(better|please|properly|again))?$", in: s),
+           let verb = clean(g[1]) {
+            let better = g[2].map { $0.lowercased() == "better" ? " better" : "" } ?? ""
+            return .editLastDictation(instruction: "\(verb.lowercased()) it\(better)")
+        }
+        if let g = RioText.firstMatch("^\(please)(clean|tidy)\\s+\(thatRef)\\s+up$", in: s), let verb = clean(g[1]) {
+            return .editLastDictation(instruction: "\(verb.lowercased()) it up")
+        }
         // "make that more formal", "make it shorter", "make that sound friendlier".
         if let g = RioText.firstMatch("^\(please)make\\s+\(ref)\\s+(?:sound\\s+|be\\s+)?(\(styleWords)(?:\\s+(?:and|but|yet)\\s+(?:\(styleWords)))*)$", in: s),
            let style = clean(g[1]) {
@@ -109,6 +131,11 @@ enum RioWritingPhrases {
 
     private static func parseWriteForMe(_ original: String) -> RioAction? {
         let s = original
+        // "draft a follow up email to the Falak team" is a mail draft (the email drafter's), never
+        // text typed into whatever field is focused.
+        if RioText.matches("^\(please)(?:write|compose|draft)\\s+(?:me\\s+|us\\s+)?(?:an?|the|some)\\s+(?:\\S+\\s+){0,2}e\\s?-?\\s?mails?\\b", s) {
+            return nil
+        }
         // "write for me an apology to my landlord", "write me a reply saying yes", "compose ...".
         if let g = RioText.firstMatch("^\(please)(?:write|compose|draft|type\\s+up)\\s+for\\s+me\\s+(.+)$", in: s),
            let body = clean(stripTail(g[1])) {

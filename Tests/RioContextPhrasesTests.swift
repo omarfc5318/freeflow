@@ -30,6 +30,13 @@ enum RioContextPhrasesTests {
         for (input, body) in cases {
             ETest.eq(parse(input), .replyInConversation(body: body), "reply: \(input)")
         }
+        ETest.eq(parse("reply with a thumbs up"), .replyInConversation(body: "\u{1F44D}"))
+        ETest.eq(parse("reply with thumbs up"), .replyInConversation(body: "\u{1F44D}"))
+        ETest.eq(parse("reply with a heart"), .replyInConversation(body: "\u{2764}\u{FE0F}"))
+        ETest.eq(parse("reply with a smiley"), .replyInConversation(body: "\u{1F642}"))
+        // Only the whole body: words around it stay words.
+        ETest.eq(parse("reply with a thumbs up and see you soon"), .replyInConversation(body: "a thumbs up and see you soon"))
+        ETest.eq(parse("reply saying thumbs up"), .replyInConversation(body: "thumbs up"))
         ETest.eq(parse("reply"), nil)
         ETest.eq(parse("reply saying"), nil)
         ETest.eq(parse("tell them"), nil)
@@ -69,10 +76,14 @@ enum RioContextPhrasesTests {
                                 .selectionTask(.translate(language: "Brazilian Portuguese")))
         ETest.eq(parse("translate to Spanish"), .selectionTask(.translate(language: "Spanish")))
         ETest.eq(parse("translate this"), nil)
-        for input in ["improve this", "improve my selection", "proofread this", "proofread the selection",
-                      "polish this", "fix the grammar", "fix the grammar in this", "fix my spelling",
-                      "rewrite this better", "improve the writing"] {
+        for input in ["improve my selection", "proofread the selection", "polish the selected text",
+                      "fix the grammar in the selection", "fix the spelling in this paragraph", "rewrite this paragraph",
+                      "improve the writing"] {
             ETest.eq(parse(input), .selectionTask(.improve), input)
+        }
+        // Same rule as the writing parser: a bare this/that/it edit is the last dictation, not ours.
+        for input in ["improve this", "proofread this", "fix the grammar", "fix the grammar in this", "rewrite this better"] {
+            ETest.eq(parse(input), nil, "an edit of that/this belongs to the last dictation: \(input)")
         }
     }
 

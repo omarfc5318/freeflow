@@ -17,10 +17,11 @@ enum RioCalculator {
         guard !cleaned.isEmpty else { return nil }
         let stripped = stripCue(cleaned)
         guard !stripped.isEmpty else { return nil }
+        let plain = withoutCurrency(stripped)
         return RioCalcTime.evaluate(cleaned: cleaned, stripped: stripped, now: now, local: timeZone)
             ?? convertUnits(stripped)
-            ?? percentForm(stripped)
-            ?? arithmetic(stripped)
+            ?? percentForm(plain)
+            ?? arithmetic(plain)
     }
 
     // MARK: Normalising
@@ -57,14 +58,23 @@ enum RioCalculator {
         return text
     }
 
+    /// "20 percent of 45 dollars": money words say what the number is, not a word to calculate.
+    private static func withoutCurrency(_ text: String) -> String {
+        RioText.collapseWhitespace(RioText.replacing(#"(?<=\d)\s+(?:dollars?|bucks|usd|euros?|eur|riyals?|qar|sar|dirhams?|aed|rupees?)\b"#, with: "", in: text))
+    }
+
     // MARK: Formatting
+
+    /// Decimals Rio says for a result of 1 or more: "22.22 degrees", not "22.2222".
+    static let spokenDecimals = 2
 
     static func format(_ value: Double) -> String {
         // Tiny results ("1 divided by 3 billion") keep their digits instead of rounding to 0.
         var number = abs(value) < 1e-3 ? value : (value * 1e9).rounded() / 1e9
         if abs(number) < 1e-15 { number = 0 }
         let magnitude = abs(number)
-        let decimals = magnitude >= 1 || magnitude == 0 ? 4 : min(15, 3 - Int(floor(log10(magnitude))))
+        // Below 1, two significant digits: 0.4536 -> 0.45, 0.001234 -> 0.0012.
+        let decimals = magnitude >= 1 || magnitude == 0 ? spokenDecimals : min(15, 1 - Int(floor(log10(magnitude))))
         let formatter = NumberFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.numberStyle = .decimal
@@ -82,8 +92,11 @@ enum RioCalculator {
 
     private static func arithmetic(_ stripped: String) -> RioCalcAnswer? {
         let words = stripped.split(separator: " ").map(String.init)
-        guard let tokens = RioCalcTokenizer.tokenize(words), let tree = RioCalcParser.parse(tokens),
-              !tree.isTrivial, let result = RioCalcEvaluator.value(tree) else { return nil }
+        guard let tokens = RioCalcTokenizer.tokenize(words), let tree = RioCalcParser.parse(tokens), !tree.isTrivial else { return nil }
+        guard let result = RioCalcEvaluator.value(tree) else {
+            // "100 divided by 0" gets a plain answer instead of a shrug.
+            return tree.dividesByZero ? RioCalcAnswer(value: "undefined", sentence: "You can't divide by zero") : nil
+        }
         let value = format(result)
         return RioCalcAnswer(value: value, sentence: "\(describe(tokens)) is \(value)")
     }
@@ -107,6 +120,7 @@ enum RioCalculator {
             case .squareRoot: return "the square root of"
             case .squared: return "squared"
             case .cubed: return "cubed"
+            case .factorial: return "factorial"
             }
         }.joined(separator: " ")
     }
@@ -174,13 +188,32 @@ enum RioCalculator {
         } else {
             return nil
         }
-        guard let target = RioUnits.find(targetWords.joined(separator: " ")),
-              let (quantity, source) = quantityAndUnit(sourceWords, allowBareUnit: allowBareUnit),
-              let result = RioUnits.convert(quantity, from: source, to: target), result.isFinite,
+        guard let target = RioUnits.find(targetWords.joined(separator: " ")) else { return nil }
+        let parsed: (Double, RioUnit, String?)
+        if let height = feetAndInches(sourceWords), let inches = RioUnits.find("inches") {
+            parsed = (height.inches, inches, height.spoken)
+        } else if let (amount, unit) = quantityAndUnit(sourceWords, allowBareUnit: allowBareUnit) {
+            parsed = (amount, unit, nil)
+        } else {
+            return nil
+        }
+        let (quantity, source, described) = parsed
+        guard let result = RioUnits.convert(quantity, from: source, to: target), result.isFinite,
               abs(result) < RioCalcEvaluator.limit else { return nil }
         let given = format(quantity)
         let value = "\(format(result)) " + target.name(forFormatted: format(result))
-        return RioCalcAnswer(value: value, sentence: "\(given) \(source.name(forFormatted: given)) is \(value)")
+        return RioCalcAnswer(value: value, sentence: "\(described ?? "\(given) \(source.name(forFormatted: given))") is \(value)")
+    }
+
+    /// "5 feet 10", "5 foot 10 inches", "six feet and two inches" -> 70 inches.
+    private static func feetAndInches(_ words: [String]) -> (inches: Double, spoken: String)? {
+        guard let feetIndex = words.firstIndex(where: { ["feet", "foot", "ft"].contains($0) }), feetIndex > 0,
+              feetIndex < words.count - 1 else { return nil }
+        var rest = Array(words[(feetIndex + 1)...])
+        if rest.first == "and" { rest.removeFirst() }
+        if let last = rest.last, ["inches", "inch"].contains(last) { rest.removeLast() }
+        guard let feet = quantity(Array(words[..<feetIndex])), let inches = quantity(rest), feet >= 0, inches >= 0, inches < 12 else { return nil }
+        return (feet * 12 + inches, "\(format(feet)) feet \(format(inches)) inches")
     }
 
     private static func quantityAndUnit(_ words: [String], allowBareUnit: Bool) -> (Double, RioUnit)? {

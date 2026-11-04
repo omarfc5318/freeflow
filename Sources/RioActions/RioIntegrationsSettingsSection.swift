@@ -2,7 +2,8 @@ import SwiftUI
 
 /// Settings for weather, news, music, Notion, Canvas and texting Rio from the iPhone (builder S).
 /// The lead embeds this in the Settings window. Every integration has its own switch, says what it
-/// sends, and has step-by-step setup. Tokens are kept in the app's private store, never logged.
+/// sends, and has step-by-step setup. Tokens are kept in the app's private settings file (owner
+/// read/write only, next to the AI provider key), not the Keychain, and never logged.
 struct RioIntegrationsSettingsSection: View {
     @AppStorage(RioOutsideSettings.weatherEnabledKey) private var weatherOn = true
     @AppStorage(RioOutsideSettings.weatherPlaceKey) private var weatherPlace = ""
@@ -21,6 +22,9 @@ struct RioIntegrationsSettingsSection: View {
     @State private var notionToken = ""
     @State private var canvasToken = ""
 
+    /// Where the tokens really live, said plainly (the same place as the AI provider key).
+    static let tokenStorageNote = "Your Spotify, Notion and Canvas tokens are kept in Rio's private settings file on this Mac (Application Support, readable only by your user account), next to your AI provider key. They are not in the Keychain, so anything running as you, or a backup of your Mac, can read them. Remove a Notion or Canvas token by clearing its field and saving."
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             weatherAndNews
@@ -32,6 +36,8 @@ struct RioIntegrationsSettingsSection: View {
             canvas
             Divider()
             RioPhoneSettingsSection()
+            Text(Self.tokenStorageNote)
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .onAppear(perform: load)
     }

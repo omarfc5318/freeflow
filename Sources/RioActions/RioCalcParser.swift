@@ -13,6 +13,7 @@ enum RioCalcToken: Equatable {
     case squareRoot
     case squared
     case cubed
+    case factorial
 }
 
 enum RioCalcTokenizer {
@@ -25,7 +26,29 @@ enum RioCalcTokenizer {
     ]
 
     private static func isDigits(_ word: String) -> Bool {
-        RioText.matches(#"^(?:\d+(?:\.\d+)?|\.\d+)$"#, word)
+        // "1e6" is scientific notation; Double reads it.
+        RioText.matches(#"^(?:\d+(?:\.\d+)?|\.\d+)(?:e\d{1,3})?$"#, word)
+    }
+
+    private static let ordinalWords: [String: Double] = [
+        "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
+        "eleventh": 11, "twelfth": 12,
+    ]
+
+    /// "4th", "fourth" -> 4.
+    private static func ordinal(_ word: String) -> Double? {
+        if let groups = RioText.firstMatch(#"^(\d{1,3})(?:st|nd|rd|th)$"#, in: word), let digits = groups[1] { return Double(digits) }
+        return ordinalWords[word]
+    }
+
+    /// "to the 4th (power)", "raised to the fourth": the exponent and how many words it took.
+    private static func ordinalPower(_ words: [String], at index: Int) -> (value: Double, text: String, consumed: Int)? {
+        var at = index
+        if at < words.count, words[at] == "raised" { at += 1 }
+        guard at + 2 < words.count, words[at] == "to", words[at + 1] == "the", let value = ordinal(words[at + 2]) else { return nil }
+        var end = at + 3
+        if end < words.count, words[end] == "power" { end += 1 }
+        return (value, words[at + 2], end - index)
     }
 
     /// Nil as soon as any word is outside the vocabulary.
@@ -33,6 +56,12 @@ enum RioCalcTokenizer {
         var tokens: [RioCalcToken] = []
         var index = 0
         outer: while index < words.count {
+            if let power = ordinalPower(words, at: index) {
+                tokens.append(.op("^"))
+                tokens.append(.number(power.value, isFraction: false, text: power.text))
+                index += power.consumed
+                continue outer
+            }
             for (phrase, token) in phrases where index + phrase.count <= words.count && Array(words[index..<index + phrase.count]) == phrase {
                 tokens.append(token)
                 index += phrase.count
@@ -41,7 +70,7 @@ enum RioCalcTokenizer {
             let word = words[index]
             switch word {
             case "+", "plus": tokens.append(.op("+"))
-            case "-", "minus": tokens.append(.op("-"))
+            case "-", "minus", "negative": tokens.append(.op("-"))
             case "*", "times": tokens.append(.op("*"))
             case "/", "over": tokens.append(.op("/"))
             case "^": tokens.append(.op("^"))
@@ -51,6 +80,8 @@ enum RioCalcTokenizer {
             case "of": tokens.append(.of)
             case "squared": tokens.append(.squared)
             case "cubed": tokens.append(.cubed)
+            case "factorial": tokens.append(.factorial)
+            case "pi": tokens.append(.number(Double.pi, isFraction: false, text: "pi"))
             case "x":
                 guard let last = tokens.last, case .number = last else { return nil }
                 tokens.append(.op("*"))
@@ -90,6 +121,18 @@ indirect enum RioCalcNode {
     case binary(Character, RioCalcNode, RioCalcNode)
     case percent(RioCalcNode)
     case squareRoot(RioCalcNode)
+    case factorial(RioCalcNode)
+
+    /// True when some division in the tree divides by zero ("100 divided by 0").
+    var dividesByZero: Bool {
+        switch self {
+        case .number: return false
+        case .negate(let inner), .percent(let inner), .squareRoot(let inner), .factorial(let inner): return inner.dividesByZero
+        case .binary(let symbol, let left, let right):
+            if symbol == "/", let divisor = RioCalcEvaluator.value(right), divisor == 0 { return true }
+            return left.dividesByZero || right.dividesByZero
+        }
+    }
 
     /// A lone number, a negative number or a lone percentage is not a calculation.
     var isTrivial: Bool {
@@ -136,6 +179,8 @@ struct RioCalcParser {
             } else if case .of? = current {
                 switch left {
                 case .percent, .number(_, true): break
+                // "1/3 of 90": a written fraction.
+                case .binary("/", .number, .number): break
                 default: return nil
                 }
                 index += 1
@@ -182,6 +227,7 @@ struct RioCalcParser {
             switch token {
             case .squared: node = .binary("^", node, .number(2, isFraction: false))
             case .cubed: node = .binary("^", node, .number(3, isFraction: false))
+            case .factorial: node = .factorial(node)
             case .percent: node = .percent(node)
             default: return node
             }
@@ -213,6 +259,7 @@ struct RioCalcParser {
 
 enum RioCalcEvaluator {
     static let limit = 1e15
+    static let maxFactorial = 20.0
 
     static func value(_ node: RioCalcNode) -> Double? {
         guard let result = evaluate(node), result.isFinite, abs(result) < limit else { return nil }
@@ -227,6 +274,10 @@ enum RioCalcEvaluator {
         case .squareRoot(let inner):
             guard let value = evaluate(inner), value >= 0 else { return nil }
             return value.squareRoot()
+        case .factorial(let inner):
+            // Whole numbers only, and small enough to stay exact-ish (170! is the last finite Double).
+            guard let value = evaluate(inner), value >= 0, value <= maxFactorial, value == value.rounded() else { return nil }
+            return (0..<Int(value)).reduce(1.0) { $0 * Double($1 + 1) }
         case .binary(let symbol, let left, let right):
             guard let lhs = evaluate(left) else { return nil }
             if (symbol == "+" || symbol == "-"), case .percent(let inner) = right {

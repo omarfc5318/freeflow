@@ -15,6 +15,45 @@ enum RioFilesTests {
         ranking()
         eligibility()
         safety()
+        fillerAndTimeWords()
+        phrases()
+    }
+
+    /// How the file came to be ("I took", "I downloaded yesterday") is never part of its name;
+    /// time words only ask for a recent file.
+    private static func fillerAndTimeWords() {
+        let screenshot = q("the screenshot I took earlier")
+        TestSupport.expectEqual(screenshot.coreTokens, [])
+        TestSupport.expect(screenshot.preferRecent, "earlier means recent")
+        TestSupport.expect(RioFileRanker.nameMatches("Screenshot 2026-11-03 at 4.12.10 PM.png", query: screenshot), "a real screenshot name matches")
+        TestSupport.expectEqual(q("the screenshot I just took").coreTokens, [])
+        let pdf = q("the pdf I downloaded yesterday")
+        TestSupport.expectEqual(pdf.coreTokens, [])
+        TestSupport.expect(pdf.preferRecent && pdf.types == [.pdf], "yesterday's pdf")
+        let notes = q("last weeks lecture notes")
+        TestSupport.expectEqual(notes.coreTokens, ["lecture"])
+        TestSupport.expect(notes.preferRecent, "last week means recent")
+        TestSupport.expect(RioFileRanker.nameMatches("MAT108 Lecture 9.pdf", query: notes), "lecture notes match a lecture file")
+        TestSupport.expectEqual(q("my lecture notes from last week").coreTokens, ["lecture"])
+        TestSupport.expectEqual(q("the essay I wrote this morning").coreTokens, ["essay"])
+        TestSupport.expectEqual(q("the deck Ali sent").coreTokens, ["ali"])
+        TestSupport.expectEqual(q("my notes").effectiveTokens, ["notes"])
+    }
+
+    private static func phrases() {
+        func parse(_ text: String) -> RioAction? { RioFilesPhrases.parse(simplified: RioText.simplify(text)) }
+        TestSupport.expectEqual(parse("open a new google doc"), .openURL(URL(string: "https://docs.new")!))
+        TestSupport.expectEqual(parse("open a new Google Sheet"), .openURL(URL(string: "https://sheets.new")!))
+        TestSupport.expectEqual(parse("open new google slides"), .openURL(URL(string: "https://slides.new")!))
+        TestSupport.expectEqual(parse("open a blank google form"), .openURL(URL(string: "https://forms.new")!))
+        // Without "Google" it might be Pages or Keynote: never a file search for "new".
+        TestSupport.expect(parse("open a new document") == nil, "a new document is not a file search")
+        TestSupport.expect(parse("open a new presentation") == nil, "a new presentation is not a file search")
+        TestSupport.expectEqual(parse("open hw 6 dot pdf"), .openFile(query: "hw 6.pdf"))
+        TestSupport.expect(parse("open file dot txt") == nil, "a spoken domain stays a domain")
+        TestSupport.expectEqual(parse("find the screenshot I took earlier"), .revealFile(query: "screenshot I took earlier"))
+        let parser = RioActionParser(installedApps: [])
+        TestSupport.expectEqual(parser.parse("Rio open a new google doc"), .actions([.openURL(URL(string: "https://docs.new")!)]))
     }
 
     private static func safety() {

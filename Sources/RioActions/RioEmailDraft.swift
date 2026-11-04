@@ -106,41 +106,82 @@ enum RioMailRecipient {
 
 /// "email Sam saying I'm running late", "draft an email to Sam about lunch", "compose an email".
 /// Local and offline: it only ever opens a compose window (never sends). Pure.
+///
+/// Only wordings that give the email's words are claimed. A purpose ("asking for an extension",
+/// "thanking him for the call", "with our monthly update") means the email still has to be
+/// written, so it is left to the resolver, which composes the whole draft.
 enum RioEmailPhrases {
     private static let maxBody = 1_500
+    private static let maxRecipientWords = 4
+
+    /// Words that start the email's text ("saying ...", "and say ...", "body ...").
+    private static let bodyMarker = #"(?:saying|that\s+says|says|telling\s+(?:him|her|them)(?:\s+that)?|and\s+(?:tell|say)(?:\s+(?:him|her|them))?(?:\s+that)?|that|(?:and\s+)?(?:the\s+)?body(?:\s+is)?\s*:?)"#
+    /// Words that give a purpose instead of the text: the email still has to be composed.
+    private static let purposeMarker = #"(?:asking|requesting|to\s+(?:ask|request|thank|tell|invite|remind|let)|thanking|inviting|reminding|letting\s+\S+\s+know|apologi[sz]ing|following\s+up|checking\s+in|with)"#
+    private static let subjectMarker = #"(?:subject(?:\s+line)?(?:\s+is)?\s*:?|titled|about|regarding)"#
+    /// A spoken recipient that still carries a verb is a misparse ("my TA asking for ...").
+    private static let verbInRecipient = #"\b(?:asking|telling|saying|thanking|requesting|letting|inviting|reminding|checking|following|sending|wondering|explaining|confirming|apologi[sz]ing|ask|tell|say|thank|request|let|send|invite|remind)\b"#
+    /// "draft a follow up email": kinds that make a good subject line.
+    private static let kinds: [(pattern: String, subject: String?)] = [
+        (#"^follow\s?-?\s?up$"#, "Follow up"), (#"^thank\s?-?\s?you$"#, "Thank you"), (#"^reminder$"#, "Reminder"),
+        (#"^(?:quick|short|brief|formal|polite|nice|friendly)$"#, nil),
+    ]
 
     static func parse(_ text: String) -> RioAction? {
-        let pattern = #"^(?:(?:please\s+)?(?:draft|write|compose|create|start|send)\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:e\s?-?\s?mail)|new\s+e\s?-?\s?mail|e\s?-?\s?mail)(?:\s+(.*))?$"#
+        let kindWords = #"(?:(follow\s?-?\s?up|thank\s?-?\s?you|reminder|quick|short|brief|formal|polite|nice|friendly)\s+)?"#
+        let pattern = #"^(?:(?:please\s+)?(?:draft|write|compose|create|start|send)\s+(?:an?\s+|the\s+)?(?:new\s+)?"# + kindWords
+            + #"(?:e\s?-?\s?mail)|new\s+e\s?-?\s?mail|e\s?-?\s?mail)(?:\s+(.*))?$"#
         guard let groups = RioText.firstMatch(pattern, in: text) else { return nil }
         let isVerbForm = RioText.matches(#"^e\s?-?\s?mail\b"#, text)
-        let rest = RioText.collapseWhitespace(groups[1] ?? "")
-        if rest.isEmpty { return isVerbForm ? nil : .draftEmail(to: nil, subject: nil, body: "") }
+        let kindSubject = groups[1].flatMap { kind in kinds.first { RioText.matches($0.pattern, kind) }?.subject }
+        let rest = RioText.collapseWhitespace(groups[2] ?? "")
+        if rest.isEmpty { return isVerbForm ? nil : .draftEmail(to: nil, subject: kindSubject, body: "") }
 
-        var head = rest
-        var body = ""
-        let bodyMarker = #"\s+(?:saying|that\s+says|says|telling\s+(?:him|her|them)(?:\s+that)?|and\s+(?:tell|say)\s+(?:him|her|them)(?:\s+that)?|that)\s+"#
-        if let regex = try? NSRegularExpression(pattern: bodyMarker, options: [.caseInsensitive]),
-           let match = regex.firstMatch(in: " " + rest, range: NSRange(location: 0, length: (" " + rest).utf16.count)),
-           let range = Range(match.range, in: " " + rest) {
-            let padded = " " + rest
-            head = String(padded[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
-            body = String(padded[range.upperBound...]).trimmingCharacters(in: .whitespaces)
-        } else if RioText.matches(#"^(?:saying|that|says)\s+"#, rest) {
-            head = ""
-            body = RioText.replacing(#"^(?:saying|that|says)\s+"#, with: "", in: rest)
+        guard let parts = split(rest) else { return nil }
+        guard parts.body.count <= maxBody else { return nil }
+        let recipient = RioText.replacing(#"^(?:to|for)\s+"#, with: "", in: parts.head)
+            .trimmingCharacters(in: CharacterSet(charactersIn: " ,"))
+        let to: String?
+        if recipient.isEmpty || RioText.matches(#"^(?:me|myself)$"#, recipient) {
+            to = nil
+        } else {
+            let address = spokenAddress(recipient)
+            if !address.contains("@") {
+                // "my TA asking for an extension": the purpose is still in the name. Let the resolver compose it.
+                guard address.split(separator: " ").count <= maxRecipientWords, !RioText.matches(verbInRecipient, address) else { return nil }
+            }
+            to = address
         }
-        guard body.count <= maxBody else { return nil }
+        let subject = parts.subject
+            .map { RioText.collapseWhitespace($0).trimmingCharacters(in: CharacterSet(charactersIn: " ,.;:")) }
+            .flatMap { $0.isEmpty ? nil : capitalised($0) } ?? kindSubject
+        return .draftEmail(to: to, subject: subject, body: capitalised(parts.body))
+    }
 
-        var recipient = head
-        var subject: String?
-        if let split = RioText.firstMatch(#"^(.*?)\s*\b(?:subject|titled|about|regarding)\s+(.+)$"#, in: head) {
-            recipient = split[1] ?? ""
-            subject = split[2]
+    /// Recipient words, subject and body. Nil when the words give a purpose, not the text.
+    private static func split(_ rest: String) -> (head: String, subject: String?, body: String)? {
+        let padded = " " + rest
+        let any = #"[\s,]+(?:("# + bodyMarker + #")|("# + purposeMarker + #")|("# + subjectMarker + #"))(?=[\s,:]|$)"#
+        guard let regex = try? NSRegularExpression(pattern: any, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: padded, range: NSRange(location: 0, length: padded.utf16.count)),
+              let whole = Range(match.range, in: padded) else {
+            return (rest, nil, "")
         }
-        recipient = RioText.replacing(#"^(?:to|for)\s+"#, with: "", in: recipient).trimmingCharacters(in: CharacterSet(charactersIn: " ,"))
-        let to = recipient.isEmpty || RioText.matches(#"^(?:me|myself)$"#, recipient) ? nil : spokenAddress(recipient)
-        let cleanSubject = subject.map(RioText.collapseWhitespace).flatMap { $0.isEmpty ? nil : capitalised($0) }
-        return .draftEmail(to: to, subject: cleanSubject, body: capitalised(body))
+        let head = String(padded[..<whole.lowerBound]).trimmingCharacters(in: .whitespaces)
+        let after = String(padded[whole.upperBound...]).trimmingCharacters(in: CharacterSet(charactersIn: " ,:"))
+        if match.range(at: 2).location != NSNotFound { return nil }
+        if match.range(at: 1).location != NSNotFound { return (head, nil, after) }
+        // A subject first: its text runs up to a body marker, if there is one.
+        let bodyAfterSubject = #"[\s,]+"# + bodyMarker + #"(?=[\s,:]|$)"#
+        guard let bodyRegex = try? NSRegularExpression(pattern: bodyAfterSubject, options: [.caseInsensitive]) else { return nil }
+        let subjectPadded = " " + after
+        guard let bodyMatch = bodyRegex.firstMatch(in: subjectPadded, range: NSRange(location: 0, length: subjectPadded.utf16.count)),
+              let bodyRange = Range(bodyMatch.range, in: subjectPadded) else {
+            return (head, after, "")
+        }
+        let subject = String(subjectPadded[..<bodyRange.lowerBound]).trimmingCharacters(in: .whitespaces)
+        let body = String(subjectPadded[bodyRange.upperBound...]).trimmingCharacters(in: CharacterSet(charactersIn: " ,:"))
+        return (head, subject, body)
     }
 
     /// "john at example dot com" -> "john@example.com"; a name stays a name.

@@ -17,26 +17,34 @@ enum RioMeetingPhrases {
 
     // MARK: Claude Code
 
-    private static let claude = #"claude(?:\s+code)?"#
+    /// "cloud", "claud" and "clod" are how speech-to-text often hears "Claude".
+    private static let claudeName = #"(?:claude|cloud|claud|clod)"#
+    private static let claude = "\(claudeName)(?:\\s+code)?"
     private static let please = #"(?:(?:please|hey)\s+)?"#
-    private static let thatIt = #"(?:that|it|this|the\s+(?:permission|request|prompt)|claudes?\s+(?:request|permission))"#
+    private static let yes = #"(?:(?:yes|yeah|yep|ok|okay|sure)\s+)?"#
+    private static let thatIt = #"(?:that|it|this|the\s+(?:permission|request|prompt)|(?:claudes?|clouds?)\s+(?:request|permission))"#
 
     private static let approvePatterns = [
-        "^\(please)approve\\s+\(thatIt)$",
-        "^\(please)approve\\s+\(claude)$",
+        "^\(please)\(yes)(?:go\\s+ahead\\s+and\\s+)?approve\\s+\(thatIt)$",
+        "^\(please)\(yes)approve\\s+\(claude)$",
+        "^\(please)\(claude)\\s+(?:yes\\s+)?approve(?:\\s+\(thatIt))?$",
         "^\(please)say\\s+yes\\s+to\\s+\(claude)$",
         "^\(please)tell\\s+\(claude)\\s+yes$",
     ]
     private static let denyPatterns = [
-        "^\(please)(?:deny|reject|decline|refuse)\\s+\(thatIt)$",
+        "^\(please)(?:no\\s+)?(?:deny|reject|decline|refuse)\\s+\(thatIt)$",
+        "^\(please)(?:no\\s+)?(?:dont|do\\s+not)\\s+approve\\s+\(thatIt)$",
+        "^\(please)\(claude)\\s+(?:no\\s+)?(?:deny|reject)(?:\\s+\(thatIt))?$",
         "^\(please)say\\s+no\\s+to\\s+\(claude)$",
         "^\(please)tell\\s+\(claude)\\s+no$",
     ]
     private static let statusPatterns = [
-        "^\(please)(?:whats|what is)\\s+\(claude)\\s+(?:doing|up to)(?:\\s+right\\s+now)?$",
+        "^\(please)(?:whats|what is)\\s+\(claude)\\s+(?:doing|up to|working on)(?:\\s+right\\s+now)?$",
+        "^\(please)(?:whats|what is|what does)\\s+\(claude)\\s+(?:asking|asking\\s+me|asking\\s+for|want|need|waiting\\s+for)(?:\\s+(?:me|right\\s+now|now))?$",
         "^\(please)(?:hows|how is)\\s+\(claude)\\s+doing$",
         "^\(please)check\\s+on\\s+\(claude)$",
-        "^\(please)is\\s+\(claude)\\s+(?:done|finished)$",
+        "^\(please)(?:is|has)\\s+\(claude)\\s+(?:done|finished|waiting|stuck)(?:\\s+(?:yet|already|for\\s+me))?$",
+        "^\(please)does\\s+\(claude)\\s+need\\s+me$",
     ]
 
     private static func parseClaude(raw: String, text: String) -> RioAction? {
@@ -46,11 +54,19 @@ enum RioMeetingPhrases {
         return parseSend(raw)
     }
 
+    /// "tell Claude (Code) to/that ...", "tell Claude no, use Supabase instead", "ask Claude Code
+    /// ...", "ask Claude to ...". A plain question to Claude ("ask Claude what a monoid is") is not
+    /// a coding task: it is left to the resolver, which can answer it or open the Claude app.
     private static func parseSend(_ raw: String) -> RioAction? {
         let line = raw.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\u{2019}", with: "'")
-        let tell = "^\(please)tell\\s+\(claude)[,:]?\\s+(?:to|that)\\s+(.+)$"
-        let ask = "^\(please)ask\\s+\(claude)[,:]?\\s+(?:to\\s+)?(.+)$"
-        for pattern in [tell, ask] {
+        let patterns = [
+            "^\(please)tell\\s+\(claude)[,:]?\\s+(?:to|that)\\s+(.+)$",
+            // "tell Claude no, use Supabase instead": the answer and the new instruction go together.
+            "^\(please)tell\\s+\(claude)[,:]?\\s+((?:no|yes|nope)\\b[,.!]?\\s+.+)$",
+            "^\(please)ask\\s+\(claudeName)\\s+code[,:]?\\s+(?:to\\s+)?(.+)$",
+            "^\(please)ask\\s+\(claudeName)[,:]?\\s+to\\s+(.+)$",
+        ]
+        for pattern in patterns {
             guard let groups = RioText.firstMatch(pattern, in: line), let body = groups[1] else { continue }
             let trailing = CharacterSet(charactersIn: ". !").union(.whitespaces)
             let stripped = body.trimmingCharacters(in: trailing)

@@ -11,6 +11,7 @@ enum RioMemoryTests {
         recallPhrases()
         forgetPhrases()
         notePhrases()
+        memoryFirst()
         notStealing()
         throughTheRealParser()
         storeRoundTrip()
@@ -65,8 +66,31 @@ enum RioMemoryTests {
             ("note to self: bring the charger", "Bring the charger"), ("note that Ali is out Friday", "Ali is out Friday"),
             ("note down the wifi is fast", "The wifi is fast"), ("note: buy milk, eggs and bread", "Buy milk, eggs and bread"),
             ("Rio note: ask Ali about the deck.", "Ask Ali about the deck"),
+            // The destination note is named, not part of the text.
+            ("add a note to my MAT108 notes saying review chapter 3", "MAT108: review chapter 3"),
+            ("add a note to my MAT108 notes: review chapter 3", "MAT108: review chapter 3"),
+            ("add to my ECS119 notes that pandas groupby returns a dataframe", "ECS119: pandas groupby returns a dataframe"),
+            ("put in my Hala notes: call Naif on Monday", "Hala: call Naif on Monday"),
+            ("take a note to call the dentist", "To call the dentist"),
         ]
         for (input, text) in cases { ETest.eq(parse(input.replacingOccurrences(of: "Rio ", with: "")), .addNote(text: text), input) }
+    }
+
+    /// A remembered fact answers "where is my X" and "when is X due" before file search and Canvas.
+    private static func memoryFirst() {
+        let saved = RioRememberedFacts.provider
+        defer { RioRememberedFacts.provider = saved }
+        RioRememberedFacts.provider = { ["my MAT108 midterm is in Wellman 2", "the ECS119 project is due December 5th"] }
+        let parser = RioActionParser(installedApps: [])
+        ETest.eq(parser.parse("Rio, where is my MAT108 midterm?"), .actions([.recall(query: "MAT108 midterm")]))
+        ETest.eq(parser.parse("Rio, where's my midterm?"), .actions([.recall(query: "midterm")]))
+        ETest.eq(parser.parse("when is the ECS119 project due?"), .actions([.recall(query: "ECS119 project")]))
+        // Nothing remembered about it: file search and Canvas keep their phrases.
+        ETest.eq(parser.parse("where is my resume"), .actions([.revealFile(query: "resume")]))
+        ETest.eq(parser.parse("when is my MAT108 homework due"), .actions([.canvasDue(range: "MAT108")]))
+        RioRememberedFacts.provider = { [] }
+        ETest.eq(parser.parse("Rio, where is my MAT108 midterm?"), .actions([.revealFile(query: "MAT108 midterm")]))
+        ETest.eq(RioRememberedFacts.knows("midterm"), false, "nothing remembered")
     }
 
     private static func notStealing() {

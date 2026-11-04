@@ -23,6 +23,10 @@ enum RioContextPhrases {
     private static let subject =
         #"(?:this|that|it|the selection|my selection|selection|the selected text|selected text|this text|that text|the text|what i selected|the highlighted text|the paragraph|this (?:paragraph|email|message|article|code|error|passage|sentence|section|snippet))"#
 
+    /// The selection named outright: never a bare this/that/it (those mean the last dictation for edits).
+    private static let namedSelection =
+        #"(?:the selection|my selection|selection|the selected text|selected text|this text|that text|the text|what i selected|the highlighted text|the paragraph|this (?:paragraph|email|message|article|code|error|passage|sentence|section|snippet))"#
+
     private static func cleanBody(_ raw: String?) -> String? {
         guard var body = raw?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
         body = body.trimmingCharacters(in: CharacterSet(charactersIn: " .,;\"\u{201C}\u{201D}"))
@@ -35,13 +39,29 @@ enum RioContextPhrases {
     private static func parseReply(_ text: String) -> RioAction? {
         let reply = #"^reply\s+(?:to\s+(?:this|that|them|him|her|it|the\s+message|the\s+conversation)\s+)?(?:back\s+)?"# + connector + #"(.+)$"#
         if let groups = RioText.firstMatch(reply, in: text), let body = cleanBody(groups[1]) {
-            return .replyInConversation(body: body)
+            // "reply with a thumbs up" sends the emoji, not the words.
+            let saidWith = RioText.matches(#"^reply\s+(?:to\s+\S+(?:\s+\S+)?\s+)?(?:back\s+)?with\b"#, text)
+            return .replyInConversation(body: saidWith ? emoji(for: body) ?? body : body)
         }
         if let groups = RioText.firstMatch(#"^tell\s+(?:them|him|her)\s+(?:that\s+)?(.+)$"#, in: text),
            let body = cleanBody(groups[1]) {
             return .replyInConversation(body: body)
         }
         return nil
+    }
+
+    private static let emojiNames: [(pattern: String, emoji: String)] = [
+        (#"^(?:a\s+)?thumbs?\s+up(?:\s+emoji)?$"#, "\u{1F44D}"), (#"^(?:a\s+)?thumbs?\s+down(?:\s+emoji)?$"#, "\u{1F44E}"),
+        (#"^(?:a\s+)?(?:red\s+)?heart(?:\s+emoji)?$"#, "\u{2764}\u{FE0F}"),
+        (#"^(?:a\s+)?(?:smiley(?:\s+face)?|smile|smiling\s+face)(?:\s+emoji)?$"#, "\u{1F642}"),
+        (#"^(?:a\s+)?(?:laughing|crying\s+laughing|lol)(?:\s+(?:face|emoji))+$"#, "\u{1F602}"),
+        (#"^(?:a\s+)?(?:thank\s+you|praying|pray)\s+(?:hands|emoji)$"#, "\u{1F64F}"),
+        (#"^(?:an?\s+)?(?:ok|okay)\s+(?:hand|sign|emoji)$"#, "\u{1F44C}"),
+    ]
+
+    /// "a thumbs up" -> the emoji, when that is the whole body.
+    private static func emoji(for body: String) -> String? {
+        emojiNames.first { RioText.matches($0.pattern, body) }?.emoji
     }
 
     // MARK: Reading
@@ -74,8 +94,10 @@ enum RioContextPhrases {
             if lower == "please" || lower.hasSuffix(" please") { return nil }
             return .selectionTask(.translate(language: language.capitalized))
         }
-        if RioText.matches(#"^(?:improve|proofread|polish|rewrite|clean up)\s+(?:"# + subject + #"|the writing|my writing)(?:\s+(?:better|please))?$"#, s)
-            || RioText.matches(#"^fix\s+(?:the\s+|my\s+)?(?:grammar|spelling|grammar and spelling|spelling and grammar)(?:\s+(?:in|of|on)\s+"# + subject + ")?$", s) {
+        // Same rule as RioWritingPhrases: "improve that" / "fix the grammar" edit the last
+        // dictation (#44, the writing parser claims them first); only a named selection is ours.
+        if RioText.matches(#"^(?:improve|proofread|polish|rewrite|clean up)\s+(?:"# + namedSelection + #"|the writing|my writing)(?:\s+(?:better|please))?$"#, s)
+            || RioText.matches(#"^fix\s+(?:the\s+|my\s+)?(?:grammar|spelling|grammar and spelling|spelling and grammar)\s+(?:in|of|on)\s+"# + namedSelection + "$", s) {
             return .selectionTask(.improve)
         }
         return nil

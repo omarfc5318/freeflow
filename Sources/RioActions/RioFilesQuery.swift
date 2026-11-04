@@ -42,8 +42,15 @@ struct RioFileQuery: Equatable {
         "my", "the", "a", "an", "that", "this", "our", "of", "called", "named", "titled", "from", "about", "on",
         "in", "for", "with", "i", "ive", "saved", "downloaded", "to", "and", "copy", "version", "it", "me",
         "please", "most", "file", "files", "one",
+        // "the screenshot I took", "the pdf I got from Ali": how the file came to be, not its name.
+        "took", "taken", "sent", "got", "made", "wrote", "written", "created", "saved", "had", "was", "were", "opened",
+        "edited", "worked", "working", "received", "shared", "attached",
     ]
-    private static let recencyWords: Set<String> = ["latest", "last", "recent", "newest", "newer", "recently"]
+    /// Words that say "a recent one": a ranking hint, never a word the name must contain.
+    private static let recencyWords: Set<String> = [
+        "latest", "last", "recent", "newest", "newer", "recently", "just", "earlier", "today", "yesterday", "tonight",
+        "week", "weeks", "morning", "afternoon", "evening", "night", "ago",
+    ]
 
     private static let extensionPattern = "pdf|docx?|pptx?|xlsx?|csv|txt|md|pages|key|numbers|png|jpe?g|zip|tex"
 
@@ -93,6 +100,9 @@ struct RioFileQuery: Equatable {
         case "deck", "slides", "slide", "presentation":
             query.softTokens.append(word)
             query.types.formUnion([.slides, .pdf])
+        case "notes", "note":
+            // "last week's lecture notes" is often just "MAT108 Lecture 9.pdf".
+            query.softTokens.append("notes")
         case "screenshot", "screenshots":
             query.softTokens.append("screenshot")
             query.types.insert(.image)
