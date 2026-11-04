@@ -269,10 +269,49 @@ extension RioConversationCommands {
     static let welcomeLine = "You're welcome"
     static let nothingToConfirmLine = "Nothing to confirm"
 
-    /// A line Rio answers by himself, with no action and no model call: "thanks", or a yes or
-    /// no when no confirmation is open. Stop words ("cancel", "no no no") are not answered here.
+    static let hereLine = "I'm here"
+
+    /// Greetings and presence checks, each with Rio's answer. Only a whole utterance made of these
+    /// counts: "hi, open Chrome" still runs the command.
+    private static let greetingReplies: [String: String] = [
+        "hi": "Hey", "hey": "Hey", "hello": "Hey", "hiya": "Hey", "howdy": "Hey", "hi there": "Hey", "hey there": "Hey",
+        "hello there": "Hey", "good morning": "Good morning", "morning": "Good morning",
+        "good afternoon": "Good afternoon", "good evening": "Good evening",
+        "how are you": "Doing great", "how are you doing": "Doing great", "how is it going": "Doing great",
+        "hows it going": "Doing great", "whats your name": "I'm Rio", "what is your name": "I'm Rio",
+        "are you there": hereLine, "you there": hereLine, "can you hear me": hereLine, "do you hear me": hereLine,
+        "hear me": hereLine, "are you listening": hereLine, "you listening": hereLine,
+        // Arabic: peace be upon you / hi / good morning / good evening / how are you / your name.
+        "السلام عليكم": "وعليكم السلام", "سلام عليكم": "وعليكم السلام", "السلام": "وعليكم السلام",
+        "هلا": "هلا والله", "هلا والله": "هلا والله", "هلا هلا": "هلا والله", "اهلا": "هلا والله", "أهلا": "هلا والله",
+        "مرحبا": "هلا والله", "صباح الخير": "صباح النور", "مساء الخير": "مساء النور",
+        "كيفك": "بخير، الحمد لله", "كيف حالك": "بخير، الحمد لله", "شلونك": "بخير، الحمد لله", "كيف الحال": "بخير، الحمد لله",
+        "وش اسمك": "أنا ريو", "شو اسمك": "أنا ريو", "ايش اسمك": "أنا ريو", "ما اسمك": "أنا ريو",
+        "وش إسمك": "أنا ريو", "شو إسمك": "أنا ريو", "ايش إسمك": "أنا ريو", "ما إسمك": "أنا ريو",
+        "تسمعني": hereLine, "انت هنا": hereLine,
+    ]
+    private static let greetingPhrases = Set(greetingReplies.keys)
+    private static let greetingFillers: Set<String> = [
+        "rio", "ريو", "يا", "buddy", "man", "bro", "my", "friend", "oh", "so", "and", "ورحمة", "الله", "وبركاته",
+    ]
+
+    /// Rio's answer when the whole utterance is a greeting or "are you there", else nil.
+    static func greetingReply(_ transcript: String) -> String? {
+        let words = collapsingRepeats(commandWords(transcript))
+        guard !words.isEmpty else { return nil }
+        var first: String?
+        guard segments(words, into: [greetingPhrases], fillers: greetingFillers, maxPhraseWords: 4, found: { phrase in
+            if first == nil { first = phrase }
+        }), let first else { return nil }
+        return greetingReplies[first]
+    }
+
+    /// A line Rio answers by himself, with no action and no model call: "thanks", a greeting or
+    /// "are you there", or a yes or no when no confirmation is open. Stop words ("cancel",
+    /// "no no no") are not answered here.
     static func quickReply(_ transcript: String, isConfirmationShowing: Bool) -> String? {
         if isThanks(transcript) { return welcomeLine }
+        if let greeting = greetingReply(transcript) { return greeting }
         if !isConfirmationShowing, spokenAnswer(transcript) != nil, !isBareStop(transcript) { return nothingToConfirmLine }
         return nil
     }
@@ -306,9 +345,9 @@ extension RioConversationCommands {
     /// True when `words` can be split, start to end, into phrases from `phraseSets` and filler
     /// words, with at least one phrase. `found` sees every phrase used.
     private static func segments(
-        _ words: [String], into phraseSets: [Set<String>], fillers: Set<String>, found: (String) -> Void
+        _ words: [String], into phraseSets: [Set<String>], fillers: Set<String>, maxPhraseWords: Int = 3,
+        found: (String) -> Void
     ) -> Bool {
-        let maxPhraseWords = 3
         // best[i]: the phrases used to cover words[i...], nil when they can't be covered.
         var best = [[String]?](repeating: nil, count: words.count + 1)
         best[words.count] = []

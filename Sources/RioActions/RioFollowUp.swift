@@ -121,6 +121,7 @@ enum RioFollowUpRewriter {
         guard !text.isEmpty else { return nil }
         return appVerb(text, context, now: now)
             ?? window(text, context)
+            ?? sameSearchOnSite(text, last)
             ?? sameFor(text, last, strict: true)
             ?? send(text, context)
             ?? sameFor(text, last, strict: false)
@@ -143,6 +144,30 @@ enum RioFollowUpRewriter {
         }
         guard let target = sameForTarget(text, strict: true) ?? sameForTarget(text, strict: false) else { return nil }
         return "\(verb) \(target)"
+    }
+
+    /// "Do the same for Slack" (or "send that to WhatsApp") after a text: Rio only texts over
+    /// iMessage, so he says so here instead of handing it to the brain, and the body never goes
+    /// to the model. Nil for anything else (iMessage itself and contacts included).
+    static func messagingAppReply(_ simplified: String, context: RioFollowUpContext?) -> String? {
+        guard case .sendMessage? = context?.lastAction else { return nil }
+        let text = simplified.trimmingCharacters(in: .whitespaces)
+        let sendPattern = #"^(?:also\s+)?(?:send|forward|text|message|share|post)\s+(?:it|that|this|the\s+same(?:\s+message|\s+thing)?)\s+(?:to|on|in)\s+(.+)$"#
+        guard let target = sameForTarget(text, strict: true) ?? sameForTarget(text, strict: false)
+            ?? RioText.firstMatch(sendPattern, in: text)?[1].flatMap(cleanTarget) else { return nil }
+        guard let app = otherMessagingAppNames[messagingAppKey(target)] else { return nil }
+        return "I can only text over iMessage. I can open \(app) for you."
+    }
+
+    /// Messaging apps other than iMessage, by their spoken name.
+    private static let otherMessagingAppNames: [String: String] = [
+        "slack": "Slack", "whatsapp": "WhatsApp", "whats app": "WhatsApp", "telegram": "Telegram", "discord": "Discord",
+        "signal": "Signal", "teams": "Microsoft Teams", "microsoft teams": "Microsoft Teams", "messenger": "Messenger",
+        "mail": "Mail", "email": "Mail", "gmail": "Gmail", "outlook": "Outlook",
+    ]
+
+    private static func messagingAppKey(_ target: String) -> String {
+        target.lowercased().replacingOccurrences(of: #"^(?:on|in|via|through)\s+"#, with: "", options: .regularExpression)
     }
 
     /// "Again", "try that again", "do it one more time", "repeat the last command".
@@ -250,6 +275,35 @@ enum RioFollowUpRewriter {
             return target
         }
         return nil
+    }
+
+    /// "Do the same on YouTube" after "search for cats": the same query on that site. Only a site
+    /// after "on" or "in" keeps the query; "do the same for dogs" still replaces it.
+    private static func sameSearchOnSite(_ text: String, _ last: RioAction) -> RioAction? {
+        guard case .webSearch(let query) = last else { return nil }
+        let patterns = [
+            #"^(?:(?:do|run|repeat)\s+)?(?:the\s+)?same(?:\s+thing)?\s+(?:on|in)\s+(.+)$"#,
+            #"^(?:do|run|repeat|search)\s+(?:that|it|this)\s+(?:on|in)\s+(.+)$"#,
+        ]
+        for pattern in patterns {
+            guard let raw = RioText.firstMatch(pattern, in: text)?[1], let site = cleanTarget(raw) else { continue }
+            return siteSearch(query: query, site: site)
+        }
+        return nil
+    }
+
+    private static func siteSearch(query: String, site: String) -> RioAction? {
+        var compact = RioText.compact(site)
+        if compact.hasSuffix("com"), compact.count > 3 { compact = String(compact.dropLast(3)) }
+        let builders: [String: (String) -> URL?] = [
+            "youtube": RioWebURLs.youtubeSearchURL(query:), "amazon": RioWebURLs.amazonSearchURL(query:),
+            "github": RioWebURLs.githubSearchURL(query:), "stackoverflow": RioWebURLs.stackOverflowSearchURL(query:),
+            "netflix": RioWebURLs.netflixSearchURL(query:),
+        ]
+        if let build = builders[compact] { return build(query).map(RioAction.openURL) }
+        if compact == "google" { return .webSearch(query: query) }
+        guard let host = RioWebURLs.knownSite(compactName: compact)?.host else { return nil }
+        return .webSearch(query: "\(query) site:\(RioWebHostRules.bareHost(host))")
     }
 
     private static func sameFor(_ text: String, _ last: RioAction, strict: Bool) -> RioAction? {
