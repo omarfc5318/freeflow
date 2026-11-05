@@ -5,7 +5,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// The duplicate-copy check runs before AppState is built, so a second copy never touches
     /// the microphone, the hotkey tap or the history files before it leaves.
     let appState: AppState = {
-        if AppDelegate.isDuplicateCopy() { exit(0) }
+        // A copy opened by hand hands over to the launch agent's job, so launchd restarts Rio
+        // after any crash (2026-11-04: a hand-opened copy crashed and stayed down).
+        if RioLaunchAtLogin.handOffToAgentIfPossible(otherCopyRunning: AppDelegate.isDuplicateCopy()) { exit(0) }
+        if RioLaunchAtLogin.waitForHandingOffCopy(isOtherCopyRunning: AppDelegate.isDuplicateCopy) { exit(0) }
         // Reads the crash marker first: a launchd crash loop exits here, before AppState exists.
         _ = RioLaunchAtLogin.startup
         return AppState()
@@ -223,7 +226,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     fileprivate static func isDuplicateCopy() -> Bool {
         guard let bundleID = Bundle.main.bundleIdentifier else { return false }
         let me = ProcessInfo.processInfo.processIdentifier
-        return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).contains { $0.processIdentifier != me }
+        return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).contains { $0.processIdentifier != me && !$0.isTerminated }
     }
 
     private var terminationSignalSource: DispatchSourceSignal?

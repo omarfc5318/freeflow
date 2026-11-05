@@ -115,11 +115,9 @@ private let rioEscapeKeyCode: UInt16 = 53
 
     private func restartAutoClose() {
         autoCloseTimer?.invalidate()
-        let timer = Timer(timeInterval: RioHelpCatalogue.autoCloseSeconds, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.close() }
+        autoCloseTimer = RioMainTimer.schedule(interval: RioHelpCatalogue.autoCloseSeconds, repeats: false) { [weak self] in
+            self?.close()
         }
-        RunLoop.main.add(timer, forMode: .common)
-        autoCloseTimer = timer
     }
 
     /// Esc anywhere and a click anywhere close it. The handlers only look at the key code and the

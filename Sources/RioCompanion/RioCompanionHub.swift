@@ -499,12 +499,9 @@ final class RioCompanionHub: RioCompanionDirecting {
         if housekeepingTimer != nil, housekeepingPeriod == period { return }
         housekeepingTimer?.invalidate()
         housekeepingPeriod = period
-        let timer = Timer(timeInterval: period, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.housekeepingTick() }
+        housekeepingTimer = RioMainTimer.schedule(interval: period, repeats: true, tolerance: period * 0.25) { [weak self] in
+            self?.housekeepingTick()
         }
-        timer.tolerance = period * 0.25
-        RunLoop.main.add(timer, forMode: .common)
-        housekeepingTimer = timer
     }
 
     private func stopHousekeeping() {

@@ -47,11 +47,9 @@ private let rioFindEscapeKeyCode: UInt16 = 53
         panel.orderFrontRegardless()
         self.panel = panel
         installMonitors()
-        let timer = Timer(timeInterval: Self.autoCloseSeconds, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.close() }
+        timer = RioMainTimer.schedule(interval: Self.autoCloseSeconds, repeats: false) { [weak self] in
+            self?.close()
         }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
     }
 
     func close() {

@@ -91,11 +91,9 @@ private let rioTimerNotificationID = "rio.timer"
 
     private func startTicking() {
         tickTimer?.invalidate()
-        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
+        tickTimer = RioMainTimer.schedule(interval: 0.25, repeats: true) { [weak self] in
+            self?.tick()
         }
-        RunLoop.main.add(timer, forMode: .common)
-        tickTimer = timer
     }
 
     private func tick() {
@@ -135,11 +133,9 @@ private let rioTimerNotificationID = "rio.timer"
         center.timerRinging = true
         voice.speak(timer.doneLine)
         ringOnce()
-        let ring = Timer(timeInterval: Self.ringInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.ringTick() }
+        ringTimer = RioMainTimer.schedule(interval: Self.ringInterval, repeats: true) { [weak self] in
+            self?.ringTick()
         }
-        RunLoop.main.add(ring, forMode: .common)
-        ringTimer = ring
         installEventMonitors()
     }
 

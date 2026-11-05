@@ -43,12 +43,9 @@ extension RioCompanionHub {
     func updateScreenFollowTimer() {
         let needed = RioStyle.current == .corner && isShown && NSScreen.screens.count > 1 && !model.gate.isPaused
         if needed, screenFollowTimer == nil {
-            let timer = Timer(timeInterval: RioScreenFollow.pollInterval, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.checkScreenFollow() }
+            screenFollowTimer = RioMainTimer.schedule(interval: RioScreenFollow.pollInterval, repeats: true, tolerance: 0.3) { [weak self] in
+                self?.checkScreenFollow()
             }
-            timer.tolerance = 0.3
-            RunLoop.main.add(timer, forMode: .common)
-            screenFollowTimer = timer
         } else if !needed, let timer = screenFollowTimer {
             timer.invalidate()
             screenFollowTimer = nil

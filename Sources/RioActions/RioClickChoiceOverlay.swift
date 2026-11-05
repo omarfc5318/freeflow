@@ -36,8 +36,8 @@ final class RioClickChoiceOverlay {
             panel.orderFrontRegardless()
             panels.append(panel)
         }
-        hideTimer = Timer.scheduledTimer(withTimeInterval: Self.visibleSeconds, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.hide() }
+        hideTimer = RioMainTimer.schedule(interval: Self.visibleSeconds, repeats: false) { [weak self] in
+            self?.hide()
         }
     }
 

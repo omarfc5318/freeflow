@@ -38,7 +38,62 @@ enum RioLaunchAtLogin {
     /// Shown under the toggle in Settings: relaunch after a crash only covers a copy that macOS
     /// itself started at login (the agent's job). A copy opened from the Dock or Finder is not
     /// supervised: handing it over would have to quit and reopen Rio under the user's hands.
-    static let crashRelaunchNote = "Rio restarts after a crash only when macOS opened him at login. A copy you open yourself is not restarted."
+    static let crashRelaunchNote = "While this is on, Rio comes back by himself a few seconds after a crash, however you opened him."
+
+    // MARK: Hand-off (a copy opened by hand becomes the agent's job)
+
+    /// Called first thing at launch, before AppState. A copy opened by hand starts the agent's
+    /// job and returns true, so the caller exits and launchd's copy takes over (and is restarted
+    /// after a crash). False (run as is) when this is the agent's copy, "Launch at login" is off,
+    /// another copy is running, or launchd refused.
+    static func handOffToAgentIfPossible(otherCopyRunning: Bool) -> Bool {
+        guard RioLaunchHandoff.shouldHandOff(
+            runningUnderAgent: isRunningUnderAgent,
+            agentEnabled: agent.status == .enabled,
+            otherCopyRunning: otherCopyRunning
+        ) else { return false }
+        let defaults = UserDefaults.standard
+        defaults.set(Date().timeIntervalSince1970, forKey: RioLaunchHandoff.defaultsKey)
+        let kick = Process()
+        kick.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        kick.arguments = ["kickstart", "gui/\(getuid())/\(RioLaunchAgentPlist.label(bundleIdentifier: bundleIdentifier))"]
+        kick.standardOutput = FileHandle.nullDevice
+        kick.standardError = FileHandle.nullDevice
+        do {
+            try kick.run()
+            kick.waitUntilExit()
+        } catch {
+            defaults.removeObject(forKey: RioLaunchHandoff.defaultsKey)
+            return false
+        }
+        guard kick.terminationStatus == 0 else {
+            defaults.removeObject(forKey: RioLaunchHandoff.defaultsKey)
+            return false
+        }
+        return true
+    }
+
+    /// True in the agent's copy started by a hand-off just now (read once, then cleared): the
+    /// launch counts as the owner's for the crash marker.
+    private static let wasHandedOff: Bool = {
+        guard isRunningUnderAgent else { return false }
+        let defaults = UserDefaults.standard
+        let at = defaults.object(forKey: RioLaunchHandoff.defaultsKey) as? TimeInterval
+        defaults.removeObject(forKey: RioLaunchHandoff.defaultsKey)
+        return RioLaunchHandoff.isFresh(handedOffAt: at, now: Date().timeIntervalSince1970)
+    }()
+
+    /// The agent's copy started by a hand-off: the hand-opened copy may take a moment to exit.
+    /// Waits for it (briefly) before deciding this copy is the duplicate.
+    static func waitForHandingOffCopy(isOtherCopyRunning: () -> Bool) -> Bool {
+        guard isRunningUnderAgent else { return isOtherCopyRunning() }
+        let deadline = Date().addingTimeInterval(RioLaunchHandoff.duplicateWait)
+        while isOtherCopyRunning() {
+            if Date() >= deadline { return true }
+            usleep(100_000)
+        }
+        return false
+    }
 
     // MARK: Startup (before AppState exists)
 
@@ -47,7 +102,7 @@ enum RioLaunchAtLogin {
     /// this exits cleanly right here, so launchd leaves him stopped, and the next manual launch
     /// reports it. Reference this before `AppState()` is created.
     static let startup: RioLaunchStart = {
-        let start = RioCrashMarker.standard.begin(startedByLaunchd: isRunningUnderAgent)
+        let start = RioCrashMarker.standard.begin(startedByLaunchd: isRunningUnderAgent && !wasHandedOff)
         if start.stopForCrashLoop { exit(0) }
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
             finishPendingUnregister()

@@ -184,3 +184,27 @@ enum RioLaunchMigration {
         return plan(wantsEnabled: true, mainAppEnabled: true, agentEnabled: agentEnabled)
     }
 }
+
+/// A copy of Rio opened by hand (Dock, Finder, Spotlight, `open`) is not watched by launchd, so a
+/// crash would leave him gone (2026-11-04: build 123 crashed after 9.5 hours and stayed down).
+/// When "Launch at login" is on, that copy starts the agent's job instead and leaves at once,
+/// so every running Rio is the supervised one. Pure: RioLaunchAtLogin performs it.
+enum RioLaunchHandoff {
+    /// UserDefaults key holding when a hand-opened copy handed over (seconds since 1970). The
+    /// agent's copy reads it so the launch still counts as the owner's (crash notice, history).
+    static let defaultsKey = "rio_launch_handoff_at"
+    /// A handoff older than this was not for the current launch.
+    static let freshness: TimeInterval = 15
+    /// How long the agent's copy waits for the hand-opened copy to leave before calling itself
+    /// a duplicate.
+    static let duplicateWait: TimeInterval = 3
+
+    static func shouldHandOff(runningUnderAgent: Bool, agentEnabled: Bool, otherCopyRunning: Bool) -> Bool {
+        !runningUnderAgent && agentEnabled && !otherCopyRunning
+    }
+
+    static func isFresh(handedOffAt: TimeInterval?, now: TimeInterval) -> Bool {
+        guard let handedOffAt, handedOffAt <= now else { return false }
+        return now - handedOffAt <= freshness
+    }
+}

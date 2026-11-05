@@ -8,6 +8,8 @@ enum RioLaunchCoreTests {
         testCrashMarker()
         testCrashMarkerCreatesMissingDirectory()
         testMigrationPlan()
+        testHandoffDecision()
+        testHandoffFreshness()
     }
 
     private static func testAgentPlistContent() {
@@ -95,5 +97,33 @@ enum RioLaunchCoreTests {
             RioLaunchMigration.launchPlan(mainAppEnabled: false, agentEnabled: false),
             Plan(unregisterMainApp: false, registerAgent: false, unregisterAgent: false)
         )
+    }
+
+    /// Crash 2026-11-04: the copy that crashed had been opened by hand, so launchd never
+    /// restarted it. A hand-opened copy now hands over to the agent's job whenever it can.
+    private static func testHandoffDecision() {
+        TestSupport.expect(
+            RioLaunchHandoff.shouldHandOff(runningUnderAgent: false, agentEnabled: true, otherCopyRunning: false),
+            "A copy opened by hand hands over to the agent so a crash is restarted"
+        )
+        TestSupport.expect(
+            !RioLaunchHandoff.shouldHandOff(runningUnderAgent: true, agentEnabled: true, otherCopyRunning: false),
+            "The agent's own job never hands over again (no relaunch loop)"
+        )
+        TestSupport.expect(
+            !RioLaunchHandoff.shouldHandOff(runningUnderAgent: false, agentEnabled: false, otherCopyRunning: false),
+            "With Launch at login off there is no agent: run as is"
+        )
+        TestSupport.expect(
+            !RioLaunchHandoff.shouldHandOff(runningUnderAgent: false, agentEnabled: true, otherCopyRunning: true),
+            "A second copy just leaves; it never kicks the agent"
+        )
+    }
+
+    private static func testHandoffFreshness() {
+        TestSupport.expect(RioLaunchHandoff.isFresh(handedOffAt: 100, now: 105), "A handoff a few seconds old belongs to this launch")
+        TestSupport.expect(!RioLaunchHandoff.isFresh(handedOffAt: 100, now: 100 + RioLaunchHandoff.freshness + 1), "An old handoff is ignored")
+        TestSupport.expect(!RioLaunchHandoff.isFresh(handedOffAt: nil, now: 100), "No handoff recorded")
+        TestSupport.expect(!RioLaunchHandoff.isFresh(handedOffAt: 200, now: 100), "A handoff from the future is ignored")
     }
 }

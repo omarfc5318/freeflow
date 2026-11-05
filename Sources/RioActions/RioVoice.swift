@@ -140,12 +140,9 @@ import Foundation
     /// A once-a-second backstop for a `didFinish` that never arrives: `isSpeaking` cannot stick.
     private func armWatchdog() {
         watchdog?.invalidate()
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.watchdogTick() }
+        watchdog = RioMainTimer.schedule(interval: 1, repeats: true, tolerance: 0.5) { [weak self] in
+            self?.watchdogTick()
         }
-        timer.tolerance = 0.5
-        RunLoop.main.add(timer, forMode: .common)
-        watchdog = timer
     }
 
     private func watchdogTick() {
@@ -182,11 +179,9 @@ import Foundation
     private func startMouthTimer() {
         mouthTimer?.invalidate()
         lastSilenceCheck = Date()
-        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.updateMouth() }
+        mouthTimer = RioMainTimer.schedule(interval: 1.0 / 30.0, repeats: true) { [weak self] in
+            self?.updateMouth()
         }
-        RunLoop.main.add(timer, forMode: .common)
-        mouthTimer = timer
     }
 
     private func updateMouth() {

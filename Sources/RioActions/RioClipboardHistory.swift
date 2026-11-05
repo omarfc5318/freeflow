@@ -30,12 +30,9 @@ final class RioClipboardHistory {
     func start() {
         guard timer == nil else { return }
         poll()
-        let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.poll() }
+        timer = RioMainTimer.schedule(interval: Self.pollInterval, repeats: true, tolerance: 0.25) { [weak self] in
+            self?.poll()
         }
-        timer.tolerance = 0.25
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
     }
 
     func stop() {

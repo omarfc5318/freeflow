@@ -75,17 +75,12 @@ final class RioPhoneTexting: ObservableObject {
             UserDefaults.standard.set(Int(reader.maxRowID()), forKey: RioOutsideSettings.phoneLastRowKey)
         }
         watchDatabase()
-        let timer = Timer(timeInterval: Self.fallbackPollInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                // The write-ahead log may have appeared or been replaced since the watch began.
-                if self.watchers.count < Self.watchedPaths(self.chatPath).count { self.watchDatabase() }
-                self.requestPoll()
-            }
+        timer = RioMainTimer.schedule(interval: Self.fallbackPollInterval, repeats: true, tolerance: 5) { [weak self] in
+            guard let self else { return }
+            // The write-ahead log may have appeared or been replaced since the watch began.
+            if self.watchers.count < Self.watchedPaths(self.chatPath).count { self.watchDatabase() }
+            self.requestPoll()
         }
-        timer.tolerance = 5
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
     }
 
     private func stop(status newStatus: RioPhoneStatus = .off) {
