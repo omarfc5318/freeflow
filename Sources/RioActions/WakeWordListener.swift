@@ -1,6 +1,11 @@
 import AVFoundation
 import Foundation
+import os
 import Speech
+
+/// Conversation-mode decisions only (word counts, never words), at info level, so they stay in
+/// memory and show only in `log stream --level info --predicate 'category == "Conversation"'`.
+let rioConversationLog = OSLog(subsystem: "com.zachlatta.freeflow", category: "Conversation")
 
 enum WakeWordListenerStartResult: Equatable {
     case started
@@ -23,6 +28,13 @@ enum WakeWordListenerStartResult: Equatable {
     private static let maxConsecutiveFailures = 5
     /// Speech heard before the recognizer first shows "Rio" (partial results lag the voice).
     private static let commandLeadSeconds = 1.5
+    /// Sound this recent means the owner is still talking: the utterance doesn't end yet.
+    static let stillTalkingSeconds: TimeInterval = 0.8
+    /// ...but a noisy room can't keep an utterance open for more than this past the silence timer.
+    static let maxTalkingExtension: TimeInterval = 3
+    /// A command ends this long after it started even if speech goes on around it, so people
+    /// talking nearby can't keep growing it (spoken commands take 1 to 3 seconds).
+    static let maxCommandSeconds: TimeInterval = 5
 
     private let onCommand: @MainActor (String) -> Void
     /// Called when the listener stops ON ITS OWN (repeated recognizer failures, the microphone
@@ -35,6 +47,12 @@ enum WakeWordListenerStartResult: Equatable {
     /// Whether a bare "Rio" may open the command window now (false while Rio is talking or just
     /// after; see `WakeListenTiming.bareNameOpensWindow`). Nil means always.
     var bareNameMayOpenWindow: (@MainActor () -> Bool)?
+    /// What Rio's own voice is saying or just said (nil when he is quiet), so his words in front
+    /// of the owner's "Rio" don't hide the name (`RioConversationEcho`).
+    var echoReference: (@MainActor () -> String?)?
+    /// Called as soon as a command starts to come in (before it is finished), so Rio can stop
+    /// talking and the rest of his sentence doesn't run into the command.
+    var onCommandStarted: (@MainActor (String) -> Void)?
     private let engine = AVAudioEngine()
     private let requestBox = RecognitionRequestBox()
     private var recognizer: SFSpeechRecognizer?
@@ -55,6 +73,10 @@ enum WakeWordListenerStartResult: Equatable {
     /// bare "Rio" whose recognition task ended before the command came.
     private var commandExpectedUntil: Date?
     private var silenceTimer: Task<Void, Never>?
+    /// When the silence timer first found the owner still talking (nil otherwise).
+    private var talkingExtendedSince: Date?
+    /// When the current command first showed up (nil when none is coming in).
+    private var commandStartedAt: Date?
     private var lifetimeTimer: Task<Void, Never>?
     private var configObserver: NSObjectProtocol?
 
@@ -103,18 +125,30 @@ enum WakeWordListenerStartResult: Equatable {
     /// is dropped.
     func pause() {
         guard wantsListening, !isPaused else { return }
+        os_log(.info, log: rioConversationLog, "paused")
         isPaused = true
         tearDown()
     }
 
     func resume() {
         guard wantsListening, isPaused else { return }
+        os_log(.info, log: rioConversationLog, "resumed")
         isPaused = false
         do {
             try startAudio()
         } catch {
             stopItself("I couldn't reopen the microphone, so I stopped listening")
         }
+    }
+
+    /// Rio's own voice just started or stopped: start a fresh recognition task so what he said
+    /// and what the owner says next are separate utterances. Measured 2026-11-04: right after
+    /// he spoke, "Rio, what is 7 times 8" came out as "You got it it's what is 7×8"; his words
+    /// in the same stream swallowed the name. A command already coming in is left alone.
+    func startFreshUtterance() {
+        guard wantsListening, !isPaused, engine.isRunning, pendingCommand == nil, bareNameHeardAt == nil else { return }
+        os_log(.info, log: rioConversationLog, "fresh utterance at Rio's speech boundary")
+        beginRecognitionTask()
     }
 
     /// Stops because something failed and says so (see `onStopped`).
@@ -169,6 +203,7 @@ enum WakeWordListenerStartResult: Equatable {
 
     /// The input device changed (headphones, another mic): reopen the engine.
     private func audioConfigurationChanged() {
+        os_log(.info, log: rioConversationLog, "audio device configuration changed")
         guard wantsListening, !isPaused else { return }
         tearDown()
         do {
@@ -187,6 +222,7 @@ enum WakeWordListenerStartResult: Equatable {
         pendingCommand = nil
         task?.cancel()
         task = nil
+        talkingExtendedSince = nil
         requestBox.replace(with: nil)
         if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
         configObserver = nil
@@ -200,6 +236,7 @@ enum WakeWordListenerStartResult: Equatable {
     /// `replayingPreRoll`, the audio kept during an empty-final wait goes in first.
     private func beginRecognitionTask(replayingPreRoll: Bool = false) {
         generation += 1
+        os_log(.info, log: rioConversationLog, "recognition task %d started (pre-roll: %d, engine running: %d)", generation, replayingPreRoll ? 1 : 0, engine.isRunning ? 1 : 0)
         let current = generation
         silenceTimer?.cancel()
         lifetimeTimer?.cancel()
@@ -207,6 +244,8 @@ enum WakeWordListenerStartResult: Equatable {
         commandAudioMark = nil
         lastHeardText = ""
         bareNameHeardAt = nil
+        talkingExtendedSince = nil
+        commandStartedAt = nil
         task?.cancel()
         task = nil
         guard let recognizer else { return }
@@ -241,16 +280,33 @@ enum WakeWordListenerStartResult: Equatable {
         generation: Int, text: String?, timed: [WakePhraseExtractor.TimedWord], isFinal: Bool, failed: Bool
     ) {
         guard generation == self.generation, wantsListening, !isPaused else { return }
-        if let text {
+        if isFinal || failed { os_log(.info, log: rioConversationLog, "task %d ended (final: %d, failed: %d, has text: %d)", generation, isFinal ? 1 : 0, failed ? 1 : 0, (text ?? "").isEmpty ? 0 : 1) }
+        if let rawText = text {
             consecutiveFailures = 0
-            if !text.isEmpty { consecutiveEmptyFinals = 0 }
+            if !rawText.isEmpty { consecutiveEmptyFinals = 0 }
+            // Rio's own words in front of the owner's "Rio" (he just spoke) are not the start of
+            // the utterance; timing is ignored then, the plain text already starts at the name.
+            let reference = echoReference?()
+            let text = RioConversationEcho.strippingLeadingEcho(rawText, reference: reference)
+            let words = reference == nil ? timed : []
+            if rawText != lastHeardText {
+                os_log(.info, log: rioConversationLog, "heard %d words (%d after removing Rio's echo), echo line known: %d, final: %d",
+                       rawText.split(separator: " ").count, text.split(separator: " ").count, reference == nil ? 0 : 1, isFinal ? 1 : 0)
+            }
             // The name after a pause counts even when room speech ran into the same utterance.
-            let withPauses = timed.isEmpty ? text : WakePhraseExtractor.transcript(from: timed)
-            if let command = command(in: text, timed: timed), command != pendingCommand {
-                if pendingCommand == nil { commandAudioMark = requestBox.mark(secondsBack: Self.commandLeadSeconds) }
+            let withPauses = words.isEmpty ? text : WakePhraseExtractor.transcript(from: words)
+            if let command = command(in: text, timed: words), command != pendingCommand {
+                if pendingCommand == nil {
+                    os_log(.info, log: rioConversationLog, "command started")
+                    commandStartedAt = Date()
+                    commandAudioMark = requestBox.mark(secondsBack: Self.commandLeadSeconds)
+                    onCommandStarted?(command)
+                }
                 pendingCommand = command
                 commandExpectedUntil = nil
-                scheduleSilenceTimer(generation: generation, after: WakeListenTiming.silenceToEnd(pendingCommand: command))
+                scheduleSilenceTimer(generation: generation, after: min(
+                    WakeListenTiming.silenceToEnd(pendingCommand: command), max(0.2, commandTimeLeft())
+                ))
             } else if pendingCommand == nil, WakePhraseExtractor.isBareName(withPauses),
                       bareNameHeardAt != nil || bareNameMayOpenWindow?() ?? true {
                 // "Rio" and a thinking pause: keep listening for the command instead of ending
@@ -259,19 +315,19 @@ enum WakeWordListenerStartResult: Equatable {
                     bareNameHeardAt = Date()
                     onBareName?()
                 }
-                if text != lastHeardText { scheduleSilenceTimer(generation: generation, after: WakeListenTiming.bareNameWindow) }
-            } else if pendingCommand == nil, text != lastHeardText {
+                if rawText != lastHeardText { scheduleSilenceTimer(generation: generation, after: WakeListenTiming.bareNameWindow) }
+            } else if pendingCommand == nil, rawText != lastHeardText {
                 // Speech without the name: a pause ends the utterance, so the next "Rio" starts
                 // a fresh one (the name only counts at the start of an utterance).
                 scheduleSilenceTimer(generation: generation, after: WakeListenTiming.silenceWithoutCommand)
             }
-            lastHeardText = text
+            lastHeardText = rawText
         }
         if isFinal {
             if pendingCommand == nil && (text ?? "").isEmpty {
                 restartAfterEmptyFinal()
             } else {
-                finishCommandAndRestart()
+                finishUtteranceAndRestart()
             }
         } else if failed {
             recover()
@@ -299,17 +355,33 @@ enum WakeWordListenerStartResult: Equatable {
 
     private func silenceElapsed(generation: Int) {
         guard generation == self.generation, wantsListening, !isPaused else { return }
-        finishCommandAndRestart()
+        // The recognizer lags the voice: while the microphone still hears speech, the owner is
+        // mid-sentence even if no new words have shown up yet.
+        if requestBox.secondsSinceSound() < Self.stillTalkingSeconds, commandTimeLeft() > 0 {
+            let since = talkingExtendedSince ?? Date()
+            talkingExtendedSince = since
+            if Date().timeIntervalSince(since) < Self.maxTalkingExtension {
+                scheduleSilenceTimer(generation: generation, after: 0.4)
+                return
+            }
+        }
+        finishUtteranceAndRestart()
+    }
+
+    /// Seconds before the current command must end (infinite when no command is coming in).
+    private func commandTimeLeft() -> TimeInterval {
+        guard let commandStartedAt else { return .infinity }
+        return Self.maxCommandSeconds - Date().timeIntervalSince(commandStartedAt)
     }
 
     private func lifetimeElapsed(generation: Int) {
         guard generation == self.generation, wantsListening, !isPaused else { return }
-        finishCommandAndRestart()
+        finishUtteranceAndRestart()
     }
 
     /// Hands over the finished command (if any), then starts a clean recognition task so the
     /// old words can't come back.
-    private func finishCommandAndRestart() {
+    private func finishUtteranceAndRestart() {
         let command = pendingCommand
         let mark = commandAudioMark
         // A bare "Rio" whose utterance ended early (the recognizer's own final, the task's
@@ -323,8 +395,14 @@ enum WakeWordListenerStartResult: Equatable {
         commandAudioMark = nil
         beginRecognitionTask()
         guard let command else { return }
-        // Arabic after "Rio" comes out as nonsense from the English recognizer: read that
-        // command's audio again with Whisper when the text doesn't look like a command.
+        deliver(command, mark: mark)
+    }
+
+    /// Hands the command over. Arabic after "Rio" comes out as nonsense from the English
+    /// recognizer: that command's audio is read again with Whisper when the text doesn't look
+    /// like a command.
+    private func deliver(_ command: String, mark: Int?) {
+        os_log(.info, log: rioConversationLog, "command finished: %d words", command.split(separator: " ").count)
         guard let mark, RioCommandAudioRecheck.isAvailable(forOnDeviceText: command),
               let audio = requestBox.recentAudio(since: mark) else {
             onCommand(command)
@@ -346,6 +424,7 @@ enum WakeWordListenerStartResult: Equatable {
     private func restartAfterEmptyFinal() {
         consecutiveEmptyFinals += 1
         let delay = WakeListenTiming.emptyFinalDelay(consecutive: consecutiveEmptyFinals)
+        os_log(.info, log: rioConversationLog, "empty final #%d, waiting up to %.1f s for sound", consecutiveEmptyFinals, delay)
         let current = generation
         silenceTimer?.cancel()
         task?.cancel()
@@ -373,6 +452,7 @@ enum WakeWordListenerStartResult: Equatable {
     /// The recognizer failed (not by our own cancel): retry, and give up after repeated failures.
     private func recover() {
         consecutiveFailures += 1
+        os_log(.info, log: rioConversationLog, "recognizer failed (%d in a row)", consecutiveFailures)
         if consecutiveFailures > Self.maxConsecutiveFailures {
             stopItself("Speech recognition kept failing, so I stopped listening")
             return
@@ -406,6 +486,8 @@ private final class RecognitionRequestBox: @unchecked Sendable {
     /// cleared by the listener.
     private var heardSound = false
     private var soundGate = WakeSoundGate()
+    /// System uptime of the last loud buffer (0: none yet).
+    private var lastSoundUptime: TimeInterval = 0
     /// While the listener waits after an empty final: copies of the latest tap buffers (at most
     /// `preRollLimit` seconds), replayed into the next request. Empty and off otherwise.
     private var preRoll: [AVAudioPCMBuffer] = []
@@ -476,6 +558,14 @@ private final class RecognitionRequestBox: @unchecked Sendable {
         return heard
     }
 
+    /// Seconds since the microphone last heard sustained sound (infinite before any).
+    func secondsSinceSound() -> TimeInterval {
+        lock.lock()
+        defer { lock.unlock() }
+        guard lastSoundUptime > 0 else { return .infinity }
+        return ProcessInfo.processInfo.systemUptime - lastSoundUptime
+    }
+
     /// A position `secondsBack` before now, for `recentAudio(since:)`.
     func mark(secondsBack: Double) -> Int {
         lock.lock()
@@ -528,7 +618,10 @@ private final class RecognitionRequestBox: @unchecked Sendable {
         }
         if kept > 0 {
             let rms = (squares / Float(kept)).squareRoot()
-            if soundGate.feed(rms: rms, seconds: Double(frames) / max(buffer.format.sampleRate, 1)) { heardSound = true }
+            if soundGate.feed(rms: rms, seconds: Double(frames) / max(buffer.format.sampleRate, 1)) {
+                heardSound = true
+                lastSoundUptime = ProcessInfo.processInfo.systemUptime
+            }
         }
     }
 }

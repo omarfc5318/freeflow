@@ -184,7 +184,17 @@ enum WakePhraseExtractorTests {
         check("the bear is called Rio lock my screen", nil)
         // A new sentence counts as a fresh start.
         check("that was great. Rio open Spotify", "open Spotify")
-        check("that was great Rio open Spotify", nil)
+        // 2026-11-04: with people talking nearby the recognizer never ends the utterance, so the
+        // owner's "Rio" lands mid-transcript. Before a command word it counts...
+        check("that was great Rio open Spotify", "open Spotify")
+        check("and then the load step Rio what time is it", "what time is it")
+        // ...but never where Rio is the object of the sentence.
+        check("welcome to Rio open your heart", nil)
+        check("I asked Rio what time it is", nil)
+        check("my bear named Rio set the table", nil)
+        check("you know Rio is a great film", nil)
+        // A mishearing that is an ordinary word still has to start the utterance.
+        check("I like Ria open chrome", nil)
     }
 
     private static func testNoNameYieldsNothing() {

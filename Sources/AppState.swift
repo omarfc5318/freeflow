@@ -4393,6 +4393,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
         // A question is up: it needs Return or "no" first, and the new command isn't kept.
         if RioConfirmationCenter.shared.isShowing {
+            os_log(.info, log: rioConversationLog, "held: a confirmation is showing")
             statusText = "Press Return or say no first"
             scheduleReadyStatusReset(after: 3, matching: ["Press Return or say no first"])
             return
@@ -4400,6 +4401,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         // Busy with the last one: keep this one (only the newest) and say so, instead of
         // dropping it silently (finding 63).
         if isConversationBusy {
+            os_log(.info, log: rioConversationLog, "queued: Rio is busy")
             rioConversationPending.offer(transcript, now: Date())
             statusText = RioConversationPending.busyLine
             if !isRecording, !isTranscribing, !RioTaskProgress.shared.isRunning {

@@ -398,9 +398,87 @@ extension RioConversationCommands {
 enum RioConversationBargeIn {
     static let echoTailSeconds: TimeInterval = 2.5
 
-    static func accepts(_ command: String, isRioSpeaking: Bool, secondsSinceRioSpoke: TimeInterval?) -> Bool {
-        let inEchoWindow = isRioSpeaking || (secondsSinceRioSpoke.map { $0 < echoTailSeconds } ?? false)
-        return !inEchoWindow || RioConversationCommands.isBareStop(command) || RioConversationCommands.isStopListening(command)
+    /// Whether a command heard while Rio talks (or just after) runs. `rioLine` is what Rio's own
+    /// voice is saying or just said. With it, only his echo is dropped and the owner can talk
+    /// over him or answer straight away (2026-11-04: everything said in that window was dropped
+    /// silently). Without it (the translator's voice, words unknown) only a stop runs.
+    static func accepts(
+        _ command: String, isRioSpeaking: Bool, secondsSinceRioSpoke: TimeInterval?, rioLine: String? = nil
+    ) -> Bool {
+        guard isInEchoWindow(isRioSpeaking: isRioSpeaking, secondsSinceRioSpoke: secondsSinceRioSpoke) else { return true }
+        if RioConversationCommands.isBareStop(command) || RioConversationCommands.isStopListening(command) { return true }
+        guard let rioLine else { return false }
+        return !RioConversationEcho.isEcho(command, reference: rioLine)
+    }
+
+    static func isInEchoWindow(isRioSpeaking: Bool, secondsSinceRioSpoke: TimeInterval?) -> Bool {
+        isRioSpeaking || (secondsSinceRioSpoke.map { $0 < echoTailSeconds } ?? false)
+    }
+}
+
+/// Telling Rio's own voice apart from the owner's while he talks with the speakers on: the
+/// recognizer hears both. Pure word matching against the line Rio is saying.
+enum RioConversationEcho {
+    /// At least this share of the words before the name must be Rio's for them to be his echo.
+    static let leadingEchoShare = 0.6
+    /// At least this share of a command's words must be in his line for it to be his echo.
+    static let commandEchoShare = 0.75
+
+    private typealias Token = (word: String, range: Range<String.Index>)
+
+    /// `heard` with Rio's own words in front of the name removed, so the name starts the
+    /// utterance again: "it's 4 43 PM Rio quit calculator" → "Rio quit calculator". Unchanged
+    /// when there is no line to compare, the name already leads, or the words before it are the
+    /// owner's ("I told Rio to open Chrome").
+    static func strippingLeadingEcho(_ heard: String, reference: String?) -> String {
+        guard let reference else { return heard }
+        let ownWords = Set(tokens(in: reference).map(\.word))
+        guard !ownWords.isEmpty else { return heard }
+        let heardTokens = tokens(in: heard)
+        for (index, token) in heardTokens.enumerated() where WakePhraseExtractor.isName(token.word) {
+            guard index > 0 else { return heard }
+            let before = heardTokens[..<index]
+            let echoed = before.filter { ownWords.contains($0.word) }.count
+            if Double(echoed) / Double(before.count) >= leadingEchoShare {
+                return String(heard[token.range.lowerBound...])
+            }
+        }
+        return heard
+    }
+
+    /// True when the command is (mostly) words of Rio's own line.
+    static func isEcho(_ command: String, reference: String?) -> Bool {
+        guard let reference else { return false }
+        let ownWords = Set(tokens(in: reference).map(\.word))
+        let words = tokens(in: command).map(\.word)
+        guard !words.isEmpty, !ownWords.isEmpty else { return false }
+        let echoed = words.filter(ownWords.contains).count
+        return Double(echoed) / Double(words.count) >= commandEchoShare
+    }
+
+    /// Lowercased runs of letters and digits; apostrophes are dropped ("It's" → "its") and
+    /// anything else splits ("4:43" → "4", "43").
+    private static func tokens(in text: String) -> [Token] {
+        var result: [Token] = []
+        var start: String.Index?
+        var index = text.startIndex
+        func close(at end: String.Index) {
+            guard let begin = start else { return }
+            let word = text[begin..<end].lowercased().filter { $0 != "'" && $0 != "\u{2019}" }
+            if !word.isEmpty { result.append((word, begin..<end)) }
+            start = nil
+        }
+        while index < text.endIndex {
+            let character = text[index]
+            if character.isLetter || character.isNumber || character == "'" || character == "\u{2019}" {
+                if start == nil { start = index }
+            } else {
+                close(at: index)
+            }
+            index = text.index(after: index)
+        }
+        close(at: text.endIndex)
+        return result
     }
 }
 

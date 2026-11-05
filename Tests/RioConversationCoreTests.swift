@@ -30,6 +30,8 @@ enum RioConversationCoreTests {
         testDeclineWords()
         testQuickReplies()
         testBargeInOnlyTakesStops()
+        testBargeInLetsTheOwnerTalkOverRio()
+        testEchoInFrontOfTheNameIsStripped()
     }
 
     private static func testStartsOff() {
@@ -298,5 +300,67 @@ enum RioConversationCoreTests {
         TestSupport.expect(!policy.accepts("delete the file", isRioSpeaking: false, secondsSinceRioSpoke: 1), "nor its echo tail")
         TestSupport.expect(policy.accepts("open chrome", isRioSpeaking: false, secondsSinceRioSpoke: 10), "later, anything goes")
         TestSupport.expect(policy.accepts("open chrome", isRioSpeaking: false, secondsSinceRioSpoke: nil), "he hasn't spoken")
+    }
+
+    /// Reproduced live 2026-11-04 (build 123): Rio answered "It's 4:43 PM" and "Rio, quit
+    /// Calculator" said right after was dropped silently. Knowing his own line, Rio drops only
+    /// his echo and takes the owner's command.
+    private static func testBargeInLetsTheOwnerTalkOverRio() {
+        let policy = RioConversationBargeIn.self
+        let line = "It's 4:43 PM"
+        TestSupport.expect(
+            policy.accepts("quit Calculator", isRioSpeaking: false, secondsSinceRioSpoke: 1, rioLine: line),
+            "a real command right after he spoke runs"
+        )
+        TestSupport.expect(
+            policy.accepts("open Chrome", isRioSpeaking: true, secondsSinceRioSpoke: nil, rioLine: line),
+            "a real command while he talks runs (and interrupts him)"
+        )
+        let help = "Try saying Rio open Safari or Rio set a timer for five minutes"
+        TestSupport.expect(
+            !policy.accepts("open Safari or", isRioSpeaking: true, secondsSinceRioSpoke: nil, rioLine: help),
+            "his own voice saying an example command runs nothing"
+        )
+        TestSupport.expect(
+            !policy.accepts("set a timer for five minutes", isRioSpeaking: false, secondsSinceRioSpoke: 1, rioLine: help),
+            "nor its echo tail"
+        )
+        TestSupport.expect(
+            !policy.accepts("open chrome", isRioSpeaking: true, secondsSinceRioSpoke: nil, rioLine: nil),
+            "an unknown voice (the translator) still runs nothing"
+        )
+        TestSupport.expect(
+            policy.accepts("stop", isRioSpeaking: true, secondsSinceRioSpoke: nil, rioLine: "stop me if you have heard this"),
+            "a stop always interrupts, even if he said the word"
+        )
+    }
+
+    /// Right after Rio speaks, his words and the owner's "Rio" land in one transcript; the name
+    /// must still count as the start of what the owner said.
+    private static func testEchoInFrontOfTheNameIsStripped() {
+        let echo = RioConversationEcho.self
+        TestSupport.expectEqual(
+            echo.strippingLeadingEcho("it's 4 43 PM Rio quit calculator", reference: "It's 4:43 PM"),
+            "Rio quit calculator"
+        )
+        TestSupport.expectEqual(
+            echo.strippingLeadingEcho("it's for 43 PM Rio quit calculator", reference: "It's 4:43 PM"),
+            "Rio quit calculator"
+        ) // a misheard word of his line is still his
+        TestSupport.expectEqual(
+            echo.strippingLeadingEcho("I told Rio to open Chrome", reference: "It's 4:43 PM"),
+            "I told Rio to open Chrome"
+        ) // the owner's own sentence is not his echo
+        TestSupport.expectEqual(
+            echo.strippingLeadingEcho("it's 4 43 PM Rio quit calculator", reference: nil),
+            "it's 4 43 PM Rio quit calculator"
+        ) // with no line to compare, nothing changes
+        TestSupport.expectEqual(
+            WakePhraseExtractor.command(in: echo.strippingLeadingEcho("it's 4 43 PM Rio quit calculator", reference: "It's 4:43 PM")),
+            "quit calculator"
+        )
+        TestSupport.expect(echo.isEcho("open Safari or", reference: "Try saying Rio open Safari or Rio set a timer"), "his words are his echo")
+        TestSupport.expect(!echo.isEcho("quit Calculator", reference: "It's 4:43 PM"), "the owner's words are not")
+        TestSupport.expect(!echo.isEcho("quit Calculator", reference: nil), "no reference, no echo")
     }
 }

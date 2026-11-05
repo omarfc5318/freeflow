@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import os
 
 /// Conversation mode: Rio keeps the microphone open and acts on anything said after "Rio".
 /// Toggled by the Fn + Control + Option key chord, the menu bar item, or Settings. It turns itself off
@@ -75,6 +76,8 @@ import Foundation
         guard speaking != rioSpeaking else { return }
         rioSpeaking = speaking
         if !speaking { rioStoppedSpeakingAt = Date() }
+        // His sentence and the owner's next words must not share one recognition stream.
+        listener?.startFreshUtterance()
     }
 
     /// Whether Rio (or the translator's voice) is talking, and how long ago he stopped.
@@ -83,11 +86,41 @@ import Foundation
     }
 
     private func handle(command: String) {
-        guard core.isOn, !core.isPaused else { return }
+        guard core.isOn, !core.isPaused else {
+            os_log(.info, log: rioConversationLog, "dropped: conversation mode is off or paused")
+            return
+        }
         let sinceSpoke = rioStoppedSpeakingAt.map { Date().timeIntervalSince($0) }
-        guard RioConversationBargeIn.accepts(command, isRioSpeaking: rioSpeaking, secondsSinceRioSpoke: sinceSpoke) else { return }
+        let line = rioOwnLine()
+        guard RioConversationBargeIn.accepts(
+            command, isRioSpeaking: rioSpeaking, secondsSinceRioSpoke: sinceSpoke, rioLine: line
+        ) else {
+            os_log(.info, log: rioConversationLog, "dropped: Rio's own voice (speaking: %d, line known: %d)", rioSpeaking ? 1 : 0, line == nil ? 0 : 1)
+            return
+        }
+        os_log(.info, log: rioConversationLog, "accepted (Rio speaking: %d)", rioSpeaking ? 1 : 0)
+        // The owner talked over him: he stops and listens.
+        if RioVoice.shared.isSpeaking { RioVoice.shared.stopSpeaking() }
         core.commandHeard(now: Date())
         onCommand?(command)
+    }
+
+    /// What Rio's own voice is saying or just said, while that can still reach the microphone.
+    /// Nil when he is quiet, or when the translator is the one talking (its words are not known
+    /// here, so only a stop gets through, as before).
+    private func rioOwnLine() -> String? {
+        let speech = rioSpeechState(now: Date())
+        guard RioConversationBargeIn.isInEchoWindow(isRioSpeaking: speech.isSpeaking, secondsSinceRioSpoke: speech.secondsSinceSpoke),
+              !RioTranslatorMode.shared.isOn else { return nil }
+        return RioVoice.shared.lastSpokenText
+    }
+
+    /// A command is coming in while Rio talks: stop him unless it is his own voice, so the rest
+    /// of his sentence doesn't run into the command.
+    private func commandStarted(_ partial: String) {
+        guard RioVoice.shared.isSpeaking, let line = rioOwnLine(),
+              !RioConversationEcho.isEcho(partial, reference: line) else { return }
+        RioVoice.shared.stopSpeaking()
     }
 
     // MARK: State to the outside world
@@ -155,6 +188,8 @@ import Foundation
                 isRioSpeaking: speech.isSpeaking, secondsSinceRioSpoke: speech.secondsSinceSpoke
             )
         }
+        listener.echoReference = { [weak self] in self?.rioOwnLine() }
+        listener.onCommandStarted = { [weak self] partial in self?.commandStarted(partial) }
         self.listener = listener
         Task { @MainActor [weak self] in
             let result = await listener.start()

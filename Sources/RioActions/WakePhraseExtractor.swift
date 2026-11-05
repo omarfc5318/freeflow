@@ -79,6 +79,25 @@ enum WakePhraseExtractor {
         return words[first...].allSatisfy { isName($0.text) }
     }
 
+    /// Words right before a mid-sentence name that make Rio the object of someone else's
+    /// sentence ("tell Rio", "a bear called Rio", "welcome to Rio"), not someone talking to him.
+    private static let objectLeadIns: Set<String> = [
+        "tell", "told", "telling", "ask", "asked", "asking", "call", "called", "named", "name", "say", "said",
+        "saying", "that", "about", "to", "with", "and", "or", "for", "from", "the", "a", "my", "our",
+        "your", "his", "her", "their", "like", "love", "watch", "watched", "visit", "visited", "in", "at", "of",
+    ]
+
+    /// Mid-utterance (people talking nearby keep the recognizer from ever ending the utterance)
+    /// the name still counts when a command word follows it and neither of the two words before
+    /// it makes Rio the object of the sentence: "...that was great Rio open Spotify", but not
+    /// "I told dude Rio open Chrome".
+    private static func isAddressedMidUtterance(at index: Int, in words: [Word]) -> Bool {
+        guard index > 0, index + 1 < words.count else { return false }
+        let before = words[max(0, index - 2)..<index].map { $0.text.lowercased() }
+        let next = words[index + 1].text.lowercased()
+        return !before.contains(where: objectLeadIns.contains) && commandStarters.contains(next)
+    }
+
     /// Words that may come before the name without it being mid-sentence.
     private static let leadIns: Set<String> = [
         "hey", "hi", "hello", "yo", "yoo", "ok", "okay", "uh", "um", "so", "oh", "alright", "right", "well", "please",
@@ -115,7 +134,9 @@ enum WakePhraseExtractor {
             guard atStart, let next else { return false }
             return commandStarters.contains(next)
         }
-        guard isName(words[index].text), startsUtterance(at: index, in: words, text: text) else { return false }
+        guard isName(words[index].text),
+              startsUtterance(at: index, in: words, text: text) || isAddressedMidUtterance(at: index, in: words)
+        else { return false }
         // "Rio de Janeiro is beautiful": a place (checked after any repeated name).
         var last = index
         while last + 1 < words.count, isName(words[last + 1].text) { last += 1 }
@@ -218,7 +239,7 @@ enum WakePhraseExtractor {
         return before.contains { ".!?\n".contains($0) }
     }
 
-    private static func isName(_ word: String) -> Bool {
+    static func isName(_ word: String) -> Bool {
         let lowered = word.lowercased()
         if TeddyCommand.names.contains(lowered) { return true }
         // "Yo Rio" run together by the recognizer, e.g. "Yorio".
