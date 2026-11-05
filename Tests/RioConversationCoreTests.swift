@@ -32,6 +32,7 @@ enum RioConversationCoreTests {
         testBargeInOnlyTakesStops()
         testBargeInLetsTheOwnerTalkOverRio()
         testEchoInFrontOfTheNameIsStripped()
+        testLooserHearingNeedsConfirmation()
     }
 
     private static func testStartsOff() {
@@ -362,5 +363,25 @@ enum RioConversationCoreTests {
         TestSupport.expect(echo.isEcho("open Safari or", reference: "Try saying Rio open Safari or Rio set a timer"), "his words are his echo")
         TestSupport.expect(!echo.isEcho("quit Calculator", reference: "It's 4:43 PM"), "the owner's words are not")
         TestSupport.expect(!echo.isEcho("quit Calculator", reference: nil), "no reference, no echo")
+    }
+
+    /// Security review of 6c6d56a: the two looser paths (the name mid-sentence, a command heard
+    /// while Rio's voice may still be in the room) must not run state-changing actions unasked,
+    /// and Rio saying his own name must never wake him.
+    private static func testLooserHearingNeedsConfirmation() {
+        let policy = RioConversationBargeIn.self
+        TestSupport.expect(policy.isWeakEvidence(midUtterance: true, isRioSpeaking: false, secondsSinceRioSpoke: nil), "mid-sentence wake is weak")
+        TestSupport.expect(policy.isWeakEvidence(midUtterance: false, isRioSpeaking: true, secondsSinceRioSpoke: nil), "heard over his voice is weak")
+        TestSupport.expect(policy.isWeakEvidence(midUtterance: false, isRioSpeaking: false, secondsSinceRioSpoke: 1), "his echo tail is weak")
+        TestSupport.expect(!policy.isWeakEvidence(midUtterance: false, isRioSpeaking: false, secondsSinceRioSpoke: 10), "a clean start is not")
+        let help = "Say Rio quit Safari to close it"
+        TestSupport.expect(
+            !policy.accepts("close Chrome", isRioSpeaking: true, secondsSinceRioSpoke: nil, rioLine: help),
+            "while his own line says his name, nothing but a stop runs"
+        )
+        TestSupport.expect(policy.accepts("stop", isRioSpeaking: true, secondsSinceRioSpoke: nil, rioLine: help), "a stop still does")
+        TestSupport.expect(WakePhraseExtractor.wakesMidUtterance(in: "that was great Rio open Spotify"), "mid-sentence wake is reported")
+        TestSupport.expect(!WakePhraseExtractor.wakesMidUtterance(in: "okay Rio open Spotify"), "a lead-in is a clean start")
+        TestSupport.expect(!WakePhraseExtractor.wakesMidUtterance(in: "that was great. Rio open Spotify"), "so is a new sentence")
     }
 }

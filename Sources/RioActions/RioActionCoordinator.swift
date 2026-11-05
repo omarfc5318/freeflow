@@ -528,7 +528,8 @@ final class RioActionCoordinator {
         if action.requiresConfirmation { return true }
         guard source == .conversation else { return false }
         if action.conversationAlwaysNeedsConfirmation { return true }
-        return !isTrustingConversation() && action.conversationNeedsConfirmationWhenUntrusted
+        let trusted = isTrustingConversation() && !RioConversationEvidence.isWeak
+        return !trusted && action.conversationNeedsConfirmationWhenUntrusted
     }
 
     // MARK: Context

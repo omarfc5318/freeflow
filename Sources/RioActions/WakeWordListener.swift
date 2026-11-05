@@ -36,7 +36,8 @@ enum WakeWordListenerStartResult: Equatable {
     /// talking nearby can't keep growing it (spoken commands take 1 to 3 seconds).
     static let maxCommandSeconds: TimeInterval = 5
 
-    private let onCommand: @MainActor (String) -> Void
+    /// The command, and whether the name was found mid-sentence (`WakePhraseExtractor.wakesMidUtterance`).
+    private let onCommand: @MainActor (String, Bool) -> Void
     /// Called when the listener stops ON ITS OWN (repeated recognizer failures, the microphone
     /// could not be reopened), with a user-facing reason, so conversation mode never keeps
     /// claiming to listen. Not called for a stop the owner of the listener asked for.
@@ -61,6 +62,8 @@ enum WakeWordListenerStartResult: Equatable {
     private var wantsListening = false
     private var isPaused = false
     private var pendingCommand: String?
+    /// The pending command's name was found mid-sentence.
+    private var pendingIsMidUtterance = false
     /// Where in the recent audio the command began (for the Arabic second listen).
     private var commandAudioMark: Int?
     private var consecutiveFailures = 0
@@ -80,7 +83,7 @@ enum WakeWordListenerStartResult: Equatable {
     private var lifetimeTimer: Task<Void, Never>?
     private var configObserver: NSObjectProtocol?
 
-    init(onCommand: @escaping @MainActor (String) -> Void) {
+    init(onCommand: @escaping @MainActor (String, Bool) -> Void) {
         self.onCommand = onCommand
     }
 
@@ -241,6 +244,7 @@ enum WakeWordListenerStartResult: Equatable {
         silenceTimer?.cancel()
         lifetimeTimer?.cancel()
         pendingCommand = nil
+        pendingIsMidUtterance = false
         commandAudioMark = nil
         lastHeardText = ""
         bareNameHeardAt = nil
@@ -303,6 +307,7 @@ enum WakeWordListenerStartResult: Equatable {
                     onCommandStarted?(command)
                 }
                 pendingCommand = command
+                pendingIsMidUtterance = WakePhraseExtractor.command(in: text) == command && WakePhraseExtractor.wakesMidUtterance(in: text)
                 commandExpectedUntil = nil
                 scheduleSilenceTimer(generation: generation, after: min(
                     WakeListenTiming.silenceToEnd(pendingCommand: command), max(0.2, commandTimeLeft())
@@ -384,6 +389,7 @@ enum WakeWordListenerStartResult: Equatable {
     private func finishUtteranceAndRestart() {
         let command = pendingCommand
         let mark = commandAudioMark
+        let midUtterance = pendingIsMidUtterance
         // A bare "Rio" whose utterance ended early (the recognizer's own final, the task's
         // lifetime): the next utterance within the window is the command.
         if command == nil, let heardAt = bareNameHeardAt {
@@ -395,23 +401,23 @@ enum WakeWordListenerStartResult: Equatable {
         commandAudioMark = nil
         beginRecognitionTask()
         guard let command else { return }
-        deliver(command, mark: mark)
+        deliver(command, mark: mark, midUtterance: midUtterance)
     }
 
     /// Hands the command over. Arabic after "Rio" comes out as nonsense from the English
     /// recognizer: that command's audio is read again with Whisper when the text doesn't look
     /// like a command.
-    private func deliver(_ command: String, mark: Int?) {
+    private func deliver(_ command: String, mark: Int?, midUtterance: Bool) {
         os_log(.info, log: rioConversationLog, "command finished: %d words", command.split(separator: " ").count)
         guard let mark, RioCommandAudioRecheck.isAvailable(forOnDeviceText: command),
               let audio = requestBox.recentAudio(since: mark) else {
-            onCommand(command)
+            onCommand(command, midUtterance)
             return
         }
         Task { @MainActor [weak self] in
             let better = await RioCommandAudioRecheck.transcribe(pcm16: audio.pcm16, sampleRate: audio.sampleRate)
             guard let self, self.wantsListening, !self.isPaused else { return }
-            self.onCommand(better ?? command)
+            self.onCommand(better ?? command, midUtterance)
         }
     }
 

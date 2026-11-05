@@ -24,7 +24,8 @@ import os
 
     /// Receives the text after "Rio" for every command heard. AppState runs it through the
     /// same action pipeline as the action key.
-    var onCommand: (@MainActor (String) -> Void)?
+    /// The Bool is true when it was heard in a looser way (`RioConversationBargeIn.isWeakEvidence`).
+    var onCommand: (@MainActor (String, Bool) -> Void)?
     /// Plays a short system sound by name (AppState routes it through the sound settings).
     var playSound: (@MainActor (String) -> Void)?
     /// Plays conversation mode's own on/off chime (AppState routes it through the sound settings).
@@ -85,7 +86,7 @@ import os
         (rioSpeaking, rioStoppedSpeakingAt.map { now.timeIntervalSince($0) })
     }
 
-    private func handle(command: String) {
+    private func handle(command: String, midUtterance: Bool) {
         guard core.isOn, !core.isPaused else {
             os_log(.info, log: rioConversationLog, "dropped: conversation mode is off or paused")
             return
@@ -101,8 +102,11 @@ import os
         os_log(.info, log: rioConversationLog, "accepted (Rio speaking: %d)", rioSpeaking ? 1 : 0)
         // The owner talked over him: he stops and listens.
         if RioVoice.shared.isSpeaking { RioVoice.shared.stopSpeaking() }
+        let weak = RioConversationBargeIn.isWeakEvidence(
+            midUtterance: midUtterance, isRioSpeaking: rioSpeaking, secondsSinceRioSpoke: sinceSpoke
+        )
         core.commandHeard(now: Date())
-        onCommand?(command)
+        onCommand?(command, weak)
     }
 
     /// What Rio's own voice is saying or just said, while that can still reach the microphone.
@@ -171,7 +175,7 @@ import os
     private func startListener() {
         guard !listenerStarting else { return }
         listenerStarting = true
-        let listener = self.listener ?? WakeWordListener { [weak self] command in self?.handle(command: command) }
+        let listener = self.listener ?? WakeWordListener { [weak self] command, mid in self?.handle(command: command, midUtterance: mid) }
         listener.onStopped = { [weak self] message in self?.failToStart(message) }
         // A bare "Rio" and a thinking pause: a short "yes?" cue so the owner knows he's heard.
         // Not while Rio is talking, so his own voice saying the name can't trigger it.

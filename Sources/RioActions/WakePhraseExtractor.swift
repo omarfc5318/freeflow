@@ -26,6 +26,14 @@ enum WakePhraseExtractor {
         return trimmed.contains { $0.isLetter || $0.isNumber } ? trimmed : nil
     }
 
+    /// True when `command(in:)` finds the command through a name in the middle of the
+    /// utterance (not at its start, after a lead-in or after a sentence end).
+    static func wakesMidUtterance(in transcript: String) -> Bool {
+        let words = wordRanges(in: transcript)
+        guard let first = words.indices.first(where: { wakesAt($0, in: words, text: transcript) }) else { return false }
+        return !startsUtterance(at: first, in: words, text: transcript)
+    }
+
     /// One recognized word with its timing (seconds from the start of the recognition task).
     struct TimedWord: Equatable {
         let text: String

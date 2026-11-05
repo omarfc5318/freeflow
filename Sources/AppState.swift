@@ -831,6 +831,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private var rioWaitingCommands = RioWaitingCommands<RioWaitingCommand>()
     /// One conversation-mode command heard while Rio was busy; runs when he is free (finding 63).
     private var rioConversationPending = RioConversationPending()
+    /// The waiting conversation command was heard in a looser way (asks before risky actions).
+    private var rioConversationPendingIsWeak = false
     private var rioConversationPendingCheck: DispatchWorkItem?
     private var rioWaitingCommandsDrain: DispatchWorkItem?
     /// A waiting command was taken off the line and is about to start.
@@ -4381,7 +4383,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     /// A command heard by conversation mode. Answers to a pending confirmation and the stop
     /// commands are handled first, even while a command is running; anything else said while a
     /// command, a question or a recording is in progress is dropped.
-    @MainActor private func handleConversationCommand(_ transcript: String) {
+    @MainActor private func handleConversationCommand(_ transcript: String, weakEvidence: Bool) {
         if RioConfirmationCenter.shared.answerSpoken(transcript) { return }
         if RioConversationCommands.isStopListening(transcript) {
             finishStopListening(transcript: transcript)
@@ -4403,6 +4405,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         if isConversationBusy {
             os_log(.info, log: rioConversationLog, "queued: Rio is busy")
             rioConversationPending.offer(transcript, now: Date())
+            rioConversationPendingIsWeak = weakEvidence
             statusText = RioConversationPending.busyLine
             if !isRecording, !isTranscribing, !RioTaskProgress.shared.isRunning {
                 setRioActionPhase(.working(RioConversationPending.busyLine))
@@ -4410,7 +4413,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
             scheduleConversationPendingCheck()
             return
         }
-        startConversationCommand(transcript)
+        startConversationCommand(transcript, weakEvidence: weakEvidence)
     }
 
     @MainActor private var isConversationBusy: Bool {
@@ -4418,10 +4421,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
             || isRecording || isTranscribing
     }
 
-    @MainActor private func startConversationCommand(_ transcript: String) {
+    @MainActor private func startConversationCommand(_ transcript: String, weakEvidence: Bool) {
         statusText = "Working..."
         setRioActionPhase(.working("Working on it"))
         Task { @MainActor [weak self] in
+            RioConversationEvidence.isWeak = weakEvidence
+            defer { RioConversationEvidence.isWeak = false }
             await self?.runRioCommand(transcript, source: .conversation)
         }
     }
@@ -4437,7 +4442,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
         switch rioConversationPending.next(now: Date(), isBusy: isConversationBusy) {
         case .run(let command):
-            startConversationCommand(command)
+            startConversationCommand(command, weakEvidence: rioConversationPendingIsWeak)
         case .wait:
             scheduleConversationPendingCheck()
         case .expired, .none:
@@ -4571,7 +4576,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     /// Conversation mode hands commands to the action pipeline and steps aside while dictating.
     @MainActor private func bindRioConversationMode() {
         let mode = RioConversationMode.shared
-        mode.onCommand = { [weak self] command in self?.handleConversationCommand(command) }
+        mode.onCommand = { [weak self] command, weak in self?.handleConversationCommand(command, weakEvidence: weak) }
         mode.playSound = { [weak self] name in self?.playAlertSound(named: name) }
         mode.playChime = { [weak self] chime in self?.playAlertSound(data: chime.wavData()) }
         // While Rio himself is talking it keeps listening, but takes only a bare stop ("Rio,

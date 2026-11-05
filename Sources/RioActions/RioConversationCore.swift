@@ -408,7 +408,18 @@ enum RioConversationBargeIn {
         guard isInEchoWindow(isRioSpeaking: isRioSpeaking, secondsSinceRioSpoke: secondsSinceRioSpoke) else { return true }
         if RioConversationCommands.isBareStop(command) || RioConversationCommands.isStopListening(command) { return true }
         guard let rioLine else { return false }
+        // His own line says his name ("say Rio, quit Safari"): his voice could wake him, so only
+        // a stop gets through until the echo window is over.
+        if RioConversationEcho.containsName(rioLine) { return false }
         return !RioConversationEcho.isEcho(command, reference: rioLine)
+    }
+
+    /// The command was heard in a looser way: the name mid-sentence (people talking nearby), or
+    /// while Rio's own voice may still be in the room. Such a command runs, but any action that
+    /// types, presses, clicks, quits or changes state asks for a yes or Return first, whatever
+    /// "Trust conversation mode" says.
+    static func isWeakEvidence(midUtterance: Bool, isRioSpeaking: Bool, secondsSinceRioSpoke: TimeInterval?) -> Bool {
+        midUtterance || isInEchoWindow(isRioSpeaking: isRioSpeaking, secondsSinceRioSpoke: secondsSinceRioSpoke)
     }
 
     static func isInEchoWindow(isRioSpeaking: Bool, secondsSinceRioSpoke: TimeInterval?) -> Bool {
@@ -444,6 +455,11 @@ enum RioConversationEcho {
             }
         }
         return heard
+    }
+
+    /// True when the line contains one of Rio's names.
+    static func containsName(_ line: String) -> Bool {
+        tokens(in: line).contains { WakePhraseExtractor.isName($0.word) }
     }
 
     /// True when the command is (mostly) words of Rio's own line.
@@ -543,4 +559,11 @@ enum RioConfirmationKeyPolicy {
         if confirmKeyCodes.contains(keyCode), secondsSincePanelShown < returnIgnoreSeconds { return false }
         return true
     }
+}
+
+/// Whether the conversation command running right now was heard in a looser way
+/// (`RioConversationBargeIn.isWeakEvidence`). Set by AppState around that one command; the
+/// coordinator then asks before any action that needs confirmation when untrusted.
+@MainActor enum RioConversationEvidence {
+    static var isWeak = false
 }
